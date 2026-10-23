@@ -4,11 +4,18 @@
 
 ModelQuad reads the files it sends itself, outside Claude Code's own file
 tools. So before reading anything it applies the user's existing read
-restrictions: Claude Code ``Read(...)`` deny rules from every settings scope
-that applies to the working folder, files Git ignores, and a project
-``.modelquadignore``. A file any of them excludes is skipped with a closed
-reason, never read. Settings that exist but cannot be read or parsed skip
-every attachment: ModelQuad cannot honour rules it cannot read.
+restrictions: Claude Code ``Read(...)`` deny rules from every settings scope,
+files Git ignores, and ``.modelquadignore``. A file any of them excludes is
+skipped with a closed reason, never read. Settings that exist but cannot be
+read or parsed skip every attachment: ModelQuad cannot honour rules it cannot
+read.
+
+The working folder is whatever Claude names, which may be a subfolder of the
+project or a folder above it. So project settings and ``.modelquadignore``
+are read from the working folder, every folder between it and each named
+file, and every folder above them, and each rule is applied relative to each
+of those folders. Rules from a folder that is not the project only widen
+what is skipped.
 
 Nothing here reads a candidate file's contents. Git is asked only which of the
 named paths it ignores (``git check-ignore``); without Git, or outside a
@@ -48,11 +55,41 @@ def _user_settings_directory() -> Path:
     return Path(configured) if configured else Path.home() / ".claude"
 
 
-def settings_files(root) -> tuple[Path, ...]:
-    """Managed, user, project and local settings, in Claude Code's scope order."""
-    root = Path(root)
-    return (MANAGED_SETTINGS, _user_settings_directory() / "settings.json",
-            root / ".claude" / "settings.json", root / ".claude" / "settings.local.json")
+def settings_files(root, folders=None) -> tuple[Path, ...]:
+    """Managed, user, then project and local settings of each folder, in scope order."""
+    folders = (Path(root),) if folders is None else tuple(folders)
+    paths = [MANAGED_SETTINGS, _user_settings_directory() / "settings.json"]
+    for folder in folders:
+        paths += [folder / ".claude" / "settings.json", folder / ".claude" / "settings.local.json"]
+    return tuple(dict.fromkeys(paths))
+
+
+def _upward(folder: Path, home: Path) -> tuple[Path, ...]:
+    """``folder`` and the folders above it, up to but not including the home folder.
+
+    The home folder's ``.claude`` is the default user settings folder, read
+    as user settings (or not at all when ``CLAUDE_CONFIG_DIR`` moves them),
+    and above it there is no project. A folder outside the home folder is
+    followed up to its drive's root.
+    """
+    chain = [folder]
+    for current in folder.parents:
+        if current == home:
+            break
+        chain.append(current)
+    return tuple(chain)
+
+
+def folders_above(root, names) -> tuple[Path, ...]:
+    """The working folder, each folder holding a named file, and every folder above them."""
+    root, home = Path(os.path.abspath(root)), Path(os.path.abspath(Path.home()))
+    found = dict.fromkeys(_upward(root, home))
+    for name in names:
+        for folder in _upward(root.joinpath(*name.split("/")).parent, home):
+            if folder in found:
+                break  # everything above a known folder is known already
+            found[folder] = None
+    return tuple(found)
 
 
 def translate(glob: str) -> str:
@@ -175,9 +212,11 @@ def _read_rule(rule: str, root: Path, home: Path) -> re.Pattern | None:
     spec = (match[1] or "").strip()
     if spec in {"", "*", "**", "/**", "./**"}:
         return re.compile(".*", re.DOTALL)
-    base = ""
+    base, lead = "", ""
     if re.match(r"[A-Za-z]:[\\/]", spec):
         spec = "//" + spec[0].lower() + spec[2:].replace("\\", "/")
+    elif spec.startswith("\\\\"):
+        spec = spec.replace("\\", "/")
     if spec.startswith("//"):
         glob = spec[1:]
         drive = re.match(r"/([A-Za-z]):(/|$)", glob)
@@ -185,6 +224,10 @@ def _read_rule(rule: str, root: Path, home: Path) -> re.Pattern | None:
             glob = "/" + drive[1].lower() + glob[3:]
         if os.name == "nt":
             glob = re.sub(r"^/([A-Za-z])(?=/|$)", lambda found: "/" + found[1].lower(), glob)
+        if not re.match(r"/[A-Za-z](/|$)", glob):
+            # Not a drive: perhaps a network share, whose paths keep both
+            # leading slashes (``//server/share``). Match either form.
+            lead = "/?"
     elif spec == "~" or spec.startswith("~/"):
         base, glob = posix_absolute(home), spec[2:] or "**"
     elif spec.startswith("/"):
@@ -196,7 +239,7 @@ def _read_rule(rule: str, root: Path, home: Path) -> re.Pattern | None:
     glob = glob.rstrip("/") or "**"
     prefix = re.escape(base.rstrip("/")) + "/" if base else ""
     try:
-        return re.compile(prefix + translate(glob.lstrip("/") if base else glob), _FLAGS | re.DOTALL)
+        return re.compile(lead + prefix + translate(glob.lstrip("/") if base else glob), _FLAGS | re.DOTALL)
     except re.error:
         return re.compile(".*", re.DOTALL)
 
@@ -230,20 +273,27 @@ def _deny_rules(path: Path) -> list[str] | None:
     return deny
 
 
-def claude_read_denials(root) -> tuple[re.Pattern, ...] | None:
-    """Every Read deny pattern in scope for ``root``; None if any file is unreadable."""
+def claude_read_denials(root, folders=None) -> tuple[re.Pattern, ...] | None:
+    """Every Read deny pattern in scope; None if any settings file is unreadable.
+
+    Each rule is read relative to every one of ``folders`` (default: just
+    ``root``), since which of them is the project Claude Code was opened in
+    is not known here.
+    """
     root = Path(os.path.abspath(root))
+    folders = (root,) if folders is None else tuple(folders)
     home = Path.home()
-    patterns = []
-    for path in settings_files(root):
+    patterns = {}
+    for path in settings_files(root, folders):
         rules = _deny_rules(path)
         if rules is None:
             return None
         for rule in rules:
-            pattern = _read_rule(rule, root, home)
-            if pattern is not None:
-                patterns.append(pattern)
-    return tuple(patterns)
+            for base in folders:
+                pattern = _read_rule(rule, base, home)
+                if pattern is not None:
+                    patterns.setdefault(pattern.pattern, pattern)
+    return tuple(patterns.values())
 
 
 def _denied(patterns, root: Path, name: str) -> bool:
@@ -308,6 +358,19 @@ def git_ignored(root, names) -> frozenset[str]:
     return frozenset(name for name in names if name in reported)
 
 
+def _ignored_above(ignores, root: Path, name: str) -> bool:
+    """Whether a ``.modelquadignore`` in a folder holding ``name`` covers it."""
+    target = root.joinpath(*name.split("/"))
+    for folder, rules in ignores:
+        try:
+            relative = target.relative_to(folder)
+        except ValueError:
+            continue
+        if ignored(rules, relative.as_posix()):
+            return True
+    return False
+
+
 def screen(root, names) -> tuple[list[str], list[tuple[str, str]]]:
     """Split validated relative names into (allowed, skipped with a reason).
 
@@ -316,17 +379,22 @@ def screen(root, names) -> tuple[list[str], list[tuple[str, str]]]:
     """
     root = Path(os.path.abspath(root))
     names = list(dict.fromkeys(names))
-    denials = claude_read_denials(root)
+    folders = folders_above(root, names)
+    denials = claude_read_denials(root, folders)
     if denials is None:
         return [], [(name, SETTINGS_UNREADABLE) for name in names]
-    ignore = modelquad_ignore_rules(root)
-    if ignore is None:
-        return [], [(name, IGNORE_FILE_UNREADABLE) for name in names]
+    ignores = []
+    for folder in folders:
+        rules = modelquad_ignore_rules(folder)
+        if rules is None:
+            return [], [(name, IGNORE_FILE_UNREADABLE) for name in names]
+        if rules:
+            ignores.append((folder, rules))
     allowed, skipped = [], []
     for name in names:
         if _denied(denials, root, name):
             skipped.append((name, DENIED))
-        elif ignored(ignore, name):
+        elif _ignored_above(ignores, root, name):
             skipped.append((name, MODELQUAD_IGNORED))
         else:
             allowed.append(name)

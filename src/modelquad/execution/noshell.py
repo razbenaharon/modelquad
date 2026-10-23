@@ -199,8 +199,8 @@ _POLICY_GUIDANCE = {
     file_rules.SETTINGS_UNREADABLE: ("A Claude Code settings file could not be read, so no file was "
                                      "sent: ModelQuad cannot honour Read deny rules it cannot read."),
     file_rules.GIT_IGNORED: "Git ignores it, so it was not sent.",
-    file_rules.MODELQUAD_IGNORED: "The project's .modelquadignore covers it, so it was not sent.",
-    file_rules.IGNORE_FILE_UNREADABLE: ("The project's .modelquadignore could not be read, so no file "
+    file_rules.MODELQUAD_IGNORED: "A .modelquadignore covers it, so it was not sent.",
+    file_rules.IGNORE_FILE_UNREADABLE: ("A .modelquadignore could not be read, so no file "
                                         "was sent."),
 }
 

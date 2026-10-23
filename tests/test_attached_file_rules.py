@@ -198,6 +198,70 @@ def test_modelquadignored_file_is_reported_not_refused(project):
     assert report["skipped"] == [{"path": "config/secrets.txt", "reason": "modelquad_ignored"}]
 
 
+# --- Working folder other than the project root -------------------------------
+
+def test_project_rules_apply_when_claude_names_a_subfolder(project):
+    settings(project / ".claude" / "settings.json", "Read(./config/**)")
+    (project / ".modelquadignore").write_text("src/app.py\n", encoding="utf-8")
+    (project / "config" / "notes.txt").write_text("notes\n", encoding="utf-8")
+    assert screen(project / "config", "secrets.txt", "notes.txt") == (
+        [], {"secrets.txt": "denied_by_claude_settings", "notes.txt": "denied_by_claude_settings"})
+    assert screen(project / "src", "app.py") == ([], {"app.py": "modelquad_ignored"})
+
+
+def test_project_rules_apply_when_claude_names_a_folder_above_it(project):
+    settings(project / ".claude" / "settings.local.json", "Read(./config/secrets.txt)")
+    (project / ".modelquadignore").write_text("src/\n", encoding="utf-8")
+    assert screen(project.parent, "app/config/secrets.txt", "app/src/app.py") == (
+        [], {"app/config/secrets.txt": "denied_by_claude_settings", "app/src/app.py": "modelquad_ignored"})
+
+
+def test_a_nested_modelquadignore_covers_only_its_own_folder(project):
+    (project / "src" / ".modelquadignore").write_text("*.py\n", encoding="utf-8")
+    (project / "top.py").write_text("x = 1\n", encoding="utf-8")
+    assert screen(project, "src/app.py", "top.py") == (["top.py"], {"src/app.py": "modelquad_ignored"})
+
+
+def test_unreadable_settings_above_the_working_folder_skip_every_attachment(project):
+    (project / ".claude").mkdir()
+    (project / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
+    assert screen(project / "src", "app.py") == ([], {"app.py": "claude_settings_unreadable"})
+
+
+def test_folders_above_the_home_folder_are_not_read(project, isolate_home_directory):
+    settings(isolate_home_directory.parent / ".claude" / "settings.json", "Read(**)")
+    (isolate_home_directory.parent / ".modelquadignore").write_text("*\n", encoding="utf-8")
+    assert screen(project, "src/app.py") == (["src/app.py"], {})
+    assert isolate_home_directory.parent not in file_rules.folders_above(project, ["src/app.py"])
+
+
+def test_a_moved_user_config_leaves_the_default_folder_unread(project, monkeypatch, tmp_path,
+                                                              isolate_home_directory):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "custom"))
+    (isolate_home_directory / ".claude").mkdir(exist_ok=True)
+    (isolate_home_directory / ".claude" / "settings.json").write_text("{stale", encoding="utf-8")
+    assert screen(project / "src", "app.py") == (["app.py"], {})
+    assert isolate_home_directory not in file_rules.folders_above(project, ["src/app.py"])
+
+
+@pytest.mark.parametrize("rule", ["Read(//server/share/app/config/**)",
+                                  r"Read(\\server\share\app\config\**)"])
+def test_absolute_rules_cover_network_share_paths(rule):
+    pattern = file_rules._read_rule(rule, Path(r"\\server\share\app"), Path.home())
+    assert pattern.fullmatch(file_rules.posix_absolute(r"\\server\share\app\config\secrets.txt"))
+    assert not pattern.fullmatch(file_rules.posix_absolute(r"\\server\share\app\src\app.py"))
+
+
+def test_handoff_form_applies_project_rules_from_a_subfolder(project, monkeypatch):
+    settings(project / ".claude" / "settings.json", "Read(./config/**)")
+    ctx = _Ctx(SimpleNamespace(action="cancel", data=None))
+    monkeypatch.setattr(mcp, "modelquad_delegate", lambda **kwargs: pytest.fail("started"))
+    asyncio.run(mcp.modelquad_handoff("review", "task", str(project / "config"), ctx=ctx,
+                                      files=["secrets.txt"]))
+    assert "Not sent: secrets.txt (denied_by_claude_settings)" in ctx.asked[0]
+    assert SECRET not in ctx.asked[0]
+
+
 # --- Git ignores -------------------------------------------------------------
 
 def _git():

@@ -70,11 +70,17 @@ starts the Codex CLI.
    restrictions Claude Code would. A listed file is skipped, never read, and
    reported with its reason when:
    - a `Read(...)` deny rule covers it in any Claude Code settings file that
-     applies to the working folder: managed settings
+     could apply: managed settings
      (`C:\Program Files\ClaudeCode\managed-settings.json`), your user
      `settings.json` (in `%USERPROFILE%\.claude`, or `CLAUDE_CONFIG_DIR`), and
-     the project's `.claude\settings.json` and `.claude\settings.local.json`
-     (`denied_by_claude_settings`). The documented path forms are supported:
+     the `.claude\settings.json` and `.claude\settings.local.json` of the
+     working folder, of every folder between it and the listed file, and of
+     every folder above them, up to (not including) your home folder, or to
+     the top of the drive for a project outside your home folder
+     (`denied_by_claude_settings`). Claude may name a subfolder of the project
+     as the working folder, or a folder above it, so the project's own
+     settings are found either way; each rule is applied relative to each of
+     these folders. The documented path forms are supported:
      `//absolute`, `~/home`, `/project-root`, relative paths, and `*`/`**`
      globs; a rule is read the wider way when in doubt. If one of these files
      exists but cannot be read or parsed, no file is sent at all
@@ -83,8 +89,9 @@ starts the Codex CLI.
    - Git ignores it (`git_ignored`). ModelQuad asks `git check-ignore` with
      only the listed paths; without Git, or outside a repository, this check
      is skipped;
-   - the project's `.modelquadignore` (gitignore syntax, at the working
-     folder's root) covers it (`modelquad_ignored`).
+   - a `.modelquadignore` (gitignore syntax) in any of those folders that
+     holds the file covers it (`modelquad_ignored`). Its patterns are
+     relative to the folder it sits in.
 
    A skipped file does not stop the call; the task runs without it, and
    Codex is not told its name.
@@ -261,7 +268,7 @@ session transcript. **ModelQuad never opens, reads or inspects that file**
   opening them, and whether `OPENAI_API_KEY` is set.
 - **The files a Codex call lists**, as described above, and the read
   restrictions applied first: the `permissions.deny` lists of the Claude Code
-  settings files named there, the project's `.modelquadignore`, and Git's
+  settings files named there, the `.modelquadignore` files named there, and Git's
   answer to `git check-ignore` for the listed paths.
 
 ModelQuad does not read Claude Code or Codex conversation files, session
