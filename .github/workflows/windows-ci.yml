@@ -1,0 +1,182 @@
+name: Windows CI
+
+# The one property that matters here: the suite must pass from a fresh
+# checkout on a machine that has none of a maintainer's local state -- no
+# editable install, no pre-existing ModelQuad config or SQLite database, no
+# provider CLIs, and no files outside the checkout.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  windows:
+    name: Windows (install + test, Python ${{ matrix.python-version }})
+    # Automatic runs only once the repository is public (Actions minutes are
+    # free there); while it is private, only a manual dispatch runs.
+    if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}
+    runs-on: windows-latest
+    # The full suite takes about 75 minutes on a hosted runner.
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.13']
+    # 3.13 is advisory until it has a record of green runs.
+    continue-on-error: ${{ matrix.python-version == '3.13' }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up an isolated state root
+        # paths.py reads %LOCALAPPDATA%. Pointed outside the checkout so the
+        # suite never inherits or writes real user state. Exported through
+        # $GITHUB_ENV because the `runner` context does not exist at job level.
+        run: |
+          $root = "$env:RUNNER_TEMP\modelquad-ci-state"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          "LOCALAPPDATA=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Isolated state root: $root"
+
+      - name: Assert no inherited ModelQuad state
+        # A CI pass must never be explained by leftover configuration.
+        run: |
+          if (Test-Path "$env:LOCALAPPDATA\MultiAgentOrchestrator") {
+            Write-Error "Pre-existing ModelQuad state found in the isolated root; the run would not be clean."
+            exit 1
+          }
+          if ($env:ORCHESTRATOR_WORKER) {
+            Write-Error "ORCHESTRATOR_WORKER is set; the recursion guard would change delegation behavior."
+            exit 1
+          }
+          Write-Host "Clean: no inherited state, worker guard unset."
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the package (non-editable) and its extras
+        # NOT `pip install -e .`: an editable install resolves `orchestrator`
+        # back into src/, so the suite would test the checkout rather than
+        # the distribution a user installs.
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev,service]"
+
+      - name: Verify the package resolves outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          $resolved = python -c "import orchestrator, sys; sys.stdout.write(orchestrator.__file__)"
+          Write-Host "orchestrator resolved to: $resolved"
+          $ws = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\','/')
+          if ([IO.Path]::GetFullPath($resolved).StartsWith($ws, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Error "Editable/source-tree import detected: the suite would not be testing the installed package."
+            exit 1
+          }
+
+      # The `pytest` console script, not `python -m pytest`: the latter puts the
+      # current directory on sys.path, so a module in the checkout could shadow
+      # the installed distribution.
+      - name: Run the suite (parallel)
+        env:
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
+        run: pytest -q --tb=short -p no:cacheprovider -n auto -m "not serial_timing"
+
+      - name: Run the timing tests (serial)
+        run: pytest -q --tb=short -p no:cacheprovider -n 0 -m serial_timing
+
+  dco:
+    name: DCO sign-off
+    # Automatic runs only once the repository is public (Actions minutes are
+    # free there); while it is private, only a manual dispatch runs.
+    if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Every new commit carries its author's Signed-off-by
+        # The Developer Certificate of Origin (CONTRIBUTING.md): each commit
+        # needs a "Signed-off-by: Name <email>" line whose email is the
+        # commit author's. The range is the pull request's commits, or the
+        # commits a push to main added.
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        # The e-mail is compared as a fixed string, never as a pattern: GitHub
+        # noreply addresses contain "+", which a regex reads as a quantifier.
+        # Only real trailers count, so a "Signed-off-by:" quoted in the body
+        # does not.
+        run: |
+          set -euo pipefail
+          if [ -n "$PR_BASE" ]; then
+            range="$PR_BASE..$PR_HEAD"
+          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            range="$PUSH_BEFORE..$PUSH_AFTER"
+          elif git rev-parse --verify --quiet "$PUSH_AFTER~1" >/dev/null; then
+            range="$PUSH_AFTER~1..$PUSH_AFTER"
+          else
+            range="$PUSH_AFTER"  # a root commit: check it alone
+          fi
+          # A failed rev-list must fail the job, not yield an empty list that passes.
+          if ! shas=$(git rev-list --no-merges "$range"); then
+            echo "::error::git rev-list failed for range $range"
+            exit 1
+          fi
+          missing=0
+          for sha in $shas; do
+            email=$(git show -s --format='%ae' "$sha")
+            # Dependabot (.github/dependabot.yml) cannot sign off; a human
+            # reviews and merges its action-pin bumps.
+            if [ "$email" = "49699333+dependabot[bot]@users.noreply.github.com" ]; then
+              continue
+            fi
+            trailers=$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha")
+            if ! grep -Fqi -- "<$email>" <<< "$trailers"; then
+              echo "::error::$sha has no Signed-off-by trailer for its author <$email>"
+              missing=1
+            fi
+          done
+          exit $missing
+
+  secrets:
+    name: Secret scan
+    # Automatic runs only once the repository is public (Actions minutes are
+    # free there); while it is private, only a manual dispatch runs.
+    if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

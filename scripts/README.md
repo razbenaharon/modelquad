@@ -1,0 +1,35 @@
+# Scripts
+
+Development tooling for this repository. None of it ships: the product is
+`src/orchestrator/`.
+
+## `check.py`: pre-flight validation
+
+Stdlib-only and identical on PowerShell and POSIX shells, so it runs from a
+fresh clone with nothing installed.
+
+    python scripts/check.py --list
+    python scripts/check.py fast        # docs + secrets, seconds
+    python scripts/check.py docs        # links resolve, AGENTS.md matches the code, commands run on Windows
+    python scripts/check.py secrets     # credential shapes in authored source
+    python scripts/check.py review      # fast + the tests the diff touches
+    python scripts/check.py python      # the whole suite, import root pinned here
+    python scripts/check.py all
+
+It sets `PYTHONPATH` itself and prints the `orchestrator.__file__` it resolved,
+which removes two traps: a POSIX-only command on a Windows-first project, and a
+worktree suite importing another checkout's source. It echoes every command,
+so you can run them by hand instead.
+
+Its own tests: `tests/test_development_policy.py` and `tests/test_devenv.py`.
+
+## The rest
+
+- `devenv.py`: where development and test child processes put their temporary
+  files (`MODELQUAD_TEMP_ROOT`); used by `check.py` and the root `conftest.py`.
+- `prune_temp.py`: removes known test leftovers, or explicitly selected
+  per-run temporary roots. Dry-run by default.
+- `windowwatch.py`: records console windows opened while something runs; the
+  observation tool behind the no-window tests.
+- `third_party_inventory.py`: generates the third-party dependency and licence
+  inventory in `THIRD_PARTY.md`.

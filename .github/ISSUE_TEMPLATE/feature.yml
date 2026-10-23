@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest a change or an addition to ModelQuad.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion.
+
+        Version 1 supports Claude Code as the only host and the OpenAI Codex
+        CLI as the only worker. A request for another host or provider is
+        welcome here, but it starts as a discussion, not as code.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Your proposal
+      description: What should ModelQuad do? Be as specific as you can.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - MCP tools in Claude Code
+        - Codex worker
+        - Quota display
+        - CLI (modelquad)
+        - Optional local service
+        - Documentation
+        - Another host or provider
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+    validations:
+      required: false

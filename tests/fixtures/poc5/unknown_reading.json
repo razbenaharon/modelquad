@@ -1,0 +1,23 @@
+{
+  "synthetic": true,
+  "description": "Missing capacity is unknown, never fabricated as zero, and never used to choose.",
+  "input": {
+    "strategy": "quota_saving",
+    "readings": {
+      "claude": {
+        "remaining": null,
+        "age_seconds": null
+      },
+      "codex": {
+        "remaining": 70
+      }
+    },
+    "task_fit": {
+      "claude": 1.0,
+      "codex": 0.8
+    }
+  },
+  "expected_advice": "claude",
+  "requested_runtime": "codex",
+  "expected_delegate_verdict": "allowed"
+}

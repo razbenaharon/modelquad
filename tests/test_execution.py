@@ -1,0 +1,1700 @@
+# SPDX-FileCopyrightText: 2026 Raz Ben Aharon
+# SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+
+from pathlib import Path
+
+from orchestrator.cli import build_providers
+from orchestrator.config import Config, ProviderConfig, load_config
+from orchestrator.execution import (
+    CodexExecutor,
+    ExecutionManager,
+    ExecutionRequest,
+    ExecutionResult,
+    OutcomeEvidence,
+    WorkerTaskStatus,
+    no_window_kwargs,
+)
+from orchestrator.execution.base import WORKER_ENV_VAR
+from orchestrator.models import Freshness, ProviderStatus, TaskType
+from orchestrator.quota_policy import QuotaRefusal, apply_refusal_overlay
+from orchestrator.router import Router
+
+
+@pytest.fixture(autouse=True)
+def isolate_executor_tempfiles(tmp_path, monkeypatch):
+    # Even a failed scoped-HOME cleanup stays within this test's fixture.
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+
+class _FakeExecutor:
+    """A minimal Executor test double that returns a pre-built ExecutionResult.
+
+    Used for ExecutionManager routed-dispatch tests, where the point is to
+    control `task_status`/`safe_to_retry` directly rather than drive them
+    through real subprocess classification. `available=False` stands for a
+    worker whose CLI is not installed: the manager cannot start it.
+    """
+
+    def __init__(self, name, result_factory, *, available=True):
+        self.name = name
+        self._result_factory = result_factory
+        self.available = available
+        self.calls = 0
+
+    def is_available(self):
+        return self.available
+
+    def execute(self, request):
+        self.calls += 1
+        return self._result_factory(self.name)
+
+
+@pytest.fixture(autouse=True)
+def qualified_codex(monkeypatch):
+    """Codex tests here own argv and results, not feature qualification."""
+    from orchestrator.execution import codex as codex_module, noshell
+
+    monkeypatch.setattr(codex_module, "_probe", lambda executable: "0.160.0")
+    monkeypatch.setattr(noshell, "qualify", lambda executable, version, **kwargs:
+                        noshell.Qualification(True, noshell.file_digest(executable), version, True,
+                                              disabled_features=noshell.DISABLED_FEATURES))
+
+
+class RecordingRun:
+    def __init__(self, result=None, exc=None):
+        from conftest import codex_event_stream
+
+        self.calls = []
+        self.result = result or subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=codex_event_stream(), stderr=""
+        )
+        self.exc = exc
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append({"argv": argv, "kwargs": kwargs})
+        if self.exc is not None:
+            raise self.exc
+        return self.result
+
+
+def _request(tmp_path, *, provider="codex", task_type=TaskType.REVIEW, **kwargs):
+    return ExecutionRequest(
+        provider=provider,
+        task_type=task_type,
+        prompt="do the thing",
+        working_directory=tmp_path,
+        **kwargs,
+    )
+
+
+def _write_usage_fixtures(tmp_path):
+    (tmp_path / "usage-claude.json").write_text(
+        json.dumps({"five_hour_used_percentage": 10, "seven_day_used_percentage": 20}),
+        encoding="utf-8",
+    )
+    (tmp_path / "usage-codex.json").write_text(
+        json.dumps(
+            {
+                "available": True,
+                "five_hour_remaining_percentage": 80,
+                "seven_day_remaining_percentage": 70,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _statuses(config, tmp_path):
+    _write_usage_fixtures(tmp_path)
+    return tuple(provider.get_status() for provider in build_providers(config, tmp_path))
+
+
+def test_codex_fresh_run_command_construction(tmp_path, *, synthetic_worker_binary):
+    from orchestrator.execution import noshell
+
+    resolved = synthetic_worker_binary('codex.exe')
+    run = RecordingRun()
+    request = _request(tmp_path)
+
+    CodexExecutor(which=lambda _: resolved, run=run).execute(request)
+
+    call = run.calls[0]
+    argv = [os.path.normcase(os.path.realpath(call["argv"][0])), *call["argv"][1:]]
+    assert argv == [resolved, "--ask-for-approval", "never", "exec", *noshell.NOSHELL_ARGS,
+                    "--skip-git-repo-check", "-"]
+    assert request.prompt not in call["argv"]
+    # The task is delivered on stdin, followed by the instruction and the
+    # completion-envelope protocol.
+    assert call["kwargs"]["input"].startswith(request.prompt)
+    assert call["kwargs"].get("shell", False) is False
+    # An empty folder, never the workspace: no project configuration loads.
+    assert call["kwargs"]["cwd"] != str(request.working_directory)
+
+
+UNICODE_PROMPTS = [
+    "Inspect this repository \u2014 read-only.",  # em dash
+    "\u05d1\u05d3\u05d5\u05e7 \u05d0\u05ea \u05d4\u05e8\u05d9\u05e4\u05d5 \u05d4\u05d6\u05d4",  # Hebrew
+    "Claude \u2192 Codex \u2713",  # arrow + checkmark
+]
+
+
+@pytest.mark.parametrize("prompt", UNICODE_PROMPTS)
+def test_codex_forces_utf8_encoding_for_stdin(tmp_path, prompt, monkeypatch, *, synthetic_worker_binary):
+    """Without an explicit encoding, `text=True` falls back to the OS locale
+    codepage on Windows, which mis-encodes non-ASCII prompts and makes
+    Codex's own UTF-8 stdin parser reject them -- reproduced live as
+    "invalid byte at offset ...". The fix must not sanitize the prompt to
+    ASCII; it must round-trip the exact Unicode text via explicit UTF-8.
+    """
+
+    from orchestrator.execution import codex as codex_module, noshell
+    # This test owns UTF-8 delivery; no provider/version listing is run.
+    monkeypatch.setattr(codex_module, "_probe", lambda executable: "0.160.0")
+    monkeypatch.setattr(noshell, "qualify", lambda executable, version, **kwargs:
+                        noshell.Qualification(True, noshell.file_digest(executable), version, True))
+    run = RecordingRun()
+    request = ExecutionRequest(
+        provider="codex",
+        task_type=TaskType.EXPLORATION,
+        prompt=prompt,
+        working_directory=tmp_path,
+    )
+
+    CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(request)
+
+    call = run.calls[0]
+    assert call["kwargs"]["encoding"] == "utf-8"
+    assert call["kwargs"]["input"].startswith(prompt)
+    assert "--ignore-user-config" in call["argv"]
+    assert not any(token.startswith("mcp_servers.") for token in call["argv"])
+
+
+@pytest.mark.parametrize("prompt", UNICODE_PROMPTS)
+def test_codex_utf8_stdin_round_trips_through_a_real_subprocess(tmp_path, prompt):
+    """End-to-end proof the fix technique actually works on this OS: a real
+    subprocess (not a mock) that echoes stdin back must receive the exact
+    Unicode prompt when invoked the same way CodexExecutor invokes Codex
+    (text=True, encoding="utf-8", input=<prompt>) -- including the
+    detach_stdin opt-out that input= requires.
+    """
+
+    echo_stdin = [sys.executable, "-c", "import sys; sys.stdout.write(sys.stdin.read())"]
+
+    completed = subprocess.run(
+        echo_stdin,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        shell=False,
+        **no_window_kwargs(detach_stdin=False),
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == prompt
+
+
+def test_codex_sandbox_override_via_metadata(tmp_path, *, synthetic_worker_binary):
+    run = RecordingRun()
+    request = _request(tmp_path, metadata={"sandbox": "read-only"})
+
+    CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(request)
+
+    argv = run.calls[0]["argv"]
+    sandbox_index = argv.index("--sandbox")
+    assert argv[sandbox_index + 1] == "read-only"
+
+
+def test_codex_sandbox_override_rejects_unsafe_value(tmp_path, *, synthetic_worker_binary):
+    run = RecordingRun()
+    request = _request(tmp_path, metadata={"sandbox": "danger-full-access & calc.exe"})
+
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(request)
+
+    assert result.success is False
+    assert "invalid sandbox mode" in (result.error or "").lower()
+    assert run.calls == []
+
+
+def test_execution_request_rejects_shell_metacharacters_in_session_id(tmp_path):
+    try:
+        _request(tmp_path, session_id="123 & echo PWNED > pwned.txt & ")
+    except ValueError as exc:
+        assert "not safe" in str(exc).lower()
+    else:
+        raise AssertionError("expected ValueError for unsafe session_id")
+
+
+def test_execution_request_rejects_flag_like_session_id(tmp_path):
+    try:
+        _request(tmp_path, session_id="--dangerously-bypass-approvals-and-sandbox")
+    except ValueError as exc:
+        assert "must not start with" in str(exc).lower()
+    else:
+        raise AssertionError("expected ValueError for flag-like session_id")
+
+
+def test_execution_request_accepts_uuid_like_session_id(tmp_path):
+    request = _request(tmp_path, session_id="01a0015e-a53f-7e63-8fb8-abad07eaf13c")
+    assert request.session_id == "01a0015e-a53f-7e63-8fb8-abad07eaf13c"
+
+
+def test_execution_request_rejects_unsafe_model_id(tmp_path):
+    try:
+        _request(tmp_path, model="gpt-5 & calc.exe")
+    except ValueError as exc:
+        assert "not safe" in str(exc).lower()
+    else:
+        raise AssertionError("expected ValueError for unsafe model id")
+
+
+def test_codex_argv_unchanged_without_model_or_effort(tmp_path, *, synthetic_worker_binary):
+    """Regression guard: omitting model/reasoning_effort must not alter argv at all."""
+    from orchestrator.execution import noshell
+
+    run = RecordingRun()
+    request = _request(tmp_path)
+
+    CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(request)
+
+    argv = run.calls[0]["argv"]
+    assert "-m" not in argv
+    assert not any(token.startswith("model_reasoning_effort=") for token in argv)
+    assert [os.path.normcase(os.path.realpath(argv[0])), *argv[1:]] == [
+        synthetic_worker_binary('codex.exe'), "--ask-for-approval", "never", "exec",
+        *noshell.NOSHELL_ARGS, "--skip-git-repo-check", "-",
+    ]
+
+
+def test_codex_argv_includes_model_and_reasoning_effort(tmp_path, *, synthetic_worker_binary):
+    run = RecordingRun()
+    request = _request(tmp_path, model="gpt-5.6-terra", reasoning_effort="high")
+
+    CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(request)
+
+    argv = run.calls[0]["argv"]
+    assert argv[argv.index("-m") + 1] == "gpt-5.6-terra"
+    assert "-c" in argv
+    assert argv[argv.index("-c") + 1] == "model_reasoning_effort=high"
+
+
+def test_codex_accepts_xhigh_reasoning_effort(tmp_path, *, synthetic_worker_binary):
+    """gpt-5.2-codex documents xhigh as valid -- must not be rejected locally."""
+
+    run = RecordingRun()
+    request = _request(tmp_path, reasoning_effort="xhigh")
+
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(request)
+
+    assert result.task_status_reason != "invalid_reasoning_effort"
+    argv = run.calls[0]["argv"]
+    assert argv[argv.index("-c") + 1] == "model_reasoning_effort=xhigh"
+
+
+def test_codex_rejects_invalid_reasoning_effort_before_launch(tmp_path, *, synthetic_worker_binary):
+    run = RecordingRun()
+    request = _request(tmp_path, reasoning_effort="ludicrous")
+
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(request)
+
+    assert result.success is False
+    assert result.task_status_reason == "invalid_reasoning_effort"
+    assert run.calls == []
+
+
+def test_codex_result_metadata_reports_requested_model_honestly_unconfirmed(tmp_path, *, synthetic_worker_binary):
+    run = RecordingRun()
+    request = _request(tmp_path, model="gpt-5.6-terra", reasoning_effort="high")
+
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(request)
+
+    assert result.metadata["requested_model"] == "gpt-5.6-terra"
+    assert result.metadata["requested_reasoning_effort"] == "high"
+    assert result.metadata["confirmed_model"] is None
+
+
+def test_codex_not_found(tmp_path):
+    run = RecordingRun()
+
+    result = CodexExecutor(which=lambda _: None, run=run).execute(_request(tmp_path))
+
+    assert result.success is False
+    assert result.exit_code is None
+    assert "not found" in (result.error or "").lower()
+    assert run.calls == []
+
+
+def test_codex_timeout(tmp_path, *, synthetic_worker_binary):
+    run = RecordingRun(
+        exc=subprocess.TimeoutExpired(cmd=["codex"], timeout=1, output="partial", stderr="")
+    )
+
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
+
+    assert result.success is False
+    assert result.exit_code is None
+    assert "timed_out" in (result.error or "").lower()
+    # A partial stream is never returned as an answer.
+    assert result.output == ""
+    assert result.metadata["timed_out"] is True
+
+
+def test_codex_non_zero_exit(tmp_path, *, synthetic_worker_binary):
+    from conftest import codex_event_stream
+
+    run = RecordingRun(
+        result=subprocess.CompletedProcess(args=[], returncode=2, stdout=codex_event_stream(), stderr="boom")
+    )
+
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
+
+    assert result.success is False
+    assert result.exit_code == 2
+    # The stderr BODY is never persisted, in any evidence
+    # mode, so `error` reports its category and size instead of quoting it.
+    assert "boom" not in (result.error or "")
+    assert "withheld from persistence" in (result.error or "")
+    assert result.metadata["stderr_category"] == "narration"
+    assert result.metadata["stderr_bytes"] == 4
+
+
+@pytest.mark.parametrize(
+    ("executor_type", "provider", "binary"),
+    [
+        (CodexExecutor, "codex", "C:/fake/codex"),
+    ],
+)
+@pytest.mark.parametrize("existing_worker_value", [None, "already-set"])
+def test_delegated_workers_always_receive_recursion_guard_environment(
+    tmp_path,
+    monkeypatch,
+    executor_type,
+    provider,
+    binary,
+    existing_worker_value,
+    *, synthetic_worker_binary,
+):
+    run = RecordingRun()
+    monkeypatch.setenv("ORCHESTRATOR_EXECUTOR_TEST_VALUE", "preserved")
+    if existing_worker_value is None:
+        monkeypatch.delenv(WORKER_ENV_VAR, raising=False)
+    else:
+        monkeypatch.setenv(WORKER_ENV_VAR, existing_worker_value)
+
+    executor_type(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(
+        _request(tmp_path, provider=provider)
+    )
+
+    child_env = run.calls[0]["kwargs"]["env"]
+    assert child_env[WORKER_ENV_VAR] == "1"
+    assert child_env["ORCHESTRATOR_EXECUTOR_TEST_VALUE"] == "preserved"
+    assert child_env is not os.environ
+
+
+def test_execution_manager_routes_to_highest_scoring_available_provider(tmp_path, *, synthetic_worker_binary):
+    config = load_config()
+    codex_run = RecordingRun()
+    manager = ExecutionManager(
+        config,
+        executors={
+            "codex": CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=codex_run),
+        },
+    )
+
+    result = manager.delegate(
+        "architecture", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
+    )
+
+    # Claude is the host, never a worker: a read-only task the router would
+    # keep with the host still runs on the only executable worker, once.
+    assert result.provider == "codex"
+    assert len(codex_run.calls) == 1
+    assert result.metadata["recommended_provider"] in {"claude", "codex"}
+    assert "fallback_from" not in result.metadata
+
+
+def test_auto_routing_executes_router_recommendation_first_on_a_score_tie(tmp_path):
+    # Regression: when claude and codex share a task fit (0.90 on review here), and with
+    # both at unknown quota (neutral usage) their scores tie exactly. The router
+    # breaks the tie toward "codex" via max over (score, fit, provider). The
+    # ExecutionManager must rank candidates with the SAME key so ranked[0] equals
+    # the router's recommendation -- otherwise it would execute "claude" first
+    # (a divergent tie-break) and misapply codex's model prior to the wrong
+    # provider. Config() is used to keep the scores free of any session strategy.
+    config = Config()
+    config = replace(config, task_fit={**config.task_fit, "review": {"claude": 0.9, "codex": 0.9}})
+    statuses = (
+        ProviderStatus(name="claude", remaining_percentage=None, freshness=Freshness.UNKNOWN),
+        ProviderStatus(name="codex", remaining_percentage=None, freshness=Freshness.UNKNOWN),
+    )
+    route = Router(config).route("review", statuses)
+    assert route.recommendation == "codex"
+
+    def completed(name):
+        return ExecutionResult(
+            provider=name,
+            success=True,
+            output="ok",
+            exit_code=0,
+            task_status=WorkerTaskStatus.COMPLETED,
+        )
+
+    claude = _FakeExecutor("claude", completed)
+    codex = _FakeExecutor("codex", completed)
+    manager = ExecutionManager(config, executors={"claude": claude, "codex": codex})
+
+    result = manager.delegate("review", "do the thing", str(tmp_path), statuses=statuses)
+
+    assert result.provider == "codex"
+    assert codex.calls == 1
+    assert claude.calls == 0
+    assert result.metadata["recommended_provider"] == "codex"
+    assert result.metadata["fallback"] is False
+
+
+def test_execution_manager_delegate_threads_expected_consumption_to_router(tmp_path):
+    from orchestrator.models import ConsumptionBucket, ConsumptionSource, ExpectedConsumption
+
+    config = Config()
+    captured: dict[str, object] = {}
+
+    class StubRouter(Router):
+        def route(self, task_type, statuses, expected_consumption=None, **kwargs):
+            captured["expected_consumption"] = expected_consumption
+            return super().route(
+                task_type, statuses, expected_consumption=expected_consumption, **kwargs
+            )
+
+    def completed(name):
+        return ExecutionResult(
+            provider=name,
+            success=True,
+            output="ok",
+            exit_code=0,
+            task_status=WorkerTaskStatus.COMPLETED,
+        )
+
+    codex = _FakeExecutor("codex", completed)
+    router = StubRouter(config)
+    manager = ExecutionManager(config, router=router, executors={"codex": codex})
+
+    evidence = ExpectedConsumption(
+        bucket=ConsumptionBucket.HIGH,
+        source=ConsumptionSource.HOST_SUPPLIED,
+        basis="test basis",
+    )
+    statuses = (
+        ProviderStatus(name="codex", remaining_percentage=80.0, freshness=Freshness.FRESH),
+    )
+
+    result = manager.delegate(
+        "review",
+        "do the thing",
+        str(tmp_path),
+        statuses=statuses,
+        expected_consumption=evidence,
+    )
+
+    assert result.provider == "codex"
+    assert captured["expected_consumption"] is evidence
+
+
+def test_execution_manager_unavailable_override_does_not_fall_back(tmp_path, *, synthetic_worker_binary):
+    config = load_config()
+    codex_run = RecordingRun()
+    manager = ExecutionManager(
+        config,
+        executors={
+            "codex": CodexExecutor(which=lambda _: None, run=codex_run),
+        },
+    )
+
+    result = manager.delegate(
+        "implementation", "do the thing", str(tmp_path), provider="codex"
+    )
+
+    assert result.success is False
+    assert "not available" in (result.error or "").lower()
+    assert codex_run.calls == []
+
+
+def test_an_uninstalled_default_worker_is_not_substituted(tmp_path, *, synthetic_worker_binary):
+    from orchestrator.registry import (
+        ProviderCapabilities, ProviderPlugin, UsageSourceKind,
+        WORKSPACE_DEVELOPMENT_GRANT, default_registry,
+    )
+    registry = default_registry()
+    plugin = ProviderPlugin(
+        id="test_worker", display_name="Synthetic worker",
+        capabilities=ProviderCapabilities(coding=True, cli_execution=True),
+        usage_source_kind=UsageSourceKind.UNKNOWN,
+        capability_profile=dict(WORKSPACE_DEVELOPMENT_GRANT),
+    )
+    registry.register(plugin)
+    base = load_config()
+    config = replace(base, task_fit={
+        task: {**fits, plugin.id: 0.8} for task, fits in base.task_fit.items()
+    })
+    config.provider_capability_profiles[plugin.id] = plugin.capability_state()
+    config.provider_capabilities[plugin.id] = plugin.capability_state().operational_capabilities
+    codex_run = RecordingRun()
+    substitute = _FakeExecutor(plugin.id, _completed)
+    manager = ExecutionManager(
+        config,
+        registry=registry,
+        executors={
+            "codex": CodexExecutor(which=lambda _: None, run=codex_run),
+            plugin.id: substitute,
+        },
+    )
+
+    result = manager.delegate(
+        "review", "do the thing", str(tmp_path), statuses=(
+            *_statuses(config, tmp_path),
+            ProviderStatus(plugin.id, remaining_percentage=80, freshness=Freshness.FRESH),
+        )
+    )
+
+    # The default worker's CLI is missing: nothing starts, no other worker
+    # is tried, whatever its fit (OSS v1 step 5).
+    assert result.provider == "unknown" and result.task_status == WorkerTaskStatus.BLOCKED
+    assert result.task_status_reason == "no_viable_worker"
+    assert substitute.calls == 0
+    assert codex_run.calls == []
+    # Review advice stays with the host; only Codex is a worker.
+    assert result.metadata["recommended_provider"] == "claude"
+    assert result.metadata["attempted_providers"] == []
+    assert result.metadata["fallback"] is False
+
+
+def test_execution_manager_rejects_missing_working_directory(tmp_path, *, synthetic_worker_binary):
+    config = load_config()
+    codex_run = RecordingRun()
+    manager = ExecutionManager(
+        config,
+        executors={
+            "codex": CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=codex_run),
+        },
+    )
+
+    result = manager.delegate(
+        "review",
+        "do the thing",
+        tmp_path / "does-not-exist",
+        statuses=_statuses(config, tmp_path),
+    )
+
+    assert result.success is False
+    # A read-only result is a closed projection: the path never comes back.
+    assert result.error == "worker_error_reported"
+    assert codex_run.calls == []
+
+
+def test_default_execution_manager_uses_registry_and_respects_disabled_workers():
+    assert set(ExecutionManager(Config()).executors) == {"codex"}
+    disabled = ExecutionManager(
+        Config(
+            providers={
+                "codex": ProviderConfig(enabled=False),
+            }
+        )
+    )
+    assert disabled.executors == {}
+
+
+@pytest.mark.parametrize('task', ['review', 'exploration'], ids=['review', 'explore'])
+def test_delegation_skips_an_injected_claude_executor(tmp_path, task):
+    config = Config()
+    config = replace(config, task_fit={**config.task_fit,
+        task: {'claude': 1.0, 'codex': 0.8}})
+    def result(name):
+        return ExecutionResult(name, True, 'synthetic', 0,
+                               task_status=WorkerTaskStatus.COMPLETED)
+    claude_executor = _FakeExecutor('claude', result)
+    codex_worker = _FakeExecutor('codex', result)
+    manager = ExecutionManager(config, executors={'claude': claude_executor, 'codex': codex_worker})
+    assert claude_executor.is_available()
+    outcome = manager.delegate(task, 'synthetic', tmp_path,
+        statuses=_statuses_with_codex_at(80), now=_QUOTA_NOW, policy_excluded={})
+    assert outcome.metadata['recommended_provider'] == 'claude'
+    assert outcome.provider == 'codex' and codex_worker.calls == 1
+    assert claude_executor.calls == 0
+    # An explicit Claude choice is treated as an unregistered provider.
+    explicit = manager.delegate(task, 'synthetic', tmp_path, provider='claude')
+    assert explicit.task_status is WorkerTaskStatus.BLOCKED
+    assert explicit.task_status_reason == 'provider_not_registered'
+    assert claude_executor.calls == 0 and codex_worker.calls == 1
+
+
+@pytest.mark.parametrize('task', ['review', 'exploration'], ids=['review', 'explore'])
+def test_an_exhausted_codex_still_runs_when_a_delegation_was_asked_for(tmp_path, task):
+    config = Config()
+    config = replace(config, task_fit={**config.task_fit,
+        task: {'claude': 1.0, 'codex': 0.8}})
+    claude_executor = _FakeExecutor('claude', _completed)
+    codex_worker = _FakeExecutor('codex', _completed)
+    manager = ExecutionManager(config, executors={'claude': claude_executor, 'codex': codex_worker})
+
+    outcome = manager.delegate(task, 'synthetic', tmp_path,
+        statuses=_statuses_with_codex_at(0), now=_QUOTA_NOW, policy_excluded={})
+
+    # Quota is display-only: Codex at 0% is still the worker the caller
+    # asked for; the host-only Claude advice never runs anything.
+    assert manager.routed_result.recommendation == 'claude'
+    assert outcome.metadata['recommended_provider'] == 'claude'
+    assert outcome.provider == 'codex'
+    assert claude_executor.calls == 0 and codex_worker.calls == 1
+    assert outcome.metadata['attempted_providers'] == ['codex']
+    assert 'skipped_providers' not in outcome.metadata
+    assert outcome.metadata['fallback'] is False
+    assert 'fallback_from' not in outcome.metadata
+
+
+def test_execution_manager_rejects_file_as_working_directory(tmp_path, *, synthetic_worker_binary):
+    config = load_config()
+    codex_run = RecordingRun()
+    manager = ExecutionManager(
+        config,
+        executors={
+            "codex": CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=codex_run),
+        },
+    )
+    working_file = tmp_path / "not_a_dir.txt"
+    working_file.write_text("not a directory", encoding="utf-8")
+
+    result = manager.delegate(
+        "review",
+        "do the thing",
+        working_file,
+        statuses=_statuses(config, tmp_path),
+    )
+
+    assert result.success is False
+    # A read-only result is a closed projection: the path never comes back.
+    assert result.error == "worker_error_reported"
+    assert codex_run.calls == []
+
+
+# --- task_status / task_completed semantics: process success != task success ---
+#
+# These four cases are the mandatory regression set: a clean exit code alone
+# must never certify task completion, and a worker's own self-reported
+# envelope can never override an independently detected failure signature.
+
+
+def _answer(text):
+    from conftest import codex_event_stream
+
+    return RecordingRun(result=subprocess.CompletedProcess(args=[], returncode=0, stdout=codex_event_stream(text),
+                                                           stderr=""))
+
+
+def test_codex_exit0_with_success_prose_and_no_envelope_is_unknown_not_completed(tmp_path, *, synthetic_worker_binary):
+    run = _answer("I successfully explored the repository and everything requested is done.")
+
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
+
+    assert result.task_status == WorkerTaskStatus.UNKNOWN
+    assert result.task_completed is False
+
+
+def test_codex_exit0_with_marker_and_no_envelope_is_unknown_not_completed(tmp_path, *, synthetic_worker_binary):
+    run = _answer("DONE\nGLOBAL_ORCHESTRATOR_E2E_OK\n")
+
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
+
+    assert result.task_status == WorkerTaskStatus.UNKNOWN
+    assert result.task_completed is False
+
+
+def test_codex_exit0_with_valid_completed_envelope_and_no_signature_is_completed(tmp_path, *, synthetic_worker_binary):
+    envelope = (
+        "```json\n"
+        '{"task_status": "completed", "reason": null, '
+        '"evidence": {"summary": "listed the repo"}}\n'
+        "```"
+    )
+    run = _answer(f"codex\n{envelope}\n")
+
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
+
+    assert result.task_status == WorkerTaskStatus.COMPLETED
+    assert result.task_completed is True
+
+
+def test_codex_strips_windows_apps_alias_from_path_on_windows(tmp_path, monkeypatch, *, synthetic_worker_binary):
+    monkeypatch.setattr(os, "name", "nt")
+    original_path = (
+        r"C:\Users\example\AppData\Local\Microsoft\WindowsApps" + os.pathsep + r"C:\Windows\System32"
+    )
+    monkeypatch.setenv("PATH", original_path)
+    run = RecordingRun()
+
+    CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
+
+    child_path = run.calls[0]["kwargs"]["env"]["PATH"]
+    assert "WindowsApps" not in child_path
+    assert r"C:\Windows\System32" in child_path
+
+
+def test_codex_strips_store_package_windows_apps_dirs_too(tmp_path, monkeypatch, *, synthetic_worker_binary):
+    """Store *package* dirs (C:\\Program Files\\WindowsApps\\<pkg>) carry ACLs
+    that deny execution to Codex's restricted sandbox token: the Store
+    PowerShell there caused CreateProcessAsUserW error 5 (reproduced live,
+    codex-cli 0.147.0). Stripping them lets shell resolution fall through to
+    System32 powershell.exe, which the same sandbox CAN spawn."""
+
+    monkeypatch.setattr(os, "name", "nt")
+    original_path = os.pathsep.join(
+        (
+            r"C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.5.0_x64__8wekyb3d8bbwe",
+            r"C:\Users\example\AppData\Local\Microsoft\WindowsApps",
+            r"C:\Windows\System32",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0",
+        )
+    )
+    monkeypatch.setenv("PATH", original_path)
+    run = RecordingRun()
+
+    CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
+
+    child_path = run.calls[0]["kwargs"]["env"]["PATH"]
+    assert "WindowsApps" not in child_path
+    assert r"C:\Windows\System32" in child_path
+    assert r"C:\Windows\System32\WindowsPowerShell\v1.0" in child_path
+
+
+# --- ExecutionManager: a routed delegation starts at most one worker ---
+#
+# No automatic chain of alternative agents. Once a worker is
+# dispatched its result is the delegation's result, `safe_to_retry` included,
+# and the Host decides whether and where to retry.
+
+
+def test_execution_manager_returns_safe_to_retry_result_without_starting_another_worker(
+    tmp_path,
+):
+    """Was `..._falls_back_past_safe_to_retry_result`, which pinned the chain
+    (a second worker ran after Codex and its result replaced Codex's)."""
+
+    config = load_config()
+    codex_executor = _FakeExecutor(
+        "codex",
+        lambda name: ExecutionResult(
+            provider=name,
+            success=True,
+            output="",
+            exit_code=0,
+            task_status=WorkerTaskStatus.BLOCKED,
+            task_status_reason="sandbox_process_spawn_failed",
+            safe_to_retry=True,
+        ),
+    )
+    second_executor = _FakeExecutor(
+        "zeta",
+        lambda name: ExecutionResult(
+            provider=name,
+            success=True,
+            output="",
+            exit_code=0,
+            task_status=WorkerTaskStatus.COMPLETED,
+            safe_to_retry=False,
+        ),
+    )
+    manager = ExecutionManager(
+        config, executors={"codex": codex_executor, "zeta": second_executor}
+    )
+
+    result = manager.delegate(
+        "review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
+    )
+
+    assert codex_executor.calls == 1
+    assert second_executor.calls == 0
+    assert result.provider == "codex"
+    assert result.task_status == WorkerTaskStatus.BLOCKED
+    # A read-only result carries only closed reason labels.
+    assert result.task_status_reason == "worker_reported"
+    assert result.safe_to_retry is True
+    assert result.metadata["attempted_providers"] == ["codex"]
+    # Review advice stays with the host; Codex is the only worker.
+    assert result.metadata["recommended_provider"] == "claude"
+    assert result.metadata["fallback"] is False
+    assert "fallback_from" not in result.metadata
+
+
+def test_execution_manager_does_not_fall_back_past_failed_result(tmp_path):
+    config = load_config()
+    codex_executor = _FakeExecutor(
+        "codex",
+        lambda name: ExecutionResult(
+            provider=name,
+            success=False,
+            output="",
+            exit_code=1,
+            task_status=WorkerTaskStatus.FAILED,
+            task_status_reason="process_exit_1",
+            safe_to_retry=False,
+        ),
+    )
+    second_executor = _FakeExecutor(
+        "zeta",
+        lambda name: ExecutionResult(
+            provider=name, success=True, output="", exit_code=0, task_status=WorkerTaskStatus.COMPLETED
+        ),
+    )
+    manager = ExecutionManager(
+        config, executors={"codex": codex_executor, "zeta": second_executor}
+    )
+
+    result = manager.delegate(
+        "review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
+    )
+
+    assert codex_executor.calls == 1
+    assert second_executor.calls == 0
+    assert result.provider == "codex"
+    assert result.task_status == WorkerTaskStatus.FAILED
+
+
+def test_execution_manager_blocked_without_safe_to_retry_does_not_fall_back(tmp_path):
+    """A future BLOCKED case that forgets to prove safe_to_retry must fail closed."""
+
+    config = load_config()
+    codex_executor = _FakeExecutor(
+        "codex",
+        lambda name: ExecutionResult(
+            provider=name,
+            success=False,
+            output="",
+            exit_code=1,
+            task_status=WorkerTaskStatus.BLOCKED,
+            task_status_reason="unspecified",
+            # safe_to_retry deliberately left at its default (False).
+        ),
+    )
+    second_executor = _FakeExecutor(
+        "zeta",
+        lambda name: ExecutionResult(
+            provider=name, success=True, output="", exit_code=0, task_status=WorkerTaskStatus.COMPLETED
+        ),
+    )
+    manager = ExecutionManager(
+        config, executors={"codex": codex_executor, "zeta": second_executor}
+    )
+
+    result = manager.delegate(
+        "review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
+    )
+
+    assert codex_executor.calls == 1
+    assert second_executor.calls == 0
+    assert result.provider == "codex"
+    assert result.task_status == WorkerTaskStatus.BLOCKED
+
+
+def test_execution_manager_safe_to_retry_result_is_not_replaced_by_no_viable_worker(
+    tmp_path,
+):
+    """Was `..._all_candidates_blocked_returns_honest_no_viable_worker`.
+
+    The chain ran both workers and then threw the real result away for a
+    synthetic `no_viable_worker` naming `unknown`. The honest outcome is the
+    dispatched worker's own: it is still not a completed task, and it still
+    says it is safe to retry.
+    """
+
+    config = load_config()
+    codex_executor = _FakeExecutor(
+        "codex",
+        lambda name: ExecutionResult(
+            provider=name,
+            success=False,
+            output="",
+            exit_code=None,
+            task_status=WorkerTaskStatus.BLOCKED,
+            task_status_reason="sandbox_process_spawn_failed",
+            safe_to_retry=True,
+        ),
+    )
+    second_executor = _FakeExecutor(
+        "zeta",
+        lambda name: ExecutionResult(
+            provider=name,
+            success=False,
+            output="",
+            exit_code=None,
+            task_status=WorkerTaskStatus.BLOCKED,
+            task_status_reason="permission_required",
+            safe_to_retry=True,
+        ),
+    )
+    manager = ExecutionManager(
+        config, executors={"codex": codex_executor, "zeta": second_executor}
+    )
+
+    result = manager.delegate(
+        "review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
+    )
+
+    assert codex_executor.calls == 1
+    assert second_executor.calls == 0
+    assert result.provider == "codex"
+    assert result.task_status == WorkerTaskStatus.BLOCKED
+    # A read-only result carries only closed reason labels.
+    assert result.task_status_reason == "worker_reported"
+    assert result.safe_to_retry is True
+    assert result.task_completed is False
+    assert "No viable delegated worker" not in (result.error or "")
+
+
+def test_outcome_evidence_validation_and_roundtrip():
+    evidence = OutcomeEvidence(
+        process_success=True,
+        semantic_status="completed",
+        files_changed=("src/file1.py", "src/file2.py"),
+        tests_executed=True,
+        tests_passed=True,
+        build_passed=True,
+        lint_passed=True,
+        artifact_validated=True,
+        scope_matches=True,
+        fallback_used=False,
+        blocked_reason=None,
+        duration_seconds=12.5,
+        verification_level="objective",
+    )
+    payload = evidence.to_dict()
+    assert payload["verification_level"] == "objective"
+    assert payload["verified"] is True
+    assert payload["files_changed"] == ["src/file1.py", "src/file2.py"]
+
+    restored = OutcomeEvidence.from_dict(payload)
+    assert restored == evidence
+
+    # Invalid verification_level rejected
+    with pytest.raises(ValueError, match="verification_level"):
+        OutcomeEvidence(verification_level="speculative")
+
+
+def test_outcome_evidence_verified_property_semantics():
+    # Objective with tests_passed None and build_passed None -> True
+    e1 = OutcomeEvidence(verification_level="objective")
+    assert e1.verified is True
+
+    # Objective with tests_passed True and build_passed True -> True
+    e2 = OutcomeEvidence(verification_level="objective", tests_passed=True, build_passed=True)
+    assert e2.verified is True
+
+    # Objective with tests_passed False -> False
+    e3 = OutcomeEvidence(verification_level="objective", tests_passed=False)
+    assert e3.verified is False
+
+    # Objective with build_passed False -> False
+    e4 = OutcomeEvidence(verification_level="objective", build_passed=False)
+    assert e4.verified is False
+
+    # Non-objective levels are never verified
+    for level in ("semantic", "process", "none"):
+        e = OutcomeEvidence(verification_level=level, tests_passed=True, build_passed=True)
+        assert e.verified is False
+
+
+def test_execution_result_verified_completed_truth_table():
+    objective_verified = OutcomeEvidence(verification_level="objective", tests_passed=True)
+    objective_unverified = OutcomeEvidence(verification_level="objective", tests_passed=False)
+    semantic_evidence = OutcomeEvidence(verification_level="semantic")
+
+    # 1. Completed + verified objective evidence -> True
+    r1 = ExecutionResult(
+        provider="codex",
+        success=True,
+        output="ok",
+        exit_code=0,
+        task_status=WorkerTaskStatus.COMPLETED,
+        evidence=objective_verified,
+    )
+    assert r1.task_completed is True
+    assert r1.verified_completed is True
+    assert r1.to_dict()["evidence"]["verified"] is True
+
+    # 2. Completed + no evidence -> False
+    r2 = ExecutionResult(
+        provider="codex",
+        success=True,
+        output="ok",
+        exit_code=0,
+        task_status=WorkerTaskStatus.COMPLETED,
+        evidence=None,
+    )
+    assert r2.task_completed is True
+    assert r2.verified_completed is False
+    assert r2.to_dict()["evidence"] is None
+
+    # 3. Completed + unverified evidence -> False
+    r3 = ExecutionResult(
+        provider="codex",
+        success=True,
+        output="ok",
+        exit_code=0,
+        task_status=WorkerTaskStatus.COMPLETED,
+        evidence=objective_unverified,
+    )
+    assert r3.task_completed is True
+    assert r3.verified_completed is False
+
+    # 4. Non-completed + verified objective evidence -> False
+    for status in (
+        WorkerTaskStatus.FAILED,
+        WorkerTaskStatus.BLOCKED,
+        WorkerTaskStatus.PARTIAL,
+        WorkerTaskStatus.UNKNOWN,
+    ):
+        r4 = ExecutionResult(
+            provider="codex",
+            success=False,
+            output="fail",
+            exit_code=1,
+            task_status=status,
+            evidence=objective_verified,
+        )
+        assert r4.task_completed is False
+        assert r4.verified_completed is False
+
+
+def test_no_window_kwargs_branches():
+    """Both branches are exercised through the explicit os_name argument --
+    monkeypatching the global ``os.name`` would break pathlib (Path would try
+    to instantiate PosixPath on Windows), which is exactly why the helper
+    takes this parameter."""
+
+    nt_kwargs = no_window_kwargs("nt")
+    assert nt_kwargs["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    assert nt_kwargs["creationflags"] & 0x08000000 != 0
+    assert nt_kwargs["stdin"] is subprocess.DEVNULL
+
+    assert no_window_kwargs("posix") == {"stdin": subprocess.DEVNULL}
+
+
+def test_no_window_kwargs_fallback_when_attribute_missing(monkeypatch):
+    import orchestrator.procutil as procutil_module
+
+    monkeypatch.setattr(procutil_module, "subprocess", object())
+    assert no_window_kwargs("nt") == {"stdin": subprocess.DEVNULL, "creationflags": 0x08000000}
+
+
+def test_no_window_kwargs_reexports_canonical():
+    """Assert execution.base and usage.base re-export the exact canonical object."""
+    import orchestrator.execution.base as exec_base
+    import orchestrator.procutil as procutil_module
+    import orchestrator.usage.base as usage_base
+
+    assert exec_base.no_window_kwargs is procutil_module.no_window_kwargs
+    assert usage_base.no_window_kwargs is procutil_module.no_window_kwargs
+
+
+def test_codex_executor_passes_create_no_window_on_windows(tmp_path, *, synthetic_worker_binary):
+    """This suite runs on Windows, so the executor must actually pass the flag
+    here -- and it must come from the shared helper rather than a hardcoded
+    literal, which the equality against ``no_window_kwargs()`` proves."""
+
+    run = RecordingRun()
+    CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
+
+    call = run.calls[0]
+    assert call["kwargs"].get("creationflags") == no_window_kwargs().get("creationflags")
+    if os.name == "nt":
+        assert call["kwargs"]["creationflags"] & 0x08000000 != 0
+
+
+def test_codex_executor_omits_creationflags_on_non_windows(tmp_path, monkeypatch, *, synthetic_worker_binary):
+    """A posix helper result must reach the executor as *no* kwarg at all --
+    never ``creationflags=0``, which POSIX subprocess would reject."""
+
+    import orchestrator.execution.codex as codex_module
+
+    monkeypatch.setattr(
+        codex_module, "no_window_kwargs", lambda *a, **k: no_window_kwargs("posix", **k)
+    )
+    run = RecordingRun()
+    CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
+
+    assert "creationflags" not in run.calls[0]["kwargs"]
+
+
+# --------------------------------------------------------------------------
+# Persisted argv carries no absolute path, on EVERY exit path
+# --------------------------------------------------------------------------
+
+
+def _codex_metadata_command(run, tmp_path, *, synthetic_worker_binary):
+    """The `command` metadata a codex run persists, whatever its outcome."""
+    result = CodexExecutor(
+        which=lambda _: synthetic_worker_binary("codex.exe"), run=run
+    ).execute(_request(tmp_path))
+    return result.metadata.get("command")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(subprocess.TimeoutExpired(cmd="codex", timeout=1.0), id="timed_out"),
+        pytest.param(FileNotFoundError(), id="cli_not_found"),
+        pytest.param(OSError("denied"), id="launch_failed"),
+    ],
+)
+def test_codex_failure_paths_persist_no_absolute_path(tmp_path, failure, synthetic_worker_binary):
+    """AGENTS.md: "persisted argv carries no absolute path".
+
+    `metadata` is written straight into `execution_history.metadata_json`, so
+    this rule binds every exit from the executor -- not just the one that
+    happened to build a redacted copy. The success path always redacted;
+    timeout, missing-CLI and launch-failure stored `argv` raw, which is the
+    resolved ABSOLUTE binary location.
+    """
+
+    def run(*_args, **_kwargs):
+        raise failure
+
+    command = _codex_metadata_command(run, tmp_path, synthetic_worker_binary=synthetic_worker_binary)
+
+    assert command is not None
+    assert command[0] == "codex.exe"
+    assert not any("Program Files" in str(token) for token in command)
+    assert not any(re.match(r"^[A-Za-z]:[\/]", str(token)) for token in command)
+
+
+@pytest.mark.parametrize("error_type", [TypeError, OSError, FileNotFoundError])
+def test_codex_stdin_writer_error_preserves_descendants_in_attempt(tmp_path, monkeypatch, error_type, *, synthetic_worker_binary, qualified_codex_inventory):
+    """The executor's error result reaches the real attempt/history writers."""
+
+    import importlib
+    from orchestrator.execution.base import bound_descendant_facts
+    from orchestrator.service import db as service_db
+    from orchestrator.service import history as service_history
+
+    mcp_server = importlib.import_module("orchestrator.mcp.server")
+    failure = error_type("private writer output C:/private/project/file")
+    failure.worker_descendants = _left(123, image="C:/private/tools/python.exe")
+    expected = bound_descendant_facts(failure.worker_descendants)
+    run = RecordingRun(exc=failure)
+    # Read-only workers qualify a native binary, never an npm batch shim.
+    executor = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run,
+                             inventory=qualified_codex_inventory)
+    monkeypatch.setattr(
+        mcp_server, "_build_execution_manager",
+        lambda config: ExecutionManager(config, executors={"codex": executor}),
+    )
+    db_path = tmp_path / "history.db"
+    monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
+    _write_usage_fixtures(tmp_path)
+    payload = mcp_server._delegate_payload(
+        "review", "do the thing", str(tmp_path),
+        provider="codex", usage_directory=str(tmp_path),
+    )
+    assert len(run.calls) == 1
+    assert payload["task_status"] == "failed"
+    assert payload["reason"] == "stdin_write_failed"
+    assert payload["metadata"]["worker_descendants"] == expected
+    assert payload["process_success"] is False
+    assert payload["task_completed"] is False
+    assert payload["output"] == ""
+    assert payload["metadata"]["worker_started"] is True
+    assert payload["metadata"]["noshell_qualified"] is True
+    assert payload["metadata"]["noshell_verified_by_event_stream"] is False
+    assert payload["metadata"]["noshell_violated"] is True
+    assert "noshell_violated" in payload["limitations"]
+    assert "worker_has_no_command_tools" not in payload["limitations"]
+    conn = service_db.connect_and_init(db_path)
+    try:
+        attempt, = conn.execute("SELECT * FROM delegation_attempts").fetchall()
+        execution, = conn.execute("SELECT * FROM execution_history").fetchall()
+    finally:
+        conn.close()
+    assert attempt["status"] == "completed"
+    assert attempt["outcome"] == "failed"
+    assert attempt["detail"] == "stdin_write_failed"
+    assert attempt["resolved_at"] is not None
+    assert json.loads(attempt["worker_descendants"]) == expected
+    assert json.loads(execution["metadata_json"])["worker_descendants"] == expected
+    persisted = json.dumps([dict(attempt), dict(execution)])
+    assert "private" not in persisted
+    assert "writer output" not in persisted
+
+
+@pytest.mark.parametrize(
+    "qualified,unified_exec,verified,violated,collaboration",
+    [
+        pytest.param(True, True, True, False, False, id="verified"),
+        pytest.param(True, False, True, False, False, id="verified-unified-exec-false"),
+        pytest.param(True, True, False, True, False, id="violated"),
+        pytest.param(True, True, False, True, True, id="collaboration"),
+        pytest.param(False, None, False, False, False, id="unavailable"),
+    ],
+)
+def test_private_result_preserves_closed_noshell_evidence(
+    qualified, unified_exec, verified, violated, collaboration,
+):
+    from orchestrator import project_notes
+    from orchestrator.execution import noshell
+
+    metadata = {
+        **noshell.Qualification(qualified, "private digest", "private version", unified_exec).metadata,
+        **noshell.StreamVerification(verified, violated, collaboration).metadata,
+        "command": ["codex.exe", "C:/private/project/file"],
+        "noshell_unknown": "private worker prose",
+    }
+    labels = noshell.limitations(metadata, (
+        "worker_command_refusal_not_enforced", "worker_reads_not_confined",
+        "diagnosis_is_not_verification", "live_workspace_not_isolated",
+    ))
+    result = ExecutionResult(
+        provider="codex", success=verified, output="", exit_code=0,
+        metadata=metadata, limitations=(*labels, "private worker prose", "noshell_unknown", 1),
+    )
+
+    clean = project_notes.private_result(result)
+
+    expected = {
+        "noshell_qualified": qualified,
+        "noshell_verified_by_event_stream": verified,
+        "noshell_violated": violated,
+        "noshell_collaboration_called": collaboration,
+    }
+    if type(unified_exec) is bool:
+        expected["noshell_unified_exec_observed"] = unified_exec
+    assert clean.metadata == expected
+    assert clean.limitations == labels
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(None, id="unknown"),
+        pytest.param(0, id="integer-zero"),
+        pytest.param(1, id="integer-one"),
+        pytest.param("true C:/private/project/file", id="prose"),
+        pytest.param({"command": "private command"}, id="mapping"),
+        pytest.param([True], id="list"),
+    ],
+)
+def test_private_result_rejects_non_boolean_noshell_metadata(value):
+    from orchestrator import project_notes
+
+    metadata = dict.fromkeys((
+        "noshell_qualified", "noshell_unified_exec_observed",
+        "noshell_verified_by_event_stream", "noshell_violated", "noshell_collaboration_called",
+    ), value)
+    result = ExecutionResult(provider="codex", success=False, output="", exit_code=None, metadata=metadata)
+
+    assert project_notes.private_result(result).metadata == {}
+
+
+def test_codex_closes_unattributed_runner_errors_without_their_text(tmp_path, synthetic_worker_binary):
+    failure = TypeError("runner programming error")
+    result = CodexExecutor(which=lambda _: synthetic_worker_binary("codex.exe"),
+                           run=RecordingRun(exc=failure)).execute(_request(tmp_path))
+    assert result.task_status_reason == "worker_noshell_unavailable"
+    assert result.output == ""
+    assert "runner programming error" not in json.dumps(result.to_dict(), default=str)
+
+
+def test_codex_success_path_still_persists_no_absolute_path(tmp_path, synthetic_worker_binary):
+    """The behaviour the failure paths were brought into line with."""
+
+    from conftest import codex_event_stream
+
+    def run(*_args, **_kwargs):
+        return subprocess.CompletedProcess([], 0, codex_event_stream(), "")
+
+    command = _codex_metadata_command(run, tmp_path, synthetic_worker_binary=synthetic_worker_binary)
+
+    assert command[0] == "codex.exe"
+    assert not any(re.match(r"^[A-Za-z]:[\/]", str(token)) for token in command)
+
+
+# --- ExecutionManager: the pre-dispatch substitute is quota-aware ---
+#
+# `ProviderScore.quota_tier` is evidence-only, so nothing downstream of the
+# router enforced it. When the recommendation cannot be started here, the
+# manager picks the best-ranked candidate it can start instead -- and ranked
+# by score alone it would run a candidate the quota stage had just routed away
+# from, spending the very window the decision existed to protect. These four
+# cases pin the rule, its one exception ('spend'), and the two edges it must
+# not overreach past: TIGHT is not a substitution bar, and a refused provider
+# is never a candidate at all. With single dispatch a worker's result is
+# final, so the cases that exercise the substitution make the recommendation
+# unstartable rather than let it return `safe_to_retry`.
+
+
+_QUOTA_NOW = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+
+
+def _fresh_status(name, remaining):
+    return ProviderStatus(
+        name=name,
+        available=True,
+        remaining_percentage=remaining,
+        observed_at=_QUOTA_NOW,
+        freshness=Freshness.FRESH,
+    )
+
+
+def _statuses_with_codex_at(remaining):
+    """Fresh statuses with Codex's binding window at `remaining` percent.
+
+    Built directly rather than through the usage fixtures: a tier is only ever
+    read off a FRESH observation, and the fixture files carry no timestamp.
+    """
+
+    return (
+        _fresh_status("claude", 80.0),
+        _fresh_status("codex", remaining),
+    )
+
+
+def _spawn_failed(name):
+    return ExecutionResult(
+        provider=name,
+        success=False,
+        output="",
+        exit_code=None,
+        task_status=WorkerTaskStatus.BLOCKED,
+        task_status_reason="sandbox_process_spawn_failed",
+        safe_to_retry=True,
+    )
+
+
+def _completed(name):
+    return ExecutionResult(
+        provider=name,
+        success=True,
+        output="",
+        exit_code=0,
+        task_status=WorkerTaskStatus.COMPLETED,
+        safe_to_retry=False,
+    )
+
+
+def test_an_exhausted_default_worker_is_not_skipped(tmp_path):
+    """Host-only Claude is the advice; Codex at 5% still runs when asked."""
+
+    config = load_config()
+    # Keep Claude recommended by a wide margin; Codex runs read-only tasks only.
+    config = replace(config, task_fit={**config.task_fit, "review": {
+        "claude": 1.0, "codex": 0.55,
+    }})
+    codex_executor = _FakeExecutor("codex", _completed)
+    manager = ExecutionManager(config, executors={"codex": codex_executor})
+
+    result = manager.delegate(
+        "review",
+        "do the thing",
+        str(tmp_path),
+        statuses=_statuses_with_codex_at(5.0),
+        now=_QUOTA_NOW,
+    )
+
+    assert codex_executor.calls == 1
+    assert result.provider == "codex"
+    assert result.task_status == WorkerTaskStatus.COMPLETED
+    assert result.metadata["recommended_provider"] == "claude"
+    assert result.metadata["attempted_providers"] == ["codex"]
+    assert "skipped_providers" not in result.metadata
+    assert result.metadata["fallback"] is False
+
+
+def test_a_tight_default_worker_runs_and_nothing_is_substituted(tmp_path):
+
+    config = load_config()
+    codex_executor = _FakeExecutor("codex", _completed)
+    second_executor = _FakeExecutor("zeta", _spawn_failed, available=False)
+    manager = ExecutionManager(
+        config, executors={"codex": codex_executor, "zeta": second_executor}
+    )
+
+    result = manager.delegate(
+        "architecture",
+        "do the thing",
+        str(tmp_path),
+        statuses=_statuses_with_codex_at(20.0),
+    )
+
+    assert second_executor.calls == 0
+    assert codex_executor.calls == 1
+    assert result.provider == "codex"
+    assert result.task_status == WorkerTaskStatus.COMPLETED
+    assert "skipped_providers" not in result.metadata
+    assert result.metadata["attempted_providers"] == ["codex"]
+    assert result.metadata["fallback"] is False
+    assert "fallback_from" not in result.metadata
+
+
+def test_fallback_never_reaches_a_refused_provider(tmp_path):
+    """Existing behaviour, asserted: a refusal removes the candidate entirely.
+
+    The overlay sets `available=False`, which makes the provider ineligible
+    before scoring -- so it is not in the loop at all, and is not merely
+    skipped inside it.
+    """
+
+    config = load_config()
+    statuses = apply_refusal_overlay(
+        _statuses_with_codex_at(80.0),
+        # The refusal must be NEWER than the snapshot it contradicts.
+        [QuotaRefusal(provider="codex", observed_at=_QUOTA_NOW + timedelta(seconds=60))],
+        _QUOTA_NOW + timedelta(seconds=120),
+    )
+    codex_executor = _FakeExecutor("codex", _completed)
+    second_executor = _FakeExecutor("zeta", _spawn_failed)
+    manager = ExecutionManager(
+        config, executors={"codex": codex_executor, "zeta": second_executor}
+    )
+
+    result = manager.delegate(
+        "implementation", "do the thing", str(tmp_path), statuses=statuses
+    )
+
+    assert codex_executor.calls == 0
+    assert "codex" not in result.metadata["attempted_providers"]
+    assert result.metadata.get("skipped_providers", []) == []
+    assert second_executor.calls == 0
+    assert result.metadata["attempted_providers"] == []
+    assert result.provider == "unknown"
+    assert result.task_status_reason == "no_viable_worker"
+    assert result.safe_to_retry is False
+
+
+def _left(pid, image="node.exe", created=1.0, enumerated=True, **extra):
+    facts = {"enumerated": enumerated, "method": "toolhelp32", "observed_at": 2.0, "descendants": [{"pid": pid, "image": image, "created": created}]}
+    facts.update(extra)
+    return facts
+
+
+def test_a_routed_workers_leftovers_are_its_own_record_not_a_merge(tmp_path):
+    """Was `test_fallback_chain_accounts_for_every_workers_leftovers_not_only_the_last`.
+
+    An earlier change made one attempt's row carry every worker's leftovers because
+    the chain could run two. A routed delegation now runs one, so the row is
+    that worker's own record, unmerged -- and the worker that is never started
+    leaves nothing to account for. The merge itself is still pinned by
+    `tests/test_delegation_workspace_liveness.py::test_merge_descendant_facts_semantics`,
+    because a multi-step plan still uses it.
+    """
+
+    config = load_config()
+    codex_executor = _FakeExecutor(
+        "codex",
+        lambda name: ExecutionResult(
+            provider=name, success=True, output="", exit_code=0,
+            task_status=WorkerTaskStatus.BLOCKED, task_status_reason="sandbox_process_spawn_failed",
+            safe_to_retry=True, metadata={"worker_descendants": _left(111)},
+        ),
+    )
+    second_executor = _FakeExecutor(
+        "zeta",
+        lambda name: ExecutionResult(
+            provider=name, success=True, output="", exit_code=0,
+            task_status=WorkerTaskStatus.COMPLETED, metadata={"worker_descendants": _left(222, image="python.exe")},
+        ),
+    )
+    manager = ExecutionManager(config, executors={"codex": codex_executor, "zeta": second_executor})
+
+    result = manager.delegate("review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path))
+
+    assert second_executor.calls == 0
+    # The closed read-only projection states truncation and reason explicitly.
+    assert result.metadata["worker_descendants"] == {**_left(111), "truncated": False, "reason": None}
+    assert result.metadata["worker_descendants"]["method"] != "merged"
+    assert [item["pid"] for item in result.metadata["worker_descendants"]["descendants"]] == [111]
+
+
+def test_a_routed_worker_that_did_not_look_gets_no_invented_record(tmp_path):
+    """Was `test_fallback_chain_with_an_unobserved_worker_is_not_an_enumeration`.
+
+    With one worker per routed delegation there is no union to have a hole in:
+    a worker that attached no facts leaves the row saying nothing, and no
+    other worker's enumeration is borrowed to stand in for it.
+    """
+
+    config = load_config()
+    codex_executor = _FakeExecutor(
+        "codex",
+        lambda name: ExecutionResult(
+            provider=name, success=True, output="", exit_code=0,
+            task_status=WorkerTaskStatus.BLOCKED, task_status_reason="sandbox_process_spawn_failed",
+            safe_to_retry=True,  # a runner that did not look attaches nothing
+        ),
+    )
+    second_executor = _FakeExecutor(
+        "zeta",
+        lambda name: ExecutionResult(
+            provider=name, success=True, output="", exit_code=0,
+            task_status=WorkerTaskStatus.COMPLETED, metadata={"worker_descendants": _left(222)},
+        ),
+    )
+    manager = ExecutionManager(config, executors={"codex": codex_executor, "zeta": second_executor})
+
+    result = manager.delegate("review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path))
+
+    assert second_executor.calls == 0
+    assert result.provider == "codex"
+    assert "worker_descendants" not in result.metadata
+
+
+def test_a_single_worker_result_is_carried_as_is(tmp_path):
+    config = load_config()
+    codex_executor = _FakeExecutor(
+        "codex",
+        lambda name: ExecutionResult(
+            provider=name, success=True, output="", exit_code=0,
+            task_status=WorkerTaskStatus.COMPLETED, metadata={"worker_descendants": _left(222)},
+        ),
+    )
+    manager = ExecutionManager(config, executors={"codex": codex_executor})
+
+    result = manager.delegate("review", "do the thing", str(tmp_path), provider="codex", statuses=_statuses(config, tmp_path))
+
+    assert result.metadata["worker_descendants"] == {**_left(222), "truncated": False, "reason": None}
+
+
+# --- The headline status answers one question --------------------------------
+#
+# Four consecutive delegations came back `blocked` with the work complete and
+# correct, because the envelope instruction told every worker "use blocked if
+# any tool call was denied". The contract (2026-09-14): `completed` when
+# the objective was done, a denied NON-ESSENTIAL tool reported separately as a
+# limitation, `blocked` only for a REQUIRED capability that was unavailable.
+
+
+def test_envelope_instruction_states_the_completion_contract():
+    from orchestrator.execution.base import _COMPLETION_ENVELOPE_INSTRUCTION as text
+    from orchestrator.execution.base import parse_completion_envelope, worker_limitations
+
+    lowered = text.lower()
+    assert "any tool call was denied" not in lowered, (
+        "the old rule turned every denied tool call into a blocked headline"
+    )
+    assert '"limitations"' in text
+    assert "even if some tool call was denied" in lowered
+    assert "only if the task could not be completed" in lowered
+    assert "required" in lowered
+    # The example the worker is told to copy "exactly" must itself be an
+    # envelope the product's own parser accepts -- valid JSON is not enough,
+    # the status has to be one of the allowed four -- or a worker that
+    # follows it literally is classified UNKNOWN (Round 1 and Round 3
+    # review blockers). Read it with the real parser, not a JSON decoder.
+    parsed = parse_completion_envelope(text)
+    assert parsed is not None
+    assert set(parsed) == {"task_status", "reason", "limitations", "evidence"}
+    assert parsed["task_status"] == "completed"
+    assert isinstance(parsed["limitations"], list) and len(parsed["limitations"]) == 1
+    assert worker_limitations(text) == tuple(parsed["limitations"])
+    for status in ("completed", "blocked", "partial", "failed"):
+        assert f'"{status}"' in text
+
+
+def test_completed_with_limitations_is_completed_and_the_limitations_are_carried():
+    from orchestrator.execution.base import classify_worker_result, worker_limitations
+
+    output = (
+        "Fixed the bug and ran the focused tests.\n```json\n"
+        '{"task_status": "completed", "reason": null, '
+        '"limitations": ["temp-directory cleanup was denied; left the scratch files in place", '
+        '"network test could not run in the sandbox; verified with the offline fixture"], '
+        '"evidence": {"summary": "3 tests pass"}}\n```'
+    )
+    status, reason, retry = classify_worker_result(
+        returncode=0, combined_output=output, primary_output=output
+    )
+    assert status is WorkerTaskStatus.COMPLETED and reason is None and retry is False
+    assert worker_limitations(output) == (
+        "temp-directory cleanup was denied; left the scratch files in place",
+        "network test could not run in the sandbox; verified with the offline fixture",
+    )
+
+
+def test_limitations_are_absent_not_fatal_when_missing_or_malformed():
+    from orchestrator.execution.base import classify_worker_result, worker_limitations
+
+    plain = '```json\n{"task_status": "completed", "reason": null}\n```'
+    assert worker_limitations(plain) == ()
+    assert worker_limitations("no envelope at all") == ()
+    # A bare string is not the list the schema names and is dropped whole;
+    # non-string and blank members are dropped; a dict is not a list and
+    # yields nothing. None of it changes the headline.
+    single = '```json\n{"task_status": "completed", "limitations": "one denied call"}\n```'
+    assert worker_limitations(single) == ()
+    mixed = (
+        '```json\n{"task_status": "completed", '
+        '"limitations": [42, "", "  kept  ", null, {"x": 1}]}\n```'
+    )
+    assert worker_limitations(mixed) == ("kept",)
+    wrong_shape = '```json\n{"task_status": "completed", "limitations": {"a": "b"}}\n```'
+    assert worker_limitations(wrong_shape) == ()
+    for text in (single, mixed, wrong_shape):
+        status, _, _ = classify_worker_result(returncode=0, combined_output=text, primary_output=text)
+        assert status is WorkerTaskStatus.COMPLETED
+
+
+def test_limitations_are_bounded():
+    from orchestrator.execution.base import worker_limitations
+    import json as _json
+
+    text = "```json\n" + _json.dumps(
+        {"task_status": "completed", "limitations": ["x" * 2000] + [f"l{i}" for i in range(40)]}
+    ) + "\n```"
+    kept = worker_limitations(text)
+    assert len(kept) == 20
+    assert len(kept[0]) == 500
+
+
+def test_a_blocked_envelope_with_limitations_stays_blocked_and_keeps_them():
+    """`blocked` is the worker's judgement that a REQUIRED capability was
+    missing; the contract keeps that judgement. Limitations ride beside it."""
+
+    from orchestrator.execution.base import classify_worker_result, worker_limitations
+
+    text = (
+        '```json\n{"task_status": "blocked", '
+        '"reason": "the edit tool itself was denied; nothing could be written", '
+        '"limitations": ["also could not read the docs directory"]}\n```'
+    )
+    status, reason, retry = classify_worker_result(returncode=0, combined_output=text, primary_output=text)
+    assert status is WorkerTaskStatus.BLOCKED
+    assert reason == "the edit tool itself was denied; nothing could be written"
+    assert retry is True
+    assert worker_limitations(text) == ("also could not read the docs directory",)
+
+
+def test_execution_result_surfaces_limitations_beside_the_headline():
+    from orchestrator.execution.base import ExecutionResult
+
+    result = ExecutionResult(
+        provider="codex",
+        success=True,
+        output="",
+        exit_code=0,
+        task_status=WorkerTaskStatus.COMPLETED,
+        limitations=("cleanup denied",),
+    )
+    payload = result.to_dict()
+    assert payload["task_status"] == "completed"
+    assert payload["task_completed"] is True
+    assert payload["limitations"] == ["cleanup denied"]
+    assert ExecutionResult(provider="codex", success=True, output="", exit_code=0).to_dict()["limitations"] == []

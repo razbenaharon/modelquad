@@ -1,0 +1,17 @@
+{
+  "synthetic": true,
+  "description": "Explicit Host checkpoints in a scripted task; no automatic trigger or usefulness claim.",
+  "steps": [
+    {"kind": "clarification", "request": false},
+    {"kind": "progress_update", "request": false},
+    {"kind": "minor_edit", "request": false},
+    {"kind": "material_change", "request": true, "checkpoint": "material_step", "target": "first", "created": true},
+    {"kind": "wording_change", "request": true, "checkpoint": "material_step", "target": "first", "created": false},
+    {"kind": "after_acknowledgement", "request": true, "checkpoint": "material_step", "target": "first", "acknowledge": true, "created": true},
+    {"kind": "completion", "request": true, "checkpoint": "before_completion", "target": "second", "created": true}
+  ],
+  "expected_starts": 3,
+  "disabled_expected_starts": 0,
+  "usage": "unknown",
+  "cost": "unknown"
+}

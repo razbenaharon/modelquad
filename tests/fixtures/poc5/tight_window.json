@@ -1,0 +1,22 @@
+{
+  "synthetic": true,
+  "description": "A tight window is shown, never used to choose: advice follows task fit.",
+  "input": {
+    "strategy": "quota_saving",
+    "readings": {
+      "claude": {
+        "remaining": 20
+      },
+      "codex": {
+        "remaining": 90
+      }
+    },
+    "task_fit": {
+      "claude": 1.0,
+      "codex": 0.8
+    }
+  },
+  "expected_advice": "claude",
+  "requested_runtime": "codex",
+  "expected_delegate_verdict": "allowed"
+}

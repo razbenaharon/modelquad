@@ -1,0 +1,94 @@
+name: Bug report
+description: Something in ModelQuad does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem.
+
+        **Security problems do not belong here.** Report them privately, as
+        described in SECURITY.md.
+
+        Before you paste any output, remove anything private: user names,
+        folder paths, repository names, prompts, code, tokens or keys.
+  - type: input
+    id: modelquad-version
+    attributes:
+      label: ModelQuad version
+      description: Output of `modelquad --version`.
+    validations:
+      required: true
+  - type: input
+    id: source-revision
+    attributes:
+      label: Source revision
+      description: |
+        If you installed from a git checkout, the output of
+        `git rev-parse --short HEAD` in that checkout. Write "release" if you
+        installed a published release.
+    validations:
+      required: true
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: For example "Windows 11 Pro 24H2". Run `winver` if unsure.
+    validations:
+      required: true
+  - type: input
+    id: claude-code-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+    validations:
+      required: true
+  - type: input
+    id: codex-version
+    attributes:
+      label: Codex CLI version
+      description: Output of `codex --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe what you saw. Include the exact error message if there was one.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `modelquad doctor`
+      description: |
+        Paste the output of `modelquad doctor`.
+        **Warning:** it can show folder paths, your Windows user name and
+        installed tools. Remove anything you do not want to make public
+        before you submit.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Other details that may help, such as whether the optional service is installed.
+    validations:
+      required: false

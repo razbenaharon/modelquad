@@ -1,0 +1,9 @@
+ModelQuad
+Copyright 2026 Raz Ben Aharon
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+ModelQuad is distributed as source code only and bundles no third-party
+code. Its dependencies are installed separately, from their own
+distributions and under their own licences; THIRD_PARTY.md lists them for
+information.

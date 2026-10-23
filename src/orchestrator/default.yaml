@@ -1,0 +1,72 @@
+freshness:
+  fresh_seconds: 300
+  stale_seconds: 3600
+
+sessions_path: ~/.orchestrator/sessions.json
+
+providers:
+  claude:
+    enabled: true
+  codex:
+    enabled: true
+
+task_fit:
+  architecture: {claude: 1.00, codex: 0.55}
+  implementation: {claude: 0.70, codex: 1.00}
+  exploration: {claude: 0.80, codex: 0.70}
+  debugging: {claude: 0.90, codex: 0.90}
+  testing: {claude: 0.70, codex: 1.00}
+  review: {claude: 1.00, codex: 0.80}
+  trivial: {claude: 1.00, codex: 0.50}
+
+# Human-authored priors for the optional model/reasoning-effort refinement
+# layered on top of a provider recommendation (see RouteTarget in models.py).
+# This is NOT learned/empirical performance data -- see catalog.py's
+# discovered-facts-vs-priors separation. A task type missing from a
+# provider's map simply gets no model refinement (provider/host default
+# behavior). `model` is deliberately left unset here: Codex's valid model ids
+# are not stable enough to bake into a shipped default (they are
+# account/subscription dependent and change over time) --
+# see catalog.py's live/local-config-sourced discovery instead. Only
+# `reasoning_effort` (a small, documented, provider-level enum) is set.
+model_policy:
+  codex:
+    trivial: {reasoning_effort: low}
+    exploration: {reasoning_effort: low}
+    implementation: {reasoning_effort: medium}
+    testing: {reasoning_effort: medium}
+    debugging: {reasoning_effort: high}
+    review: {reasoning_effort: high}
+    architecture: {reasoning_effort: high}
+  claude:
+    trivial: {reasoning_effort: low}
+    exploration: {reasoning_effort: medium}
+    implementation: {reasoning_effort: medium}
+    testing: {reasoning_effort: medium}
+    debugging: {reasoning_effort: high}
+    review: {reasoning_effort: high}
+    architecture: {reasoning_effort: xhigh}
+
+# Curated, CONFIGURED-tier (not runtime-discovered) model catalog entries --
+# see AvailabilityState in catalog.py. Codex has no `models` discovery
+# subcommand at all, so it intentionally has no static list here either:
+# its catalog.py provider instead reads the user's own local
+# ~/.codex/config.toml default `model` when present (a real local fact, not
+# a guess) and otherwise reports an honestly empty catalog. Claude has
+# no model-listing CLI command; this list is this session's own known model
+# ids, kept here as the single source of truth rather than a scattered
+# constant.
+model_catalog:
+  claude:
+    - model_id: claude-opus-5
+      display_name: "Claude Opus 5"
+      supported_reasoning_levels: [low, medium, high, xhigh, max]
+    - model_id: claude-sonnet-5
+      display_name: "Claude Sonnet 5"
+      supported_reasoning_levels: [low, medium, high, xhigh, max]
+    - model_id: claude-fable-5
+      display_name: "Claude Fable 5"
+      supported_reasoning_levels: [low, medium, high, xhigh, max]
+    - model_id: claude-haiku-4-5-20251001
+      display_name: "Claude Haiku 4.5"
+      supported_reasoning_levels: [low, medium, high, xhigh, max]

@@ -1,0 +1,128 @@
+# SPDX-FileCopyrightText: 2026 Raz Ben Aharon
+# SPDX-License-Identifier: Apache-2.0
+"""ModelQuad's own outbound network rule, enforced at run time.
+
+ModelQuad's own Python process connects only to loopback addresses.
+:func:`install_loopback_guard` makes that a runtime check rather than a
+promise: it adds an audit hook (``sys.addaudithook``) that refuses
+``socket.connect`` and ``socket.sendto`` to any address that is not loopback,
+raising :class:`OutboundConnectionRefused` before the call is made. The
+entry points install it: the ``modelquad`` command (``cli_entry.main``,
+which the background service's entry also runs), the MCP server
+(``mcp/server.main``) and the detached job runner (``jobs/runner.main``).
+
+The guard covers ModelQuad's own process only. The Codex CLI that ModelQuad
+starts is a separate program; it connects to OpenAI itself, under the user's
+own login, and this hook does not see or restrict it.
+
+Provider APIs called from this process: a provider plugin that declares
+``api_execution`` would call its vendor's API from ModelQuad's own process.
+No such plugin ships, and the loopback guard would refuse its call, so
+:func:`providers_refused_by_policy` makes any such provider ineligible
+before routing can pick it.
+"""
+
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass
+from typing import Any
+
+#: The category for a provider's own API that ModelQuad would call directly.
+PROVIDER_API_CATEGORY = "provider_api"
+
+LOOPBACK_ONLY_REASON = "ModelQuad's own process connects only to loopback addresses"
+
+_GUARDED_EVENTS = frozenset({"socket.connect", "socket.sendto"})
+_guard_installed = False
+#: Whether the installed hook refuses. Tests that run an entry point in-process
+#: switch it back off; nothing in the product does.
+guard_active = False
+
+
+class OutboundConnectionRefused(PermissionError):
+    """A connection from ModelQuad's own process to a non-loopback address."""
+
+
+def is_loopback_address(address: object) -> bool:
+    """Whether a socket address names this machine.
+
+    A path (an ``AF_UNIX`` address) is local by definition. An ``(host,
+    port, ...)`` tuple is loopback when ``host`` is ``localhost`` or a
+    loopback IP literal, including an IPv4-mapped IPv6 one. Any other host
+    name is refused: resolving it would itself be a lookup this rule does
+    not vouch for.
+    """
+
+    if isinstance(address, (str, bytes)):
+        return True
+    if not isinstance(address, tuple) or not address:
+        return False
+    host = address[0]
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "replace")
+    if not isinstance(host, str):
+        return False
+    host = host.strip().strip("[]").lower().split("%", 1)[0]
+    if host == "localhost":
+        return True
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return ip.is_loopback or bool(mapped is not None and mapped.is_loopback)
+
+
+def _audit(event: str, args: tuple) -> None:
+    if not guard_active or event not in _GUARDED_EVENTS:
+        return
+    address = args[1] if len(args) > 1 else None
+    if not is_loopback_address(address):
+        raise OutboundConnectionRefused(f"{LOOPBACK_ONLY_REASON}; refused {event}")
+
+
+def install_loopback_guard() -> None:
+    """Refuse non-loopback connections from this process from now on.
+
+    Idempotent. An audit hook cannot be removed once added, so it is added
+    once per process and :data:`guard_active` turns its refusal on.
+    """
+
+    global _guard_installed, guard_active
+    if not _guard_installed:
+        sys.addaudithook(_audit)
+        _guard_installed = True
+    guard_active = True
+
+
+@dataclass(frozen=True)
+class NetworkPolicyDecision:
+    """Policy decision governing an outbound network call from ModelQuad's process."""
+
+    allowed: bool
+    category: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "category": self.category,
+            "reason": self.reason,
+        }
+
+
+def providers_refused_by_policy(*, registry: Any = None) -> dict[str, str]:
+    """Providers routing must not select, mapped to why.
+
+    Every provider whose work would be an API call from ModelQuad's own
+    process is refused: the loopback guard would stop that call. Refusing it
+    here, before routing, means the user sees a provider that was never
+    eligible rather than a task assigned somewhere it cannot run.
+    """
+
+    from .registry import api_execution_providers
+
+    return {name: LOOPBACK_ONLY_REASON for name in api_execution_providers(registry)}

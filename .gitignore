@@ -1,0 +1,50 @@
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+.env.*
+*credentials*
+*secrets*
+!src/orchestrator/secrets.py
+usage-*.json
+sessions.json
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+/build/
+/dist/
+*.egg-info/
+.idea/
+.vscode/
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+.pytest-tmp/
+.pytest_tmp/
+.pytest-env/
+
+# Local CI-parity virtualenv (pinned to the hosted runner versions).
+.ci-venv/
+
+# Probes written into the repository root by tests/test_devenv.py's
+# end-to-end cases, which have to live inside the tree for pytest to take
+# this repository's rootdir and load the root conftest under test. Each is
+# removed by the test that wrote it; this is so a run killed before that
+# leaves an inert file rather than a dirty tree.
+test_devenv_probe_*.py
+# Repository-local temporary run roots must never be committed.
+test-temp/
+
+# Kept on the maintainer's machine, never committed.
+/private/
+*.zip
+.claude/settings.local.json
+CLAUDE.local.md

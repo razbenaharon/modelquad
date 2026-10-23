@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"synthetic-inert","tools":["Read","Grep","Glob"],"mcp_servers":[],"permissionMode":"dontAsk"}
+{"type":"assistant","message":{"id":"answer","role":"assistant","content":[{"type":"text","text":"Synthetic diagnosis.\n```json\n{\"task_status\":\"completed\",\"reason\":null,\"limitations\":[],\"evidence\":{\"summary\":\"synthetic only\"}}\n```"}]}}
+{"type":"result","subtype":"success","is_error":false,"permission_denials":[],"result":"Synthetic diagnosis.\n```json\n{\"task_status\":\"completed\",\"reason\":null,\"limitations\":[],\"evidence\":{\"summary\":\"synthetic only\"}}\n```"}
