@@ -25,21 +25,20 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.adapters.report import ActionKind
-from orchestrator.branding import (
-    LEGACY_MCP_SERVER_TOML_KEY,
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.adapters.report import ActionKind
+from modelquad.branding import (
     MANAGED_BLOCK_TAG,
     MCP_COMMAND,
     MCP_SERVER_NAME,
     MCP_SERVER_TOML_KEY,
 )
-from orchestrator.hostruntime import read_registered_command
+from modelquad.hostruntime import read_registered_command
 
 
 #: The absolute launcher an installed ModelQuad registers. Repair's whole job
 #: is to move a stale registration onto this.
-INSTALLED_SHIM = "C:\\Users\\Someone\\AppData\\Local\\MultiAgentOrchestrator\\bin\\modelquad-mcp.cmd"
+INSTALLED_SHIM = "C:\\Users\\Someone\\AppData\\Local\\ModelQuad\\bin\\modelquad-mcp.cmd"
 
 #: What P0-A found live on 2026-08-26: a bare name that resolved through PATH
 #: to an editable checkout while the installed product used another database.
@@ -52,7 +51,7 @@ def installed_runtime(monkeypatch):
     """Make the adapters believe they belong to an installed product."""
 
     monkeypatch.setattr(
-        "orchestrator.hostruntime.mcp_launch_command", lambda: INSTALLED_SHIM
+        "modelquad.hostruntime.mcp_launch_command", lambda: INSTALLED_SHIM
     )
     return INSTALLED_SHIM
 
@@ -210,14 +209,14 @@ def test_repair_never_touches_a_development_checkout_or_its_database(tmp_path, m
 
     dev_root = tmp_path / "dev-state"
     dev_root.mkdir()
-    dev_db = dev_root / "orchestrator.db"
+    dev_db = dev_root / "modelquad.db"
     dev_db.write_bytes(b"development database contents")
-    dev_checkout = tmp_path / "checkout" / "src" / "orchestrator"
+    dev_checkout = tmp_path / "checkout" / "src" / "modelquad"
     dev_checkout.mkdir(parents=True)
     (dev_checkout / "__init__.py").write_text("# dev checkout", encoding="utf-8")
 
     monkeypatch.setattr(
-        "orchestrator.hostruntime.mcp_launch_command", lambda: INSTALLED_SHIM
+        "modelquad.hostruntime.mcp_launch_command", lambda: INSTALLED_SHIM
     )
     home = _claude_home(tmp_path, STALE_EDITABLE)
     ClaudeAdapter().install(home)
@@ -241,16 +240,16 @@ def test_running_repair_twice_repairs_nothing_the_second_time(tmp_path, monkeypa
     for one doctor invocation.
     """
 
-    from orchestrator.config import Config
-    from orchestrator.doctor import CheckStatus, DoctorCheck, DoctorReport
-    from orchestrator.registry import (
+    from modelquad.config import Config
+    from modelquad.doctor import CheckStatus, DoctorCheck, DoctorReport
+    from modelquad.registry import (
         HostAdapterDescriptor,
         ProviderCapabilities,
         ProviderPlugin,
         ProviderRegistry,
         UsageSourceKind,
     )
-    from orchestrator.repair import run_repair
+    from modelquad.repair import run_repair
 
     repaired: list[Path] = []
     state = {"canonical": False}
@@ -260,7 +259,7 @@ def test_running_repair_twice_repairs_nothing_the_second_time(tmp_path, monkeypa
             return state["canonical"]
 
         def install(self, target_dir: Path, *, dry_run: bool = False):
-            from orchestrator.adapters import ActionKind, FileAction, InstallReport
+            from modelquad.adapters import ActionKind, FileAction, InstallReport
 
             if not dry_run:
                 repaired.append(target_dir)
@@ -302,7 +301,7 @@ def test_running_repair_twice_repairs_nothing_the_second_time(tmp_path, monkeypa
         status = CheckStatus.OK if state["canonical"] else CheckStatus.WARN
         return DoctorReport((DoctorCheck("claude MCP runtime", status, "detail"),))
 
-    monkeypatch.setattr("orchestrator.repair.run_doctor", fake_doctor)
+    monkeypatch.setattr("modelquad.repair.run_doctor", fake_doctor)
 
     first = run_repair(registry=registry, print_fn=lambda *a, **k: None, config=Config())
     assert first["repaired_hosts"] == ["claude"]

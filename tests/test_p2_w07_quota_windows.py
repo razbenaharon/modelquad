@@ -12,18 +12,18 @@ import json
 
 import pytest
 
-from orchestrator.catalog import ModelCatalog, ModelDescriptor
-from orchestrator.config import Config
-from orchestrator.models import Freshness, FreshnessThresholds
-from orchestrator.providers.base import freshness_for, observation_from
-from orchestrator.providers.claude import ClaudeProvider
-from orchestrator.providers.codex import CodexProvider
-from orchestrator.quota_policy import (
+from modelquad.catalog import ModelCatalog, ModelDescriptor
+from modelquad.config import Config
+from modelquad.models import Freshness, FreshnessThresholds
+from modelquad.providers.base import freshness_for, observation_from
+from modelquad.providers.claude import ClaudeProvider
+from modelquad.providers.codex import CodexProvider
+from modelquad.quota_policy import (
     QuotaRefusal, QuotaTier, apply_refusal_overlay, quota_evidence_for, refusal_in_force,
     stale_conserving_providers,
 )
-from orchestrator.router import Router
-from orchestrator.usage.base import FUTURE_TIMESTAMP_TOLERANCE_SECONDS
+from modelquad.router import Router
+from modelquad.usage.base import FUTURE_TIMESTAMP_TOLERANCE_SECONDS
 
 
 NOW = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)

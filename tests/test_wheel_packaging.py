@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 
-from orchestrator.procutil import no_window_kwargs
+from modelquad.procutil import no_window_kwargs
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> None:
@@ -187,9 +187,9 @@ def test_wheel_install_exposes_package_data_without_the_source_checkout(tmp_path
             (
                 "import importlib.resources\n"
                 "for package, name in (\n"
-                "    ('orchestrator', 'default.yaml'),\n"
-                "    ('orchestrator.adapters', 'templates/claude/mcp/mcp-servers.json'),\n"
-                "    ('orchestrator.adapters', 'templates/claude/skills/modelquad/SKILL.md'),\n"
+                "    ('modelquad', 'default.yaml'),\n"
+                "    ('modelquad.adapters', 'templates/claude/mcp/mcp-servers.json'),\n"
+                "    ('modelquad.adapters', 'templates/claude/skills/modelquad/SKILL.md'),\n"
                 "):\n"
                 "    resource = importlib.resources.files(package).joinpath(*name.split('/'))\n"
                 "    assert resource.is_file(), name + ' missing from installed wheel'\n"

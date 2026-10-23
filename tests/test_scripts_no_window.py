@@ -331,7 +331,7 @@ def test_hidden_spawn_has_no_console_window():
 #: The invariant it proves is real and stays runnable, in the style
 #: ``tests/test_acceptance_live.py`` already uses for a test with a cost:
 #:
-#:     ORCHESTRATOR_CONSOLE_ALLOCATION_CONTROL=1 python -m pytest \
+#:     MODELQUAD_CONSOLE_ALLOCATION_CONTROL=1 python -m pytest \
 #:         tests/test_scripts_no_window.py -k console_less_parent
 #:
 #: An isolated window station was considered and rejected. ``CreateWindowStation``
@@ -340,7 +340,7 @@ def test_hidden_spawn_has_no_console_window():
 #: process-creation path from the one under test, the rig would need a token
 #: dance to be reliable, and a rig that is subtly not-the-thing is worse
 #: evidence than a clean skip that says how to run the real thing.
-CONSOLE_CONTROL_ENV = "ORCHESTRATOR_CONSOLE_ALLOCATION_CONTROL"
+CONSOLE_CONTROL_ENV = "MODELQUAD_CONSOLE_ALLOCATION_CONTROL"
 CONSOLE_CONTROL_REASON = (
     f"Allocates a real console window on the desktop; opt-in (set {CONSOLE_CONTROL_ENV}=1). "
     f"See the note above the test: a default run of this suite must open no console window."
@@ -375,7 +375,7 @@ def test_a_console_less_parent_gets_a_window_without_the_flag_and_none_with_it(t
     **Opt-in**, for the reason in the note above this test: proving that an
     unflagged child allocates a console means allocating one, and this rig was
     measured to be the only remaining source of visible console windows in a
-    normal flagged run. Set ``ORCHESTRATOR_CONSOLE_ALLOCATION_CONTROL=1`` to
+    normal flagged run. Set ``MODELQUAD_CONSOLE_ALLOCATION_CONTROL=1`` to
     run it. Nothing else in this file needs the opt-in -- every other test
     either spawns hidden or asserts on source.
     """

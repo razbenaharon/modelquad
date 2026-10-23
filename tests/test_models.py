@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import pytest
 
-from orchestrator.models import (
+from modelquad.models import (
     DECISION_SOURCES,
     CapacityState,
     Freshness,

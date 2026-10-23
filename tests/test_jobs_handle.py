@@ -18,9 +18,9 @@ import sys
 import pytest
 
 from load_helpers import retry_temp_permission
-from orchestrator import procutil
-from orchestrator.jobs import handle
-from orchestrator.service import db, history
+from modelquad import procutil
+from modelquad.jobs import handle
+from modelquad.service import db, history
 from test_jobs_runner import allow_test_sink, cleanup, native, require_launch_environment, spec_for, wait_for, PROCESS_SECONDS, probe_interpreter, product_import_paths
 
 
@@ -100,8 +100,8 @@ def verified_parent(tmp_path, code, jobs, *, escape=False):
     state_path = tmp_path / 'parent-state.json'
     proceed = tmp_path / 'parent-proceed'
     preamble = (
-        'import json,os,subprocess,sys,time; from pathlib import Path; from orchestrator import procutil; from orchestrator.jobs import handle; '
-        'from orchestrator.adapters.atomicwrite import atomic_write; from load_helpers import retry_temp_permission; '
+        'import json,os,subprocess,sys,time; from pathlib import Path; from modelquad import procutil; from modelquad.jobs import handle; '
+        'from modelquad.adapters.atomicwrite import atomic_write; from load_helpers import retry_temp_permission; '
         'in_job=handle._caller_in_job(); limits=handle._caller_job_limits() if in_job else 0; '
         'probe_in_job=None; '
         '\nif in_job and limits & 0x1800:\n'
@@ -242,7 +242,7 @@ def test_controlled_caller_job_survival_or_explicit_refusal(tmp_path, breakaway)
     retry_temp_permission(lambda: spec_path.write_text(json.dumps(asdict(spec)), encoding='utf-8'))
     code = (
         'import json,time; from pathlib import Path; from dataclasses import asdict; '
-        'from orchestrator.jobs.handle import JobSpec,start_job,_caller_in_job; '
+        'from modelquad.jobs.handle import JobSpec,start_job,_caller_in_job; '
         + ('assert not _caller_in_job(); ' if breakaway == 'none' else '') +
         f'spec=JobSpec(**json.loads(retry_temp_permission(lambda: Path({str(spec_path)!r}).read_text(encoding="utf-8")))); '
         'result=start_job(spec); '
@@ -257,7 +257,7 @@ def test_controlled_caller_job_survival_or_explicit_refusal(tmp_path, breakaway)
             wait_for(lambda: launch.exists(), bool)
             result = json.loads(retry_temp_permission(lambda: launch.read_text(encoding='utf-8')))
             if result['ref']:
-                from orchestrator.jobs.seam import JobRef
+                from modelquad.jobs.seam import JobRef
                 ref = JobRef(**result['ref'])
             launched, limitation = expected_launch(state)
             assert result['launched'] is launched, (evidence, result)
@@ -413,13 +413,13 @@ def test_runner_command_uses_the_runner_module(monkeypatch, tmp_path):
                                                       prefix='fixture', base_prefix='fixture'))
     spec_path = tmp_path / 'job-x.json'
     assert handle._runner_command('job-x', spec_path, 'state.db') == [
-        handle._runner_executable(), '-m', 'orchestrator.jobs.runner',
+        handle._runner_executable(), '-m', 'modelquad.jobs.runner',
         '--job-id', 'job-x', '--spec', str(spec_path), '--db-path', 'state.db']
 
 
 def test_cli_job_runner_subcommand_parses_the_runner_arguments(monkeypatch, tmp_path):
-    from orchestrator import cli
-    from orchestrator.jobs import runner
+    from modelquad import cli
+    from modelquad.jobs import runner
 
     seen = []
     monkeypatch.setattr(runner, 'run_job', lambda job_id, spec, db_path=None: seen.append(
@@ -558,7 +558,7 @@ def test_unreported_startup_deadline_closes_attempt(tmp_path, monkeypatch, start
 
 
 def test_late_runner_cannot_register_or_start_worker(tmp_path, monkeypatch):
-    from orchestrator.jobs import runner
+    from modelquad.jobs import runner
     spec = spec_for(tmp_path, 'pass')
     history.reserve_job(spec.db_path, 'late', spec.attempt_id)
     conn = db.connect(spec.db_path)
@@ -590,7 +590,7 @@ def test_nested_outer_kill_on_close_is_not_a_survival_guarantee(tmp_path):
     retry_temp_permission(lambda: spec_path.write_text(json.dumps(asdict(spec)), encoding='utf-8'))
     code = (
         'import json,time; from pathlib import Path; from dataclasses import asdict; '
-        'from orchestrator.jobs.handle import JobSpec,start_job; '
+        'from modelquad.jobs.handle import JobSpec,start_job; '
         f'result=start_job(JobSpec(**json.loads(retry_temp_permission(lambda: Path({str(spec_path)!r}).read_text(encoding="utf-8"))))); '
         f'retry_temp_permission(lambda: atomic_write(Path({str(launch)!r}), json.dumps(asdict(result)))); time.sleep(120)'
     )
@@ -601,7 +601,7 @@ def test_nested_outer_kill_on_close_is_not_a_survival_guarantee(tmp_path):
         with verified_parent(tmp_path, code, [('forbidden', outer), ('contained', inner)]) as (parent, state, evidence):
             wait_for(lambda: launch.exists(), bool)
             result = json.loads(retry_temp_permission(lambda: launch.read_text(encoding='utf-8')))
-            from orchestrator.jobs.seam import JobRef
+            from modelquad.jobs.seam import JobRef
             ref = JobRef(**result['ref'])
             launched, limitation = expected_launch(state)
             assert result['launched'] is launched, (evidence, result)
@@ -635,7 +635,7 @@ def test_nested_venv_launcher_job_fails_closed(tmp_path):
     spec_path.write_text(json.dumps(asdict(spec)))
     code = (
         'import json; from pathlib import Path; from dataclasses import asdict; '
-        'from orchestrator.jobs import handle; '
+        'from modelquad.jobs import handle; '
         'spawn=handle.subprocess.Popen; starters=[]; '
         '\ndef capture(*args, **kwargs):\n p=spawn(*args, **kwargs)\n starters.append(p.pid)\n return p\n'
         'handle.subprocess.Popen=capture; '
@@ -650,7 +650,7 @@ def test_nested_venv_launcher_job_fails_closed(tmp_path):
             assert parent.wait(timeout=PROCESS_SECONDS) == 0, evidence
             value = json.loads(launch.read_text())
             result = value['result']
-            from orchestrator.jobs.seam import JobRef
+            from modelquad.jobs.seam import JobRef
             ref = JobRef(**result['ref'])
             launched, limitation = expected_launch(state)
             assert launched is False, evidence
@@ -711,7 +711,7 @@ def test_real_venv_runner_starts_and_finishes_offline(tmp_path):
     # own a kill-on-close job, which the innermost-job record does not inspect.
     code = (
         'import json,os,sys,time; from pathlib import Path; from dataclasses import asdict; '
-        'from orchestrator import procutil; from orchestrator.jobs import handle; '
+        'from modelquad import procutil; from modelquad.jobs import handle; '
         f'assert Path(handle.__file__).resolve() == Path({str(Path(handle.__file__).resolve())!r}); '
         'assert sys.prefix != sys.base_prefix; '
         'job=procutil._create_census_job(); assert job; '
@@ -764,7 +764,7 @@ def test_real_venv_runner_starts_and_finishes_offline(tmp_path):
         assert parent.returncode == 0, (evidence, stderr.read().decode('utf-8', 'replace'))
         value = json.loads(launch.read_text())
         result = value['result']
-        from orchestrator.jobs.seam import JobRef
+        from modelquad.jobs.seam import JobRef
         ref = JobRef(**result['ref'])
         assert result['launched'], (evidence, result)
         assert result['limitation'] == observed_policy(value['in_job'], value['limits'])[2], evidence
@@ -797,7 +797,7 @@ def test_real_venv_runner_starts_and_finishes_offline(tmp_path):
         if ref is None and launch.exists():
             value = json.loads(launch.read_text())
             if value['result']['ref']:
-                from orchestrator.jobs.seam import JobRef
+                from modelquad.jobs.seam import JobRef
                 ref = JobRef(**value['result']['ref'])
         cleanup(spec, ref)
         stderr.close()
@@ -931,7 +931,7 @@ def test_probe_failure_before_reservation_and_start_order(tmp_path, monkeypatch)
 def test_nested_outer_job_disproves_service_breakaway(tmp_path):
     observed = tmp_path / 'verdict.json'
     code = (
-        'from orchestrator.jobs.handle import detached_launch_verdict; '
+        'from modelquad.jobs.handle import detached_launch_verdict; '
         f'Path({str(observed)!r}).write_text(json.dumps(detached_launch_verdict())); '
     )
     outer = controlled_job('contained')

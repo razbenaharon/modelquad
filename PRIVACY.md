@@ -6,7 +6,7 @@ sends where and through which program, what it stores, for how long, and how
 to look at it and delete it. It is the complete inventory: every file,
 folder and database table ModelQuad writes is listed here.
 
-Everything here describes the code in this repository (`src/orchestrator/`).
+Everything here describes the code in this repository (`src/modelquad/`).
 Where a statement and the code disagree, the code is right and this document
 has a bug; please report it. Several statements are checked by tests, named
 next to them.
@@ -137,7 +137,7 @@ starts the Codex CLI.
    `GITHUB_ENTERPRISE_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
    and `AZURE_*` secrets, passwords, keys, tokens and connection strings.
    `OPENAI_API_KEY` and `CODEX_API_KEY` stay, because they are a way to sign
-   Codex itself in. ModelQuad adds `ORCHESTRATOR_WORKER=1`.
+   Codex itself in. ModelQuad adds `MODELQUAD_WORKER=1`.
 10. **Codex sends the input to OpenAI** under your account and returns its
    answer as a stream of JSON events. ModelQuad checks every event; if the
    stream shows a command, a file change, an MCP tool call or a collaboration
@@ -203,11 +203,10 @@ sends to Anthropic:
   project folder and answer only for jobs started from that folder.
 - The report of the `modelquad_doctor` tool, which includes local paths, such
   as where Claude Code and Codex are installed.
-- The advisory note the `PreToolUse` hook adds once per session, and the
-  startup reminder: job ids, statuses, task types, whether files may have
+- The startup reminder: job ids, statuses, task types, whether files may have
   changed, and expiry times. Not answer text.
-- The `/modelquad` skill and the block ModelQuad adds to your user-level
-  `CLAUDE.md`.
+- The `/modelquad` skill and the MCP server instructions that provide Claude
+  with ModelQuad's guidance.
 
 ### Model training
 
@@ -238,13 +237,6 @@ session transcript. **ModelQuad never opens, reads or inspects that file**
   the context is above 200k tokens. The session id is replaced by a
   fingerprint before it is stored (see [The installation id](#the-installation-id)).
   The payload's workspace path, transcript path and cost figures are not read.
-- **Advisory hook** (`modelquad hook-gate`, before Bash, Edit, Write,
-  MultiEdit, NotebookEdit and Task calls): the tool name and the session id.
-  It does not block or approve a tool call; Claude Code asks for permission
-  exactly as it would without ModelQuad. At most once per session it adds this
-  note: "ModelQuad is available for a read-only Codex second opinion. This
-  advisory note blocks and approves nothing, and appears once per session." It
-  keeps one empty marker file per session, named by the session fingerprint.
 - **Startup reminder** (`modelquad hook-pending claude`, at session start):
   the event name and the working directory. The directory is hashed and used
   only to ask the local service which answers are waiting for that project. It
@@ -287,13 +279,15 @@ Paths are relative to `%USERPROFILE%`.
 | `.claude\usage-claude.json` | Claude's 5-hour and weekly used percentages, reset times, and when they were observed | The status line command |
 | `.claude\usage-codex.json` | Codex's 5-hour and weekly used percentages, reset times, plan type, when they were read, and why a read failed | The MCP server's background read, `modelquad usage-refresh` |
 | `.claude\usage-*.json.lock`, `.claude\usage-refresh-*.lock` | Empty lock files | The same writers |
-| `.claude.json`, `.claude\settings.json`, `.claude\CLAUDE.md`, `.claude\skills\modelquad\SKILL.md` | The Claude Code integration listed in [README.md](README.md) | `modelquad install claude` |
-| `<file>.modelquad-backup-<UTC time>` beside any of those four files | A full copy of the file before ModelQuad changed or removed it. It holds whatever the file held, including secrets you put there, such as `env` values of MCP servers in `.claude.json` | Install and uninstall (`adapters/backup.py`) |
-| Windows Task Scheduler, task `MultiAgentOrchestrator_ControlPlane` | Starts the local service when you sign in | `modelquad service install` |
+| `.claude.json`, `.claude\settings.json`, `.claude\skills\modelquad\SKILL.md` | The Claude Code integration listed in [README.md](README.md) | `modelquad install claude` |
+| `<file>.modelquad-backup-<UTC time>` beside a changed file | A full copy of the file before ModelQuad changed or removed it. It holds whatever the file held, including secrets you put there, such as `env` values of MCP servers in `.claude.json` | Install and uninstall (`adapters/backup.py`) |
+| Windows Task Scheduler, task `ModelQuad_Service` | Starts the local service when you sign in | `modelquad service install` |
 | Your user `Path` variable (`HKCU\Environment`) | The folder of an installed but unreachable tool | `modelquad tools --fix-path` |
 
-`modelquad uninstall claude` removes the integration. It does not remove the
-quota files, their lock files or the backups; delete those by hand.
+`modelquad uninstall claude` removes the current integration and also takes
+back the `CLAUDE.md` block, `PreToolUse` gate hook, and global timeout setting
+that older builds may have installed. It does not remove quota files, their
+lock files or backups; delete those by hand.
 
 ModelQuad replaces files through a temporary sibling named
 `<name>.<random>.tmp`. A process stopped in the middle of such a write can
@@ -306,17 +300,17 @@ leave that file behind.
 | How ModelQuad runs | State folder |
 |---|---|
 | `MODELQUAD_STATE_ROOT` is set | That folder |
-| Plain (non-editable) `pip install` | `%LOCALAPPDATA%\MultiAgentOrchestrator\` |
-| Editable install (`pip install -e`) from a checkout | `%USERPROFILE%\.orchestrator\` |
-| `LOCALAPPDATA` is not set | `%USERPROFILE%\.orchestrator\` |
+| Plain (non-editable) `pip install` | `%LOCALAPPDATA%\ModelQuad\` |
+| Editable install (`pip install -e`) from a checkout | `%USERPROFILE%\.modelquad\` |
+| `LOCALAPPDATA` is not set | `%USERPROFILE%\.modelquad\` |
 
 `modelquad privacy` and `modelquad state` print the folder in use. Stop the
 service (`modelquad service stop`) before you delete anything here.
 
 | File or folder | What it holds | How long | Sensitive? |
 |---|---|---|---|
-| `orchestrator.db`, `orchestrator.db-wal`, `orchestrator.db-shm` | The history and settings database (below) | No automatic expiry | In a limited way: folder names, hashes of folder paths and of prompts, short failure details, and quota readings with the Codex plan type |
-| `orchestrator.db.fate.lock` | Empty lock file | Kept | No |
+| `modelquad.db`, `modelquad.db-wal`, `modelquad.db-shm` | The history and settings database (below) | No automatic expiry | In a limited way: folder names, hashes of folder paths and of prompts, short failure details, and quota readings with the Codex plan type |
+| `modelquad.db.fate.lock` | Empty lock file | Kept | No |
 | `job-<random>.json` | A background job's launch data: the full task text, the working folder and the task settings. The named files are read later, when the job runs | The runner deletes it when it reads it; a leftover is deleted at the next job start once it is older than 10 minutes | Yes: your task text. Private to you and SYSTEM |
 | `pending-output\` | Answers of background jobs waiting to be collected (below), plus `outcomes.jsonl`, `removal.intent` and `store.lock` | 7 days by default | Yes: an answer can quote your code. Private to you and SYSTEM |
 | `identity.json` | The installation id (below) | Until reset or deleted | A resettable pseudonym |

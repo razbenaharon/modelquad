@@ -8,11 +8,11 @@ import asyncio
 import json
 import pytest
 
-from orchestrator.capsule import TaskCapsule
-from orchestrator.config import CAP_COMMAND, CAP_READ, CAP_WRITE
-from orchestrator.execution import CodexExecutor, ExecutionManager
-from orchestrator.mcp.server import server
-import orchestrator.mcp.server as mcp_server
+from modelquad.capsule import TaskCapsule
+from modelquad.config import CAP_COMMAND, CAP_READ, CAP_WRITE
+from modelquad.execution import CodexExecutor, ExecutionManager
+from modelquad.mcp.server import server
+import modelquad.mcp.server as mcp_server
 
 
 def test_task_capsule_required_fields_and_validation():
@@ -87,7 +87,7 @@ def test_task_capsule_roundtrip_and_unknown_key_rejection():
 
 
 def test_task_capsule_expected_consumption():
-    from orchestrator.models import ConsumptionBucket
+    from modelquad.models import ConsumptionBucket
 
     # Valid values
     capsule_high = TaskCapsule(
@@ -212,7 +212,7 @@ def test_mcp_delegate_with_capsule_renders_prompt(tmp_path, monkeypatch):
 
         def execute(self, request):
             captured_prompts.append(request.prompt)
-            from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
+            from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
 
             return ExecutionResult(
                 provider="codex",

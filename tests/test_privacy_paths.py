@@ -9,12 +9,12 @@ import sqlite3
 
 import pytest
 
-from orchestrator import privacy
-from orchestrator.config import Config
-from orchestrator.models import TaskType
-from orchestrator.providers import CodexProvider
-from orchestrator.router import Router
-from orchestrator.service import history
+from modelquad import privacy
+from modelquad.config import Config
+from modelquad.models import TaskType
+from modelquad.providers import CodexProvider
+from modelquad.router import Router
+from modelquad.service import history
 
 HOME = r"C:\Users\John Smith"
 ONEDRIVE = HOME + r"\OneDrive - Contoso Ltd"

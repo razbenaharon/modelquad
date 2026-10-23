@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.procutil import no_window_kwargs
+from modelquad.procutil import no_window_kwargs
 
 yaml = pytest.importorskip("yaml")
 
@@ -72,7 +72,7 @@ def test_the_workflow_holds_no_write_permission(workflow: dict, job: dict):
 
 
 def test_never_installs_the_package_editable(job: dict):
-    """An editable install resolves orchestrator out of src/.
+    """An editable install resolves modelquad out of src/.
 
     The suite would then pass while the installed distribution is broken.
     """

@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator.service import lifecycle, listener, listener_proof as proof, socket_identity as identity
-from orchestrator.service.socket_identity import ListenerError
+from modelquad.service import lifecycle, listener, listener_proof as proof, socket_identity as identity
+from modelquad.service.socket_identity import ListenerError
 
 PID = 2468
 CREATED = 1791586800.0
@@ -64,7 +64,7 @@ def harness(tmp_path, monkeypatch):
     image.write_bytes(b"fixture only")
     image.chmod(0o700)
     command = [str(image), "serve", "--managed-child", "--port", "8765",
-               "--db", str(tmp_path / "orchestrator.db")]
+               "--db", str(tmp_path / "modelquad.db")]
     inside, launches, authentications, closed, stops = [], [], [], [], []
     contained = [None]
     background_launch = lifecycle._launch_background_child
@@ -459,8 +459,8 @@ def test_public_status_is_one_bounded_nonmutating_authentication(harness):
 
 
 def test_doctor_refuses_authenticated_unrecorded_listener(harness, monkeypatch):
-    from orchestrator import doctor
-    from orchestrator.service import control_plane as shell
+    from modelquad import doctor
+    from modelquad.service import control_plane as shell
     h = harness
     calls, closed = [], []
     def authenticate(port, **kwargs):
@@ -491,8 +491,8 @@ def test_dry_run_never_claims_ready_or_authenticates(harness):
                          ids=["wrong_pid", "reused_pid", "wrong_image", "wrong_sid", "owner_unknown",
                               "bad_mac", "replay", "redirect", "wrong_db", "oversized_proof"])
 def test_readiness_impostor(tmp_path, monkeypatch, case):
-    from orchestrator import statecontext
-    from orchestrator.service import api, db
+    from modelquad import statecontext
+    from modelquad.service import api, db
 
     image, other = tmp_path / "python.exe", tmp_path / "other.exe"
     for candidate in (image, other):
@@ -532,7 +532,7 @@ def test_readiness_impostor(tmp_path, monkeypatch, case):
     health = {"product": "modelquad", "service_role": "control-plane", "instance_kind": "installed",
               "state_root_id": api.state_identity_tag(tmp_path), "version": "test-version",
               "db_schema_version": db.SCHEMA_VERSION,
-              "db_identity": api.state_identity_tag(tmp_path / "orchestrator.db"),
+              "db_identity": api.state_identity_tag(tmp_path / "modelquad.db"),
               "detached_runner": {"ok": False}}
     if case == "wrong_db":
         health["db_identity"] = "other"
@@ -555,7 +555,7 @@ def test_readiness_impostor(tmp_path, monkeypatch, case):
             closed.append("connection")
     monkeypatch.setattr(listener, "_BoundHTTPConnection", Connection)
     with pytest.raises(ListenerError) as caught:
-        listener.authenticate(8765, db_path=tmp_path / "orchestrator.db", require_runner=False,
+        listener.authenticate(8765, db_path=tmp_path / "modelquad.db", require_runner=False,
                               expected_pid=PID, expected_created=CREATED, expected_image=str(image))
     expected = {"wrong_sid": "service_owner_mismatch", "owner_unknown": "service_owner_unavailable",
                 "redirect": "service_redirect_refused"}

@@ -66,7 +66,7 @@ def collect_timing_nodes(arguments, *, env=None):
 def test_preflight_runs_once_per_phase_and_stops_on_failure(monkeypatch, plugin, failure_phase, capsys):
     check = load_script(ROOT / "scripts/check.py")
     monkeypatch.setattr(check, "_pytest_parallel_args", lambda: ["-n", "auto"] if plugin else [])
-    probe = types.SimpleNamespace(returncode=0, stdout=str(check.SRC / "orchestrator/__init__.py"), stderr="")
+    probe = types.SimpleNamespace(returncode=0, stdout=str(check.SRC / "modelquad/__init__.py"), stderr="")
     monkeypatch.setattr(check, "subprocess", types.SimpleNamespace(run=lambda *a, **k: probe))
     calls = []
 

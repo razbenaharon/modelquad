@@ -37,15 +37,15 @@ from mcp.shared.exceptions import MCPError
 
 from conftest import tool_payload
 
-from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
-from orchestrator.mcp import livelifecycle
-from orchestrator.mcp.livelifecycle import (
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+from modelquad.mcp import livelifecycle
+from modelquad.mcp.livelifecycle import (
     LIVE_STATES,
     LiveFacts,
     derive_recovery_outlook,
 )
-from orchestrator.service import db as service_db
-from orchestrator.service import history as service_history
+from modelquad.service import db as service_db
+from modelquad.service import history as service_history
 
 # The fixture, the holding worker and the polling helper are part 2's, reused
 # deliberately: this is the same lifecycle observed from the caller's side, and
@@ -58,7 +58,7 @@ from test_rel1_caller_abandonment import (  # noqa: F401 -- `delegation` is a fi
     delegation,
 )
 
-mcp_server = importlib.import_module("orchestrator.mcp.server")
+mcp_server = importlib.import_module("modelquad.mcp.server")
 
 
 def _tool(name):
@@ -178,7 +178,7 @@ def test_a_finished_attempt_reports_its_own_ending_and_releases_the_retry(
 def store(tmp_path):
     """An isolated history database with the schema already created."""
 
-    db_path = tmp_path / "orchestrator.db"
+    db_path = tmp_path / "modelquad.db"
     service_db.connect_and_init(db_path).close()
     return db_path
 

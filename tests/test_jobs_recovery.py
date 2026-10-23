@@ -10,11 +10,11 @@ import time
 import pytest
 from process_diagnostics import non_killing_runner_spawn
 
-from orchestrator.jobs import recovery
-from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus
-from orchestrator.jobs.store import FileOutputStore
-from orchestrator.execution.base import WorkerTaskStatus
-from orchestrator.service import db, history
+from modelquad.jobs import recovery
+from modelquad.jobs.seam import JobOutput, JobRef, JobStatus
+from modelquad.jobs.store import FileOutputStore
+from modelquad.execution.base import WorkerTaskStatus
+from modelquad.service import db, history
 
 NOW = datetime(2026, 10, 6, 12, tzinfo=timezone.utc)
 OLD = NOW - timedelta(minutes=5)
@@ -367,9 +367,9 @@ def test_two_concurrent_claims_only_one_owner(case):
 
 
 def test_poll_hooks_rate_limited_and_worker_guarded(monkeypatch, case):
-    from orchestrator.adapters.pending_reminder import project_key
-    from orchestrator.jobs import service_client
-    from orchestrator.mcp import jobs_tools
+    from modelquad.adapters.pending_reminder import project_key
+    from modelquad.jobs import service_client
+    from modelquad.mcp import jobs_tools
     project = case[0].parent
     conn = db.connect_and_init(case[0])
     conn.execute('UPDATE delegation_attempts SET workspace_key=? WHERE id=?',
@@ -419,8 +419,8 @@ def test_schedule_rate_limit_with_inert_thread(monkeypatch, case):
 
 def test_service_and_mcp_startup_schedule_one_call(monkeypatch, case):
     from fastapi.testclient import TestClient
-    from orchestrator.service.app import create_app
-    from orchestrator.mcp import server
+    from modelquad.service.app import create_app
+    from modelquad.mcp import server
     calls = []
     monkeypatch.setattr(recovery, 'schedule_recovery', lambda path: calls.append(path))
     with TestClient(create_app(db_path=case[0], poll_providers=False)):
@@ -444,7 +444,7 @@ def test_recovery_logs_contain_no_output(case, caplog):
 def test_synthetic_surviving_root_terminated_by_exact_identity(case):
     import subprocess
     import sys
-    from orchestrator import procutil
+    from modelquad import procutil
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)'],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              **procutil.no_window_kwargs())
@@ -475,7 +475,7 @@ def test_synthetic_surviving_root_terminated_by_exact_identity(case):
 
 @pytest.mark.skipif(__import__('os').name != 'nt', reason='Windows runner kill-on-close Job Object')
 def test_hard_killed_contained_runner_stays_unknown(tmp_path, non_killing_runner_spawn):
-    from orchestrator.jobs import handle
+    from modelquad.jobs import handle
 
     _assert_hard_killed_runner_recovery(
         tmp_path, non_killing_runner_spawn, handle.CONTAINED_RUNNER_LIMITATION)
@@ -484,8 +484,8 @@ def test_hard_killed_contained_runner_stays_unknown(tmp_path, non_killing_runner
 @pytest.mark.skipif(__import__('os').name != 'nt', reason='Windows runner kill-on-close Job Object')
 def test_hard_killed_synthetic_runner_recovers_interrupted_output(tmp_path):
     import subprocess
-    from orchestrator import procutil
-    from orchestrator.jobs import handle
+    from modelquad import procutil
+    from modelquad.jobs import handle
 
     in_job = handle._caller_in_job()
     limits = handle._caller_job_limits() if in_job else 0
@@ -522,9 +522,9 @@ def _assert_hard_killed_runner_recovery(tmp_path, spawn, expected_limitation):
     import os
     import site
     import sys
-    from orchestrator import procutil
-    from orchestrator.jobs.handle import JobSpec
-    from orchestrator.jobs import handle
+    from modelquad import procutil
+    from modelquad.jobs.handle import JobSpec
+    from modelquad.jobs import handle
     from process_diagnostics import capture_text, instrument_runner_command, note_failure, process_snapshot
     database = tmp_path / 'crash.sqlite'
     attempt = history.record_delegation_attempt(database, task_type='implementation')
@@ -629,7 +629,7 @@ def test_two_simultaneous_recoverer_processes(case):
     import site
     import subprocess
     import sys
-    from orchestrator import procutil
+    from modelquad import procutil
     finish(case)
     source = Path(__file__).resolve().parents[1] / 'src'
     imports = ([str(source)] if Path(recovery.__file__).resolve().is_relative_to(source) else []) + site.getsitepackages()
@@ -637,8 +637,8 @@ def test_two_simultaneous_recoverer_processes(case):
     script = """
 import json, sys
 from datetime import datetime
-from orchestrator.jobs.recovery import recover_jobs
-from orchestrator.jobs.store import FileOutputStore
+from modelquad.jobs.recovery import recover_jobs
+from modelquad.jobs.store import FileOutputStore
 class Probe:
     def pid_state(self, pid): return 'dead'
     def process_creation_epoch(self, pid): raise AssertionError('dead identity needs no creation probe')
@@ -856,8 +856,8 @@ def test_launch_without_kill_on_close_stays_unknown(case):
 def test_startup_hook_failures_are_ignored_content_free(case, monkeypatch, caplog, hook, failure):
     import builtins
     from fastapi.testclient import TestClient
-    from orchestrator.service.app import create_app
-    from orchestrator.mcp import server
+    from modelquad.service.app import create_app
+    from modelquad.mcp import server
     message = 'PRIVATE_STARTUP_EXCEPTION_BODY'
     def fail(*args, **kwargs): raise RuntimeError(message)
     if failure == 'import':
@@ -884,7 +884,7 @@ def test_startup_hook_failures_are_ignored_content_free(case, monkeypatch, caplo
 
 
 def test_mcp_worker_startup_does_not_schedule(case, monkeypatch):
-    from orchestrator.mcp import server
+    from modelquad.mcp import server
     monkeypatch.setattr(server, 'is_worker', lambda path: True)
     monkeypatch.setattr(recovery, 'schedule_recovery', lambda *a: pytest.fail('worker must not recover'))
     monkeypatch.setattr(server.server, 'run', lambda: None)

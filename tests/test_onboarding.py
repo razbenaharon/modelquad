@@ -10,12 +10,12 @@ from pathlib import Path
 import pytest
 import shutil
 
-from orchestrator.adapters import ActionKind, FileAction, InstallReport
-import orchestrator.cli as cli_module
-from orchestrator.cli import main
-from orchestrator.doctor import CheckStatus, DoctorCheck, DoctorReport
-from orchestrator.adapters.registration import RegistrationStatus
-from orchestrator.onboarding import (
+from modelquad.adapters import ActionKind, FileAction, InstallReport
+import modelquad.cli as cli_module
+from modelquad.cli import main
+from modelquad.doctor import CheckStatus, DoctorCheck, DoctorReport
+from modelquad.adapters.registration import RegistrationStatus
+from modelquad.onboarding import (
     OnboardingResult,
     OnboardingStepResult,
     ProviderDetection,
@@ -23,21 +23,21 @@ from orchestrator.onboarding import (
     install_detected_hosts,
     run_onboarding,
 )
-from orchestrator.provider_connection import (
+from modelquad.provider_connection import (
     InstallState,
     SignInState,
     describe_connections,
     probe_sign_in,
 )
-from orchestrator.registry import (
+from modelquad.registry import (
     HostAdapterDescriptor,
     ProviderCapabilities,
     ProviderPlugin,
     ProviderRegistry,
     UsageSourceKind,
 )
-from orchestrator.service import db as service_db
-from orchestrator.service import history as service_history
+from modelquad.service import db as service_db
+from modelquad.service import history as service_history
 from routing_mode_fixtures import save_legacy_mode
 
 
@@ -149,7 +149,7 @@ def test_detect_providers_shapes_and_connection_status(tmp_path):
     ("Programs", "OpenAI", "Codex", "bin"),
 ])
 def test_detect_codex_in_shared_official_locations(tmp_path, monkeypatch, layout):
-    from orchestrator import codexcli
+    from modelquad import codexcli
 
     official = tmp_path.joinpath(*layout) / "codex.exe"
     official.parent.mkdir(parents=True)
@@ -178,7 +178,7 @@ def test_detect_codex_in_shared_official_locations(tmp_path, monkeypatch, layout
     ([('OpenAI', 'Codex', 'bin', '8aaf'), ('Programs', 'OpenAI', 'Codex', 'bin')], 1),
 ])
 def test_detect_codex_with_unreadable_versions_still_finds_install(tmp_path, monkeypatch, layouts, expected):
-    from orchestrator import codexcli
+    from modelquad import codexcli
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     candidates = [tmp_path.joinpath(*layout) / "codex.exe" for layout in layouts]
@@ -202,7 +202,7 @@ def test_detect_codex_with_unreadable_versions_still_finds_install(tmp_path, mon
 
 def test_detect_codex_chooses_newest_desktop_version_and_reuses_probe(tmp_path, monkeypatch):
     import subprocess
-    from orchestrator import codexcli
+    from modelquad import codexcli
 
     old = tmp_path / "OpenAI" / "Codex" / "bin" / "aaaa" / "codex.exe"
     new = old.parent.parent / "bbbb" / "codex.exe"
@@ -281,7 +281,7 @@ def test_run_onboarding_non_interactive_success(tmp_path, monkeypatch):
             DoctorCheck("tool-a-host adapter installed", CheckStatus.OK, "Installed."),
         )
     )
-    monkeypatch.setattr("orchestrator.onboarding.run_doctor", lambda config, **kwargs: fake_report)
+    monkeypatch.setattr("modelquad.onboarding.run_doctor", lambda config, **kwargs: fake_report)
 
     output_lines: list[str] = []
     result = run_onboarding(
@@ -299,7 +299,7 @@ def test_run_onboarding_non_interactive_success(tmp_path, monkeypatch):
     assert result.routing_mode == "automatic"
     assert result.selected_providers == ("tool-a",)
     # The data-flow notice comes before anything is set up.
-    from orchestrator.disclosure import DATA_FLOW
+    from modelquad.disclosure import DATA_FLOW
     assert DATA_FLOW[0] in output_lines
     assert len(result.steps) >= 2
     assert any("Install tool-a-host adapter" in step.name for step in result.steps)
@@ -336,7 +336,7 @@ def _stub_doctor(monkeypatch) -> None:
             DoctorCheck("tool-a-host adapter installed", CheckStatus.OK, "Installed"),
         )
     )
-    monkeypatch.setattr("orchestrator.onboarding.run_doctor", lambda config, **kwargs: fake_report)
+    monkeypatch.setattr("modelquad.onboarding.run_doctor", lambda config, **kwargs: fake_report)
 
 
 def test_interactive_onboarding_never_asks_for_a_routing_mode(tmp_path, monkeypatch):
@@ -466,7 +466,7 @@ def test_reset_routing_mode_restores_the_normal_beta_default(tmp_path, monkeypat
 
 @pytest.mark.parametrize("mode", ["ask", "manual"])
 def test_retired_explicit_mode_is_refused_including_qa(tmp_path, mode):
-    from orchestrator.onboarding import _resolve_routing_mode
+    from modelquad.onboarding import _resolve_routing_mode
     with pytest.raises(ValueError, match="choose one of: automatic"):
         _resolve_routing_mode(mode, tmp_path / "qa.db")
 
@@ -494,7 +494,7 @@ def test_run_onboarding_dry_run_skips_persistence_and_uses_dry_run_install(tmp_p
             DoctorCheck("tool-a-host adapter installed", CheckStatus.OK, "Installed"),
         )
     )
-    monkeypatch.setattr("orchestrator.onboarding.run_doctor", lambda config, **kwargs: fake_report)
+    monkeypatch.setattr("modelquad.onboarding.run_doctor", lambda config, **kwargs: fake_report)
 
     StubAdapter.install_calls = []
     result = run_onboarding(
@@ -523,7 +523,7 @@ def test_run_onboarding_doctor_failure_tolerance(tmp_path, monkeypatch):
     def exploding_doctor(*args, **kwargs):
         raise RuntimeError("Doctor diagnostics crashed")
 
-    monkeypatch.setattr("orchestrator.onboarding.run_doctor", exploding_doctor)
+    monkeypatch.setattr("modelquad.onboarding.run_doctor", exploding_doctor)
 
     result = run_onboarding(
         selected_providers=["tool-a"],
@@ -583,7 +583,7 @@ def test_cli_onboard_json_command(tmp_path, capsys, monkeypatch):
             DoctorCheck("claude adapter installed", CheckStatus.OK, "Installed"),
         )
     )
-    monkeypatch.setattr("orchestrator.onboarding.run_doctor", lambda config, **kwargs: fake_report)
+    monkeypatch.setattr("modelquad.onboarding.run_doctor", lambda config, **kwargs: fake_report)
 
     exit_code = main(
         [
@@ -626,7 +626,7 @@ def test_an_unselected_provider_is_not_installed_and_does_not_fail_setup(tmp_pat
             DoctorCheck("tool-b-host adapter installed", CheckStatus.MISSING, "Not installed"),
         )
     )
-    monkeypatch.setattr("orchestrator.onboarding.run_doctor", lambda config, **kwargs: fake_report)
+    monkeypatch.setattr("modelquad.onboarding.run_doctor", lambda config, **kwargs: fake_report)
 
     StubAdapter.install_calls = []
     result = run_onboarding(
@@ -649,7 +649,7 @@ def test_selecting_nothing_is_allowed_and_still_establishes_routing(tmp_path, mo
     registry = _make_stub_registry(tmp_path)
     db_path = tmp_path / "nothing.db"
     monkeypatch.setattr(
-        "orchestrator.onboarding.run_doctor",
+        "modelquad.onboarding.run_doctor",
         lambda config, **kwargs: DoctorReport(()),
     )
 

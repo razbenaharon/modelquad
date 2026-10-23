@@ -16,10 +16,10 @@ import json
 
 import pytest
 
-from orchestrator.providers import ClaudeProvider
-from orchestrator.usage import parse_claude_statusline_payload, write_usage_snapshot
-from orchestrator.usage.claude import CLAUDE_STATUSLINE_SOURCE
-from orchestrator.usage.refresh import refresh_provider
+from modelquad.providers import ClaudeProvider
+from modelquad.usage import parse_claude_statusline_payload, write_usage_snapshot
+from modelquad.usage.claude import CLAUDE_STATUSLINE_SOURCE
+from modelquad.usage.refresh import refresh_provider
 
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)

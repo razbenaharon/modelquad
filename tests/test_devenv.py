@@ -185,7 +185,7 @@ def test_check_py_hands_the_redirected_environment_to_pytest(check, tmp_path, mo
 
     class _Probe:
         returncode = 0
-        stdout = str(check.SRC / "orchestrator" / "__init__.py")
+        stdout = str(check.SRC / "modelquad" / "__init__.py")
         stderr = ""
 
     # The module's own reference to `subprocess`, never the stdlib module
@@ -572,7 +572,7 @@ def test_the_root_conftest_cannot_reach_the_product_runtime():
 
     The file is outside `src/`, and `pyproject.toml` builds the distribution
     from `src/` alone -- so it is in no wheel or sdist. And
-    `orchestrator`'s own validation runner launches pytest inside a *user's*
+    `modelquad`'s own validation runner launches pytest inside a *user's*
     project, which takes that project as its rootdir and never collects this
     file.
     """
@@ -624,7 +624,7 @@ def test_a_scan_whose_file_is_selected_whole_is_not_named_again(check):
 
 def test_the_review_gate_selects_the_codex_package_importer(check):
     """test_execution imports CodexExecutor via execution/__init__.py."""
-    selected = check.focused_tests(["src/orchestrator/execution/codex.py"])
+    selected = check.focused_tests(["src/modelquad/execution/codex.py"])
     assert "tests/test_execution.py" in selected
     assert "tests/test_codex_read_only.py" in selected, "the stem rule still applies"
 
@@ -669,9 +669,9 @@ def test_the_review_gate_selects_literal_and_joined_path_guards(
 
 def test_the_review_gate_limits_path_guards_to_non_src_changes(check, tmp_path, monkeypatch):
     _focused_fixture(check, tmp_path, monkeypatch, {
-        "tests/test_guard.py": 'target = "src/orchestrator/sample.py"\n',
+        "tests/test_guard.py": 'target = "src/modelquad/sample.py"\n',
     })
-    assert "tests/test_guard.py" not in check.focused_tests(["src/orchestrator/sample.py"])
+    assert "tests/test_guard.py" not in check.focused_tests(["src/modelquad/sample.py"])
 
 
 
@@ -736,11 +736,11 @@ def test_the_review_gate_selection_is_deterministic_with_shuffled_discovery(
     _focused_fixture(check, tmp_path, monkeypatch, {
         "tests/test_path.py": 'SCRIPTS = REPO / "scripts"\ntarget = SCRIPTS / "check.py"\n',
         "tests/test_dir.py": 'DOCS = REPO / "docs"\nSTATUS = DOCS / "status"\n',
-        "tests/test_importer.py": 'import orchestrator.sample\n',
+        "tests/test_importer.py": 'import modelquad.sample\n',
         "tests/test_sample_extra.py": '',
         "tests/test_unrelated.py": '',
     })
-    changed = ["scripts/check.py", "docs/status/NOW.md", "src/orchestrator/sample.py"]
+    changed = ["scripts/check.py", "docs/status/NOW.md", "src/modelquad/sample.py"]
     original_glob = Path.glob
 
     def shuffled_glob(path, pattern):
@@ -759,9 +759,9 @@ def test_the_review_gate_selection_is_deterministic_with_shuffled_discovery(
 
 
 @pytest.mark.parametrize("statement", [
-    "import orchestrator.sample.changed as subject",
-    "from orchestrator.sample.changed import Subject as Renamed",
-    "from orchestrator.sample import changed as subject",
+    "import modelquad.sample.changed as subject",
+    "from modelquad.sample.changed import Subject as Renamed",
+    "from modelquad.sample import changed as subject",
 ])
 @pytest.mark.parametrize("function_level", [False, True])
 def test_the_review_gate_selects_direct_imports_at_every_scope(
@@ -771,10 +771,10 @@ def test_the_review_gate_selects_direct_imports_at_every_scope(
     # A parsed import must never execute either the module or the test body.
     _focused_fixture(check, tmp_path, monkeypatch, {
         "tests/test_consumer.py": source + "\nraise RuntimeError('never execute')\n",
-        "tests/test_unrelated.py": "from orchestrator.sample.other import Subject\n",
+        "tests/test_unrelated.py": "from modelquad.sample.other import Subject\n",
         "tests/test_changed_extra.py": "",
     })
-    selected = check.focused_tests(["src/orchestrator/sample/changed.py"])
+    selected = check.focused_tests(["src/modelquad/sample/changed.py"])
     assert "tests/test_consumer.py" in selected
     assert "tests/test_unrelated.py" not in selected
     assert "tests/test_changed_extra.py" in selected
@@ -782,23 +782,23 @@ def test_the_review_gate_selects_direct_imports_at_every_scope(
 
 @pytest.mark.parametrize("export", [
     "from .changed import Subject as PublicSubject",
-    "from orchestrator.sample.changed import Subject as PublicSubject",
+    "from modelquad.sample.changed import Subject as PublicSubject",
     "from . import changed as PublicSubject",
     "from .changed import *",
 ])
 @pytest.mark.parametrize("statement", [
-    "import orchestrator.sample as subject",
-    "from orchestrator import sample as subject",
+    "import modelquad.sample as subject",
+    "from modelquad import sample as subject",
 ])
 def test_the_review_gate_resolves_package_reexports(check, tmp_path, monkeypatch, export, statement):
     _focused_fixture(check, tmp_path, monkeypatch, {
-        "src/orchestrator/sample/__init__.py": export + "\nraise RuntimeError('never execute')\n",
-        "tests/test_consumer.py": "def test_subject():\n    from orchestrator.sample import PublicSubject\n",
-        "tests/test_star.py": "from orchestrator.sample import *\n",
+        "src/modelquad/sample/__init__.py": export + "\nraise RuntimeError('never execute')\n",
+        "tests/test_consumer.py": "def test_subject():\n    from modelquad.sample import PublicSubject\n",
+        "tests/test_star.py": "from modelquad.sample import *\n",
         "tests/test_package.py": statement + "\n",
-        "tests/test_unrelated.py": "from orchestrator.sample import Other\n",
+        "tests/test_unrelated.py": "from modelquad.sample import Other\n",
     })
-    selected = check.focused_tests(["src/orchestrator/sample/changed.py"])
+    selected = check.focused_tests(["src/modelquad/sample/changed.py"])
     assert {"tests/test_consumer.py", "tests/test_star.py", "tests/test_package.py"} <= set(selected)
     if "*" not in export:
         assert "tests/test_unrelated.py" not in selected
@@ -808,17 +808,17 @@ def test_the_review_gate_selects_broken_syntax_for_pytest(check, tmp_path, monke
     _focused_fixture(check, tmp_path, monkeypatch, {
         "tests/test_broken.py": "def test_broken(:\n",
     })
-    assert "tests/test_broken.py" in check.focused_tests(["src/orchestrator/sample.py"])
+    assert "tests/test_broken.py" in check.focused_tests(["src/modelquad/sample.py"])
     assert check.focused_tests([]) == []
 
 
 @pytest.mark.parametrize("changed", [
-    "src/orchestrator/sample/__init__.py",
-    "src/orchestrator/__init__.py",
+    "src/modelquad/sample/__init__.py",
+    "src/modelquad/__init__.py",
 ])
 @pytest.mark.parametrize("statement", [
-    "from orchestrator.sample.changed import Subject",
-    "from orchestrator import sample",
+    "from modelquad.sample.changed import Subject",
+    "from modelquad import sample",
 ])
 def test_the_review_gate_selects_package_module_importers(check, tmp_path, monkeypatch, changed, statement):
     _focused_fixture(check, tmp_path, monkeypatch, {
@@ -828,7 +828,7 @@ def test_the_review_gate_selects_package_module_importers(check, tmp_path, monke
 
 
 @pytest.mark.parametrize("changed, source, rule", [
-    ("src/orchestrator/sample/changed.py", "import orchestrator.sample.changed\n", "importer"),
+    ("src/modelquad/sample/changed.py", "import modelquad.sample.changed\n", "importer"),
     ("scripts/check.py", 'target = REPO_ROOT / "scripts" / "check.py"\n', "path"),
     ("docs/status/NOW.md", 'DOCS = REPO / "docs"\nSTATUS = DOCS / "status"\n', "dir"),
 ])
@@ -846,7 +846,7 @@ def test_the_review_gate_reports_broad_selection_without_trimming(
     assert len(summary.splitlines()) == 1
     for text in ("3 whole test file(s)", "stem=", f"{rule}=3", "path=", "scan=", "all files retained"):
         assert text in summary
-    check.focused_tests(["src/orchestrator/config.py"])
+    check.focused_tests(["src/modelquad/config.py"])
     assert "all files retained" in capsys.readouterr().out
 
 
@@ -862,7 +862,7 @@ def _repository_walkers(path: Path) -> set[str]:
 
     A helper handed a root walks whatever the test gives it, usually a temporary
     tree. One that takes nothing can only walk what the module names, which is
-    the repository: `_package_sources()` over `src/orchestrator` is how a review
+    the repository: `_package_sources()` over `src/modelquad` is how a review
     found a credential scan this rule had missed.
     """
     walkers = set()

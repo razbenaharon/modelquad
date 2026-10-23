@@ -26,13 +26,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from orchestrator.config import load_config
-from orchestrator.execution import (
+from modelquad.config import load_config
+from modelquad.execution import (
     ExecutionManager,
     ExecutionResult,
     WorkerTaskStatus,
 )
-from orchestrator.models import Freshness, ProviderStatus
+from modelquad.models import Freshness, ProviderStatus
 
 _NOW = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
 ZETA = "zeta"
@@ -62,7 +62,7 @@ def _manager(executors, *, config=None, extra_plugins=()):
     """A manager whose registry also holds a startable, lower-ranked second
     worker (`zeta`), so "no second worker starts" is a real claim."""
 
-    from orchestrator.registry import (
+    from modelquad.registry import (
         ProviderCapabilities, ProviderPlugin, UsageSourceKind,
         WORKSPACE_DEVELOPMENT_GRANT, default_registry,
     )
@@ -259,7 +259,7 @@ def test_a_host_only_recommendation_still_runs_only_the_default_worker(tmp_path)
 
 
 def test_an_uninstalled_default_worker_is_never_substituted(tmp_path):
-    from orchestrator.registry import (
+    from modelquad.registry import (
         ProviderCapabilities, ProviderPlugin, UsageSourceKind,
         WORKSPACE_DEVELOPMENT_GRANT,
     )

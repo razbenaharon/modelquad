@@ -9,13 +9,13 @@ import uuid
 
 import pytest
 
-from orchestrator import cli
-from orchestrator.jobs import service_client as sc
-from orchestrator.service import db, history
-from orchestrator.service.api import state_identity_tag
-from orchestrator.service import listener, listener_proof
-from orchestrator.service.socket_identity import ListenerError
-from orchestrator.statecontext import resolve_state_context
+from modelquad import cli
+from modelquad.jobs import service_client as sc
+from modelquad.service import db, history
+from modelquad.service.api import state_identity_tag
+from modelquad.service import listener, listener_proof
+from modelquad.service.socket_identity import ListenerError
+from modelquad.statecontext import resolve_state_context
 
 JOB = str(uuid.UUID(int=101))
 DECISION = str(uuid.UUID(int=201))

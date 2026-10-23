@@ -7,11 +7,11 @@ import os
 
 import pytest
 
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.cli import main, render_doctor
-from orchestrator.config import Config, ProviderConfig, load_config
-from orchestrator.catalog import AvailabilityState, ModelDescriptor
-from orchestrator.doctor import (
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.cli import main, render_doctor
+from modelquad.config import Config, ProviderConfig, load_config
+from modelquad.catalog import AvailabilityState, ModelDescriptor
+from modelquad.doctor import (
     CheckStatus,
     DoctorCheck,
     DoctorReport,
@@ -19,7 +19,7 @@ from orchestrator.doctor import (
     _model_discovery_check,
     run_doctor,
 )
-from orchestrator.registry import (
+from modelquad.registry import (
     HostAdapterDescriptor,
     ProviderCapabilities,
     ProviderPlugin,
@@ -74,7 +74,7 @@ def _no_listener(_port):
     ModelQuad happens to be up.
     """
 
-    from orchestrator.service import control_plane
+    from modelquad.service import control_plane
 
     return control_plane.ControlPlaneVerdict(control_plane.PROBE_ABSENT, "no listener")
 
@@ -369,7 +369,7 @@ def test_grouped_doctor_rendering_includes_every_check_and_uses_report_verdict(c
 
 def test_doctor_flags_a_gate_hook_an_earlier_version_left_for_repair(tmp_path):
     """The gate is no longer installed; a leftover owned one is a repairable warning."""
-    from orchestrator.repair import _map_check_to_host
+    from modelquad.repair import _map_check_to_host
 
     claude_dir = tmp_path / "claude"
     claude_dir.mkdir()
@@ -399,7 +399,7 @@ def test_doctor_flags_a_gate_hook_an_earlier_version_left_for_repair(tmp_path):
     ("bash ~/.claude/my-status.sh; modelquad usage-hook claude --quiet", "OK"),
 ])
 def test_doctor_gives_the_one_line_recipe_for_a_users_own_status_line(tmp_path, command, expected):
-    from orchestrator.adapters.claude_adapter import segment_command
+    from modelquad.adapters.claude_adapter import segment_command
 
     claude_dir = tmp_path / "claude"
     claude_dir.mkdir()
@@ -424,7 +424,7 @@ def test_doctor_gives_the_one_line_recipe_for_a_users_own_status_line(tmp_path, 
 
 
 def test_claude_version_comes_from_the_status_line_never_from_running_claude(tmp_path):
-    from orchestrator.doctor import _claude_version_check
+    from modelquad.doctor import _claude_version_check
 
     usage = tmp_path / "usage"
     usage.mkdir()
@@ -439,7 +439,7 @@ def test_claude_version_comes_from_the_status_line_never_from_running_claude(tmp
 
 
 def test_doctor_detects_the_microsoft_store_python_alias(tmp_path):
-    from orchestrator.doctor import _python_alias_check
+    from modelquad.doctor import _python_alias_check
 
     local = tmp_path / "Local"
     stub = local / "Microsoft" / "WindowsApps"
@@ -460,7 +460,7 @@ def test_doctor_detects_the_microsoft_store_python_alias(tmp_path):
 
 
 def test_doctor_prints_how_to_put_the_scripts_folder_on_path(tmp_path):
-    from orchestrator.doctor import _scripts_on_path_check
+    from modelquad.doctor import _scripts_on_path_check
 
     scripts = tmp_path / "Python311" / "Scripts"
     scripts.mkdir(parents=True)
@@ -476,7 +476,7 @@ def test_doctor_prints_how_to_put_the_scripts_folder_on_path(tmp_path):
 
 
 def test_doctor_checks_git_for_windows(tmp_path):
-    from orchestrator.doctor import _git_for_windows_check
+    from modelquad.doctor import _git_for_windows_check
 
     absent = _git_for_windows_check(which=lambda _: None, environ={}, platform="nt")
     assert absent.status is CheckStatus.WARN and "git-scm.com" in absent.detail
@@ -491,7 +491,7 @@ def test_doctor_checks_git_for_windows(tmp_path):
 
 
 def test_first_run_checklist_is_plain_and_ends_the_report(tmp_path, capsys, monkeypatch):
-    from orchestrator.doctor import DoctorReport, first_run_checklist
+    from modelquad.doctor import DoctorReport, first_run_checklist
 
     report = DoctorReport((
         DoctorCheck("ModelQuad package", CheckStatus.OK, "0.3.0"),
@@ -508,7 +508,7 @@ def test_first_run_checklist_is_plain_and_ends_the_report(tmp_path, capsys, monk
     assert (False, "Connect ModelQuad to Claude Code by running: modelquad install claude") in items
     assert (False, "Not seen yet. Open Claude Code.") in items
 
-    import orchestrator.cli as cli_module
+    import modelquad.cli as cli_module
     monkeypatch.setattr(cli_module, "run_doctor", lambda *args, **kwargs: report)
     assert main(["doctor", "--first-run"]) == 0
     out = capsys.readouterr().out
@@ -528,14 +528,14 @@ def test_first_run_checklist_is_plain_and_ends_the_report(tmp_path, capsys, monk
 def _write_pidfile(state_dir, pid):
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "service.pid").write_text(
-        json.dumps({"pid": pid, "argv": ["C:/fake/orchestrator.exe", "serve"], "started_at": "2026-10-01T00:00:00Z"}),
+        json.dumps({"pid": pid, "argv": ["C:/fake/modelquad.exe", "serve"], "started_at": "2026-10-01T00:00:00Z"}),
         encoding="utf-8",
     )
 
 
 def test_service_pidfile_naming_a_dead_pid_is_a_warning_with_its_fix(tmp_path):
-    from orchestrator.doctor import _service_pidfile_check
-    from orchestrator.service.lifecycle import ServiceProcessManager
+    from modelquad.doctor import _service_pidfile_check
+    from modelquad.service.lifecycle import ServiceProcessManager
 
     asked: list[int] = []
 
@@ -558,7 +558,7 @@ def test_service_pidfile_naming_a_dead_pid_is_a_warning_with_its_fix(tmp_path):
 
 
 def test_run_doctor_reports_a_stale_service_pidfile(tmp_path):
-    from orchestrator import paths
+    from modelquad import paths
 
     # A PID that cannot exist, checked through the real existence seam.
     _write_pidfile(paths.state_root(), 0x7FFFFFFC)
@@ -569,7 +569,7 @@ def test_run_doctor_reports_a_stale_service_pidfile(tmp_path):
 
 
 def test_a_live_service_pidfile_is_not_reported(tmp_path):
-    from orchestrator import paths
+    from modelquad import paths
 
     _write_pidfile(paths.state_root(), os.getpid())
     report = run_doctor(Config(), usage_directory=tmp_path, registry=ProviderRegistry(()))

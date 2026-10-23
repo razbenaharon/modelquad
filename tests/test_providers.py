@@ -7,9 +7,9 @@ import json
 
 import pytest
 
-from orchestrator.models import Freshness
-from orchestrator.config import Config, ProviderConfig
-from orchestrator.providers import ClaudeProvider, CodexProvider, build_providers
+from modelquad.models import Freshness
+from modelquad.config import Config, ProviderConfig
+from modelquad.providers import ClaudeProvider, CodexProvider, build_providers
 
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)

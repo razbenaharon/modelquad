@@ -17,12 +17,12 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from orchestrator import paths
-from orchestrator.jobs import handle, recovery, service_client as client
-from orchestrator.service import auth, db, history
-from orchestrator.service.api import state_identity_tag
-from orchestrator.service.app import create_app
-from orchestrator.statecontext import resolve_state_context
+from modelquad import paths
+from modelquad.jobs import handle, recovery, service_client as client
+from modelquad.service import auth, db, history
+from modelquad.service.api import state_identity_tag
+from modelquad.service.app import create_app
+from modelquad.statecontext import resolve_state_context
 
 SECRET = "synthetic-installation-secret-0123456789abcdef"
 
@@ -102,8 +102,8 @@ def ownership_seam(monkeypatch, *, refuse=False):
     # On the evidence base this module does not exist and the original client
     # proceeds with copied health. Keep the entry-point regression behavioral.
     try:
-        from orchestrator.service import listener as transport
-        from orchestrator.service.socket_identity import ListenerError
+        from modelquad.service import listener as transport
+        from modelquad.service.socket_identity import ListenerError
     except ImportError:
         return
     monkeypatch.setattr(transport, "admitted_service_images", lambda port: frozenset({"admitted"}))
@@ -193,7 +193,7 @@ def test_signed_incompatible_identity_still_refuses(tmp_path, monkeypatch, chang
 ], ids=["server-failure", "runner-failed", "not-launchable", "contained", "runner-disabled",
         "rate-limit", "hostile-prose", "bad-success", "wrong-job"])
 def test_fixed_launch_results(status, payload, result, caplog):
-    from orchestrator.service.listener import Reply
+    from modelquad.service.listener import Reply
     closed, calls = [], []
     transport = SimpleNamespace(request=lambda *a, **k: calls.append(a) or Reply(status, "application/json", json.dumps(payload).encode()),
                                 close=lambda: closed.append(True))
@@ -208,7 +208,7 @@ def test_fixed_launch_results(status, payload, result, caplog):
     (200, {"padding": "x" * 5000}),
 ], ids=["redirect", "oversized"])
 def test_post_send_reply_failure_is_ambiguous_without_retry(tmp_path, monkeypatch, status, payload, caplog):
-    from orchestrator.jobs.launch_answer import refusal_label
+    from modelquad.jobs.launch_answer import refusal_label
 
     ownership_seam(monkeypatch)
     database = tmp_path / "history.db"
@@ -230,7 +230,7 @@ def test_post_send_reply_failure_is_ambiguous_without_retry(tmp_path, monkeypatc
                                   "service_proof_invalid", "response_too_large"],
                          ids=["connection", "redirect", "proof", "oversized"])
 def test_failure_is_not_retried_and_ambiguity_survives(monkeypatch, sent, code):
-    from orchestrator.service.socket_identity import ListenerError
+    from modelquad.service.socket_identity import ListenerError
     calls = []
     def request(*a, **k):
         calls.append(a)
@@ -267,7 +267,7 @@ def test_health_publishes_actual_app_database_identity(tmp_path, monkeypatch):
                                    {"argv": ["serve", "--port", "0"]}],
                          ids=["absent", "empty", "no-args", "invalid-port", "zero-port"])
 def test_port_hint_falls_back_to_cli_default(record):
-    from orchestrator.cli import SERVICE_DEFAULT_PORT
+    from modelquad.cli import SERVICE_DEFAULT_PORT
     directory = paths.state_root()
     directory.mkdir(parents=True, exist_ok=True)
     if record is not None:

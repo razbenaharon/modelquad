@@ -9,16 +9,16 @@ evidence that CAUSED an execution stay joined to its outcome.
 
 from __future__ import annotations
 
-from orchestrator.config import Config
-from orchestrator.lineage import (
+from modelquad.config import Config
+from modelquad.lineage import (
     REFUSAL_TASK_MISMATCH,
     REFUSAL_UNKNOWN_DECISION,
     resolve_delegation_lineage,
 )
-from orchestrator.models import Freshness, ProviderStatus
-from orchestrator.provenance import evidence_snapshot_json, new_decision_id
-from orchestrator.router import Router
-from orchestrator.service import history as service_history
+from modelquad.models import Freshness, ProviderStatus
+from modelquad.provenance import evidence_snapshot_json, new_decision_id
+from modelquad.router import Router
+from modelquad.service import history as service_history
 
 
 def _statuses():
@@ -143,7 +143,7 @@ def test_matching_target_is_reported_as_match(tmp_path):
 
 
 def test_one_decision_supports_many_execution_attempts(tmp_path):
-    from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
+    from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
 
     db = tmp_path / "h.db"
     decision_id, _ = _record_route(db)

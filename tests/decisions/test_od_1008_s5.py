@@ -10,11 +10,11 @@ test.
 
 import pytest
 
-from orchestrator import project_notes
-from orchestrator.execution import noshell
-from orchestrator.execution.base import READ_ONLY_TASK_TYPES
-from orchestrator.models import TaskType
-from orchestrator.routing_policy import LaunchRefused
+from modelquad import project_notes
+from modelquad.execution import noshell
+from modelquad.execution.base import READ_ONLY_TASK_TYPES
+from modelquad.models import TaskType
+from modelquad.routing_policy import LaunchRefused
 
 READ_ONLY = ("review", "exploration", "architecture")
 WRITABLE = ("implementation", "debugging", "testing", "trivial")

@@ -23,10 +23,10 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import cli
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.adapters.registration import recorded_replacement
-from orchestrator.onboarding import install_detected_hosts
+from modelquad import cli
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.adapters.registration import recorded_replacement
+from modelquad.onboarding import install_detected_hosts
 
 from test_host_registration_transaction import (  # noqa: F401 -- fixtures + helpers
     HOST_ID,
@@ -215,10 +215,10 @@ def test_a_failed_restore_is_reported_and_exits_non_zero(
     _write_registration(claude_home, {"command": "modelquad-mcp"})
     _install(claude_home)
 
-    from orchestrator.adapters.report import ActionKind, FileAction
+    from modelquad.adapters.report import ActionKind, FileAction
 
     monkeypatch.setattr(
-        "orchestrator.adapters.jsonmerge.upsert_json_key",
+        "modelquad.adapters.jsonmerge.upsert_json_key",
         lambda path, key, value, *, dry_run, backup=True: FileAction(
             path, ActionKind.SKIPPED, detail="unwritable"
         ),

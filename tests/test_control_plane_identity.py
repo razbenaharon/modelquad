@@ -3,15 +3,15 @@
 """Service identity rules: is the listener on the port this installation's service?
 
 Moved with the rules from the removed desktop shell into
-``orchestrator.service.control_plane``.
+``modelquad.service.control_plane``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from orchestrator import statecontext
-from orchestrator.service import control_plane
+from modelquad import statecontext
+from modelquad.service import control_plane
 
 
 def _development_context(*_args, **_kwargs):
@@ -45,7 +45,7 @@ def _probe_with_payload(monkeypatch, payload):
     import json as _json
 
     if isinstance(payload, dict) and "state_root" not in payload:
-        from orchestrator.statecontext import resolve_state_context
+        from modelquad.statecontext import resolve_state_context
 
         payload = {**payload, "state_root": str(resolve_state_context().state_root)}
     # Compatibility is deliberately tested independently of authentication.
@@ -110,8 +110,8 @@ def test_probe_rejects_non_json_listener(monkeypatch):
 
 
 def test_probe_treats_http_error_as_mismatch_not_ready(monkeypatch):
-    from orchestrator.service import listener
-    from orchestrator.service.socket_identity import ListenerError
+    from modelquad.service import listener
+    from modelquad.service.socket_identity import ListenerError
 
     def raise_http_error(port):
         raise ListenerError("service_proof_invalid")
@@ -124,8 +124,8 @@ def test_probe_treats_http_error_as_mismatch_not_ready(monkeypatch):
 
 
 def test_probe_treats_no_listener_as_absent(monkeypatch):
-    from orchestrator.service import listener
-    from orchestrator.service.socket_identity import ListenerError
+    from modelquad.service import listener
+    from modelquad.service.socket_identity import ListenerError
 
     def raise_refused(port):
         raise ListenerError("service_absent")

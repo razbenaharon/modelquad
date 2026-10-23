@@ -11,14 +11,14 @@ import time
 
 import pytest
 
-from orchestrator.usage.codex_appserver import (
+from modelquad.usage.codex_appserver import (
     CODEX_APPSERVER_SOURCE,
     collect_codex_appserver_usage,
     parse_rate_limits_result,
 )
-from orchestrator.usage import refresh as usage_refresh
-from orchestrator.usage.base import write_usage_snapshot
-from orchestrator.usage.refresh import (
+from modelquad.usage import refresh as usage_refresh
+from modelquad.usage.base import write_usage_snapshot
+from modelquad.usage.refresh import (
     ACTIVE,
     PASSIVE,
     UNAVAILABLE,

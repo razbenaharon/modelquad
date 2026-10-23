@@ -17,10 +17,10 @@ import sys
 
 import pytest
 
-from orchestrator import codexcli, executable_resolution as resolver, procutil
-from orchestrator.execution import codex, codex_worker_mcp as mcp, noshell
-from orchestrator.execution.base import ExecutionRequest, WorkerTaskStatus
-from orchestrator.models import TaskType
+from modelquad import codexcli, executable_resolution as resolver, procutil
+from modelquad.execution import codex, codex_worker_mcp as mcp, noshell
+from modelquad.execution.base import ExecutionRequest, WorkerTaskStatus
+from modelquad.models import TaskType
 
 
 win_only = pytest.mark.skipif(os.name != "nt", reason="Windows batch and CreateProcess semantics only")

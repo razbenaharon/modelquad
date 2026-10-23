@@ -21,10 +21,10 @@ import time
 
 import pytest
 
-from orchestrator import procutil
-from orchestrator.executable_resolution import Resolution
-from orchestrator.execution import ExecutionManager
-from orchestrator.execution.base import (
+from modelquad import procutil
+from modelquad.executable_resolution import Resolution
+from modelquad.execution import ExecutionManager
+from modelquad.execution.base import (
     ExecutionRequest,
     ExecutionResult,
     WorkerTaskStatus,
@@ -33,11 +33,11 @@ from orchestrator.execution.base import (
     termination_facts,
     worker_confirmed_dead,
 )
-from orchestrator.execution.codex import CodexExecutor
-from orchestrator.models import TaskType
-from orchestrator.procutil import run_with_tree_kill
-from orchestrator.service import db as service_db
-from orchestrator.service import history as service_history
+from modelquad.execution.codex import CodexExecutor
+from modelquad.models import TaskType
+from modelquad.procutil import run_with_tree_kill
+from modelquad.service import db as service_db
+from modelquad.service import history as service_history
 
 from conftest import tool_payload
 
@@ -45,7 +45,7 @@ from conftest import tool_payload
 def _tool_payload(name, arguments):
     import asyncio
 
-    from orchestrator.mcp.server import server
+    from modelquad.mcp.server import server
 
     return tool_payload(asyncio.run(server.call_tool(name, arguments)))
 
@@ -62,12 +62,12 @@ def _tool_usage_directory(tmp_path, monkeypatch):
     """The MCP tools read quota snapshots from `server.USAGE_DIRECTORY`, never
     from a tool argument. This module's snapshots live in the
     test's tmp_path, which every call here used to pass as `usage_directory`."""
-    from orchestrator.mcp import server as mcp_server_module
+    from modelquad.mcp import server as mcp_server_module
 
     monkeypatch.setattr(mcp_server_module, "USAGE_DIRECTORY", str(tmp_path))
 
 
-mcp_server = importlib.import_module("orchestrator.mcp.server")
+mcp_server = importlib.import_module("modelquad.mcp.server")
 
 
 def _pid_alive(pid: int) -> bool:
@@ -198,7 +198,7 @@ def _request(tmp_path, timeout=1.0):
 @pytest.fixture(autouse=True)
 def qualified_codex(monkeypatch):
     """Codex runs here own launch outcomes, not feature qualification."""
-    from orchestrator.execution import codex as codex_module, noshell
+    from modelquad.execution import codex as codex_module, noshell
 
     monkeypatch.setattr(codex_module, "_probe", lambda executable: "0.160.0")
     monkeypatch.setattr(noshell, "qualify", lambda executable, version, **kwargs:
@@ -312,7 +312,7 @@ class _WorkerThatIsKilled:
 @pytest.fixture
 def delegation(tmp_path, monkeypatch):
     write_usage_fixtures(tmp_path)
-    db_path = tmp_path / "orchestrator.db"
+    db_path = tmp_path / "modelquad.db"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     original = service_db.DEFAULT_DB_PATH

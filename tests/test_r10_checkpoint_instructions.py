@@ -14,11 +14,11 @@ import re
 
 import pytest
 
-from orchestrator.mcp import server as mcp_server
+from modelquad.mcp import server as mcp_server
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE_ROOT = ROOT / "src/orchestrator/adapters/templates"
+TEMPLATE_ROOT = ROOT / "src/modelquad/adapters/templates"
 RELATIVE_FILES = (
     "claude/skills/modelquad/SKILL.md",
 )
@@ -28,7 +28,7 @@ FILES = tuple(TEMPLATE_ROOT / relative for relative in RELATIVE_FILES)
 def _instruction_sources():
     """Every instruction text shipped: the skill, and the MCP server's instructions
     in both proactive settings (they replaced the old global CLAUDE.md block)."""
-    from orchestrator.adapters.server_instructions import server_instructions
+    from modelquad.adapters.server_instructions import server_instructions
 
     for path in FILES:
         yield path.relative_to(ROOT).as_posix(), path.read_text(encoding="utf-8")
@@ -58,7 +58,7 @@ FORBIDDEN_PHRASES = (
 REQUIRED_SENTENCE_FRAGMENTS = (
     "read-only",
     "asks the user before",
-    "ORCHESTRATOR_WORKER=1",
+    "MODELQUAD_WORKER=1",
     "`modelquad_handoff`",
     "absolute project directory",
     "`modelquad_job_*`",
@@ -200,7 +200,7 @@ def test_instruction_checker_rejects_abbreviated_tool_names(registered_names):
 
 def test_the_mcp_server_hands_claude_code_its_instructions():
     """The guidance reaches Claude through the server, not through a global CLAUDE.md."""
-    from orchestrator.adapters.server_instructions import server_instructions
+    from modelquad.adapters.server_instructions import server_instructions
 
     assert mcp_server.server.instructions in (server_instructions(False), server_instructions(True))
     assert len(mcp_server.server.instructions) < 4096  # Claude Code cuts instructions past 4,096 characters

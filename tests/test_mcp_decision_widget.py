@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from orchestrator.mcp.presentation import (
+from modelquad.mcp.presentation import (
     PRESENTATION_SCHEMA_VERSION,
     ROUTE_STATES,
     capability_view,
@@ -335,7 +335,7 @@ def test_an_ineligible_candidate_is_disqualified_not_ranked_lower():
 
 
 def test_developer_details_are_absent_by_default(monkeypatch):
-    from orchestrator.devmode import DEV_MODE_ENV
+    from modelquad.devmode import DEV_MODE_ENV
 
     # Explicit rather than ambient: the developer-mode environment variable
     # can be set in the live process, so "the suite happens not to have it set" is not the

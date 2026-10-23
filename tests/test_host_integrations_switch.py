@@ -8,18 +8,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator import cli, doctor, host_integrations, onboarding, repair
-from orchestrator.adapters import InstallReport
-from orchestrator.adapters.report import ActionKind, FileAction
-from orchestrator.adapters import registration
-from orchestrator.config import load_config
-from orchestrator.doctor import CheckStatus, DoctorCheck, DoctorReport
-from orchestrator.registry import (
+from modelquad import cli, doctor, host_integrations, onboarding, repair
+from modelquad.adapters import InstallReport
+from modelquad.adapters.report import ActionKind, FileAction
+from modelquad.adapters import registration
+from modelquad.config import load_config
+from modelquad.doctor import CheckStatus, DoctorCheck, DoctorReport
+from modelquad.registry import (
     HostAdapterDescriptor, ProviderCapabilities, ProviderPlugin, ProviderRegistry,
     UsageSourceKind,
 )
-from orchestrator.service import lifecycle
-from orchestrator.statecontext import STATE_ROOT_ENV_VAR
+from modelquad.service import lifecycle
+from modelquad.statecontext import STATE_ROOT_ENV_VAR
 
 
 def forbidden(*args, **kwargs):
@@ -123,7 +123,7 @@ def test_onboarding_skips_without_inspecting_or_writing(hosts, monkeypatch, dry_
 
 def test_onboarding_step_reports_choice_without_claiming_connection(hosts, monkeypatch, tmp_path):
     host_integrations.set_global_integrations(False)
-    from orchestrator import provider_connection
+    from modelquad import provider_connection
     connection = SimpleNamespace(
         provider_id="synthetic", display_name="Synthetic",
         install=provider_connection.InstallState.INSTALLED_ON_PATH,
@@ -172,7 +172,7 @@ def test_doctor_off_by_choice_only_for_global_targets(hosts, monkeypatch, tmp_pa
     monkeypatch.setattr(doctor, "_mcp_registration_check", forbidden)
     monkeypatch.setattr(doctor, "_leftover_gate_check", forbidden)
     monkeypatch.setattr(doctor, "_mcp_runtime_check", lambda *args, **kwargs: None)
-    from orchestrator.service import control_plane as shell
+    from modelquad.service import control_plane as shell
     kwargs = dict(
         registry=hosts.registry, which=lambda _: None, usage_directory=tmp_path / "usage",
         control_plane_probe=lambda _: shell.ControlPlaneVerdict(shell.PROBE_ABSENT, "synthetic"),

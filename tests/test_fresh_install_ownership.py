@@ -37,9 +37,9 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import cli
-from orchestrator.adapters.registration import RestoreStatus, recorded_replacement
-from orchestrator.onboarding import install_detected_hosts
+from modelquad import cli
+from modelquad.adapters.registration import RestoreStatus, recorded_replacement
+from modelquad.onboarding import install_detected_hosts
 
 from test_host_registration_transaction import (  # noqa: F401 -- fixtures + helpers
     HOST_ID,
@@ -69,7 +69,7 @@ def _relabel_installed_command(monkeypatch, command: str) -> None:
     """Make the next install write a DIFFERENT ModelQuad registration."""
 
     monkeypatch.setattr(
-        "orchestrator.hostruntime.mcp_launch_command", lambda: command, raising=False
+        "modelquad.hostruntime.mcp_launch_command", lambda: command, raising=False
     )
 
 

@@ -10,7 +10,7 @@ import sys
 import pytest
 
 from conftest import platform_reference
-from orchestrator import platformcache
+from modelquad import platformcache
 
 def test_reading_the_windows_facts_spawns_no_process(monkeypatch):
     """The facts are read from the OS, never from a command.

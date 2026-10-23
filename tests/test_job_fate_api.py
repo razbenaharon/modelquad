@@ -9,11 +9,11 @@ import uuid
 from fastapi.testclient import TestClient
 import pytest
 
-from orchestrator.service import fate_history as _fate_store
-from orchestrator import procutil
-from orchestrator.provenance import new_decision_id
-from orchestrator.service import db, fate_api, history
-from orchestrator.service.app import LoopbackFastAPI
+from modelquad.service import fate_history as _fate_store
+from modelquad import procutil
+from modelquad.provenance import new_decision_id
+from modelquad.service import db, fate_api, history
+from modelquad.service.app import LoopbackFastAPI
 
 JOB = str(uuid.UUID(int=101))
 DECISION = str(uuid.UUID(int=201))

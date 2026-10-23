@@ -7,10 +7,10 @@ from dataclasses import replace
 
 import pytest
 
-from orchestrator import cli, hostruntime
-from orchestrator.adapters import registration as reg
-from orchestrator.adapters.claude_adapter import ClaudeAdapter, _timeout_env_key, _timeout_ownership_key
-from orchestrator.onboarding import install_detected_hosts
+from modelquad import cli, hostruntime
+from modelquad.adapters import registration as reg
+from modelquad.adapters.claude_adapter import ClaudeAdapter, _timeout_env_key, _timeout_ownership_key
+from modelquad.onboarding import install_detected_hosts
 
 from test_host_registration_transaction import state_root  # noqa: F401 -- fixture
 
@@ -29,7 +29,7 @@ def targets(tmp_path, monkeypatch, state_root):
     )
     monkeypatch.setattr(cli, "default_target_dir", lambda host: homes[host])
     monkeypatch.setattr(
-        "orchestrator.onboarding._find_host_descriptor",
+        "modelquad.onboarding._find_host_descriptor",
         lambda host, registry=None: cli.get_host_descriptor(host),
     )
     return homes
@@ -170,7 +170,7 @@ def test_cli_install_partial_failure_keeps_backup_and_restores_original(targets,
 
     # Reporting runs after every file was written: a failure there is "late".
     with monkeypatch.context() as patch:
-        patch.setattr("orchestrator.adapters.claude_adapter.pending_action", fail)
+        patch.setattr("modelquad.adapters.claude_adapter.pending_action", fail)
         assert cli.main(["install", "claude"]) == 1
     assert reg.recorded_replacement("claude")["installed_lineage"]
     assert cli.main(["uninstall", "claude"]) == 0
@@ -245,7 +245,7 @@ def test_timeout_retirement_failure_still_restores_registration(
 
 
 def test_removed_timeout_reports_removal_when_ownership_retirement_fails(targets, monkeypatch):
-    from orchestrator.adapters.report import ActionKind
+    from modelquad.adapters.report import ActionKind
 
     home = targets["claude"]
     settings = home / "settings.json"
@@ -279,7 +279,7 @@ def test_fresh_install_without_registration_retires_placeholder(targets, monkeyp
             raise OSError("before registration")
 
         if host == "claude":
-            monkeypatch.setattr("orchestrator.adapters.claude_adapter._plan_owned_copy", fail)
+            monkeypatch.setattr("modelquad.adapters.claude_adapter._plan_owned_copy", fail)
         else:
             monkeypatch.setattr(type(cli.get_adapter(host)), "install", fail)
     elif host == "claude":
@@ -294,8 +294,8 @@ def test_fresh_install_without_registration_retires_placeholder(targets, monkeyp
 
 
 def test_a_failed_timeout_removal_keeps_the_setting_and_its_ownership(targets, monkeypatch):
-    from orchestrator.adapters import staging
-    from orchestrator.adapters.report import ActionKind
+    from modelquad.adapters import staging
+    from modelquad.adapters.report import ActionKind
 
     home = targets["claude"]
     settings = home / "settings.json"
@@ -321,7 +321,7 @@ def test_a_failed_timeout_removal_keeps_the_setting_and_its_ownership(targets, m
 
 
 def test_host_without_reader_gets_no_placeholder_or_preservation_keyword(targets, monkeypatch):
-    from orchestrator.adapters.report import InstallReport
+    from modelquad.adapters.report import InstallReport
 
     class Adapter:
         def install(self, target_dir, *, dry_run=False):
@@ -346,7 +346,7 @@ def test_raised_backup_error_after_mcp_write_runs_failed_install_recovery(target
         raise reg.BackupPersistenceError("late backup failure")
 
     with monkeypatch.context() as patch:
-        patch.setattr("orchestrator.adapters.claude_adapter.pending_action", fail)
+        patch.setattr("modelquad.adapters.claude_adapter.pending_action", fail)
         assert cli.main(["install", "claude"]) == 1
     assert reg.recorded_replacement("claude")["installed_lineage"]
     assert cli.main(["uninstall", "claude"]) == 0

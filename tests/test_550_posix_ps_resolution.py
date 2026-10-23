@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator import executable_resolution as resolver, procutil
+from modelquad import executable_resolution as resolver, procutil
 
 
 @pytest.fixture(params=["process_image_name", "process_creation_epoch", "list_descendants"])

@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import codexcli
-from orchestrator.codexcli import resolve_codex_cli, version_key, which_codex
-from orchestrator.execution.codex import CodexExecutor
+from modelquad import codexcli
+from modelquad.codexcli import resolve_codex_cli, version_key, which_codex
+from modelquad.execution.codex import CodexExecutor
 
 PATH_CLI = "C:/npm/codex.cmd"
 OFFICIAL_NEW = str(Path("C:/local/OpenAI/Codex/bin/8aaf/codex.exe"))
@@ -181,8 +181,8 @@ def test_executor_launches_the_chosen_official_cli(tmp_path, monkeypatch, synthe
         launched.append(argv)
         return subprocess.CompletedProcess(argv, 0, codex_event_stream(), "")
 
-    from orchestrator.execution import ExecutionRequest
-    from orchestrator.models import TaskType
+    from modelquad.execution import ExecutionRequest
+    from modelquad.models import TaskType
 
     executor = CodexExecutor(which=lambda name: PATH_CLI if name == "codex" else None, run=run,
                              inventory=qualified_codex_inventory)
@@ -232,9 +232,9 @@ def test_a_launcher_without_a_native_binary_is_shim_only(tmp_path, monkeypatch):
     assert executor.is_available() is False
     assert executor.unavailable_reason() == "codex_shim_only"
 
-    from orchestrator.execution import ExecutionRequest
-    from orchestrator.execution.base import attempt_resolution
-    from orchestrator.models import TaskType
+    from modelquad.execution import ExecutionRequest
+    from modelquad.execution.base import attempt_resolution
+    from modelquad.models import TaskType
 
     result = executor.execute(ExecutionRequest(provider="codex", task_type=TaskType.REVIEW, prompt="x",
                                                working_directory=tmp_path))
@@ -265,7 +265,7 @@ def test_explicit_binary_is_not_redirected(tmp_path, monkeypatch):
 
 
 def test_doctor_warns_about_a_stale_path_copy(monkeypatch):
-    from orchestrator import doctor
+    from modelquad import doctor
 
     monkeypatch.setattr(doctor, "resolve_codex_cli", lambda which: codexcli.CodexCli(OFFICIAL_NEW, "official", "0.160.0", "0.155.0"))
     check = doctor._codex_stale_path_check(lambda name: PATH_CLI)
@@ -274,7 +274,7 @@ def test_doctor_warns_about_a_stale_path_copy(monkeypatch):
 
 
 def test_doctor_is_quiet_without_a_stale_copy(monkeypatch):
-    from orchestrator import doctor
+    from modelquad import doctor
 
     monkeypatch.setattr(doctor, "resolve_codex_cli", lambda which: codexcli.CodexCli(PATH_CLI, "path", "0.160.0"))
     assert doctor._codex_stale_path_check(lambda name: PATH_CLI) is None

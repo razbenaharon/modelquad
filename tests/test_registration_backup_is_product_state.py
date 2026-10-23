@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.adapters import registration as reg
-from orchestrator.adapters.registration import BACKUP_FILE_NAME, backup_path
+from modelquad.adapters import registration as reg
+from modelquad.adapters.registration import BACKUP_FILE_NAME, backup_path
 
 
 ENV_VALUE_SENTINEL = "modelquad-test-sentinel-must-never-be-shown"
@@ -78,9 +78,9 @@ def test_the_inventory_flags_it_as_possibly_sensitive():
 
 
 def test_the_secret_never_reaches_doctor(state_root):
-    from orchestrator.config import Config
-    from orchestrator.service import control_plane as shell
-    from orchestrator.doctor import run_doctor
+    from modelquad.config import Config
+    from modelquad.service import control_plane as shell
+    from modelquad.doctor import run_doctor
 
     _write_backup_with_a_secret(state_root)
     report = run_doctor(

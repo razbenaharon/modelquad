@@ -14,12 +14,12 @@ from types import SimpleNamespace
 import pytest
 from conftest import no_window_kwargs
 
-import orchestrator
-from orchestrator import background_cwd, paths, procutil
-from orchestrator.jobs import handle
-from orchestrator.jobs.seam import JobRef
-from orchestrator.service import history, lifecycle
-from orchestrator.service.socket_identity import ListenerError
+import modelquad
+from modelquad import background_cwd, paths, procutil
+from modelquad.jobs import handle
+from modelquad.jobs.seam import JobRef
+from modelquad.service import history, lifecycle
+from modelquad.service.socket_identity import ListenerError
 
 
 LAUNCH_IDS = ["service", "runner", "breakaway-probe", "service-breakaway-retry"]
@@ -94,7 +94,7 @@ def invoke_launch(item, tmp_path, monkeypatch, recorder):
         if item == "service-breakaway-retry":
             monkeypatch.setattr(handle, "_launch_policy", lambda: (BREAKAWAY, True, None))
             recorder.deny_first = True
-        command = [sys.executable, "-m", "orchestrator.cli", "serve", "--managed-child", "--port", "8765"]
+        command = [sys.executable, "-m", "modelquad.cli", "serve", "--managed-child", "--port", "8765"]
         def authenticate(port, **kwargs):
             assert port == 8765 and kwargs["require_runner"] is False
             if "expected_pid" not in kwargs:
@@ -133,12 +133,12 @@ def invoke_launch(item, tmp_path, monkeypatch, recorder):
         # Cwd/env coverage uses a deterministic source-module argv. The bound
         # Windows venv bootstrap has its own T12-A admission/argv tests.
         monkeypatch.setattr(handle, "_runner_command", lambda job_id, path, db:
-                            [sys.executable, "-m", "orchestrator.jobs.runner", "--job-id", job_id,
+                            [sys.executable, "-m", "modelquad.jobs.runner", "--job-id", job_id,
                              "--spec", str(path), "--db-path", str(db)])
         monkeypatch.setattr(procutil, "process_creation_epoch", lambda pid: 550.0)
         monkeypatch.setattr(procutil, "_resume_suspended_process", lambda pid: True)
         result = handle.launch_reserved(ref, spec_path, spec)
-        command = [sys.executable, "-m", "orchestrator.jobs.runner", "--job-id", ref.job_id,
+        command = [sys.executable, "-m", "modelquad.jobs.runner", "--job-id", ref.job_id,
                    "--spec", str(spec_path), "--db-path", str(database)]
         base = {"stdout": subprocess.DEVNULL, "stderr": stream, "close_fds": True,
                 "creationflags": HIDDEN | 0x8 | 0x4}
@@ -165,7 +165,7 @@ def test_background_children_use_safe_cwd(tmp_path, monkeypatch, launch_context,
     expected_env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(repository / "src"), str(shared)]))
     # Jobs children add the recursion guard after resolving the safe cwd/env.
     if item in ("runner", "breakaway-probe"):
-        expected_env["ORCHESTRATOR_WORKER"] = "1"
+        expected_env["MODELQUAD_WORKER"] = "1"
     recorder = RecordingPopen()
     success, command, base = invoke_launch(item, tmp_path, monkeypatch, recorder)
     assert success
@@ -323,14 +323,14 @@ def test_source_runner_imports_parent_code_native(tmp_path, monkeypatch, launch_
     decoy.write_text("ORIGIN = 'decoy'\n", encoding="utf-8")
     # Keep the exact parent package available in source-tree CI as well as
     # editable/wheel installs; tmp_path may be on a different Windows drive.
-    package_root = Path(orchestrator.__file__).resolve().parent.parent
+    package_root = Path(modelquad.__file__).resolve().parent.parent
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(["src", str(package_root)]))
-    command = [sys.executable, "-c", "import json,mq_s2_marker,orchestrator; "
-               "print(json.dumps([mq_s2_marker.__file__,orchestrator.__file__]))"]
+    command = [sys.executable, "-c", "import json,mq_s2_marker,modelquad; "
+               "print(json.dumps([mq_s2_marker.__file__,modelquad.__file__]))"]
     kwargs = background_cwd.background_child_kwargs(command)
     result = subprocess.run(command, **kwargs, capture_output=True, text=True, timeout=30, check=True,
                             **no_window_kwargs())
-    imported_marker, imported_orchestrator = json.loads(result.stdout)
+    imported_marker, imported_modelquad = json.loads(result.stdout)
     assert canonical(imported_marker) == canonical(marker)
     assert canonical(imported_marker) != canonical(decoy)
-    assert canonical(imported_orchestrator) == canonical(orchestrator.__file__)
+    assert canonical(imported_modelquad) == canonical(modelquad.__file__)

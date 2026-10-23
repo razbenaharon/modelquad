@@ -17,11 +17,11 @@ import pytest
 from mcp.types import CallToolRequestParams
 
 from conftest import tool_payload
-from orchestrator.execution.base import WORKER_ENV_VAR
-from orchestrator.mcp import server as mcp_server
-from orchestrator.mcp import worker_guard as guard
-from orchestrator.service import db as service_db
-from orchestrator.service import history
+from modelquad.execution.base import WORKER_ENV_VAR
+from modelquad.mcp import server as mcp_server
+from modelquad.mcp import worker_guard as guard
+from modelquad.service import db as service_db
+from modelquad.service import history
 
 
 @pytest.fixture

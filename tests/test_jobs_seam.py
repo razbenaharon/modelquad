@@ -11,14 +11,14 @@ from threading import RLock
 
 import pytest
 
-from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus, attempt_resolution
-from orchestrator.execution.lifecycle import TerminalResolution
-from orchestrator.jobs.seam import (
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus, attempt_resolution
+from modelquad.execution.lifecycle import TerminalResolution
+from modelquad.jobs.seam import (
     EXPIRY_WARNING, MAX_RETENTION, RETENTION, RETENTION_DAYS, CollectResult, JobOutput,
     JobRef, JobStatus, JobOutcome, OutputSink, PendingEntry, job_status_from_resolution,
     cause_flags_from_result,
 )
-from orchestrator.service.history import DELEGATION_FAILURE_KINDS
+from modelquad.service.history import DELEGATION_FAILURE_KINDS
 
 
 def output() -> JobOutput:

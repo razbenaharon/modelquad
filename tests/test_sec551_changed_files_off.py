@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Changed-files-off regressions and outcome compatibility; no real provider execution."""
 
-from orchestrator.execution import bound_launch
+from modelquad.execution import bound_launch
 
 from contextlib import contextmanager
 from dataclasses import asdict, fields, replace
@@ -17,11 +17,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator import procutil, repo_identity
-from orchestrator.jobs import changes, runner
-from orchestrator.jobs.handle import JobSpec, PreparedDelegation
-from orchestrator.jobs.seam import JobRef
-from orchestrator.jobs.store import FileOutputStore
+from modelquad import procutil, repo_identity
+from modelquad.jobs import changes, runner
+from modelquad.jobs.handle import JobSpec, PreparedDelegation
+from modelquad.jobs.seam import JobRef
+from modelquad.jobs.store import FileOutputStore
 from test_jobs_changes import git, git_repo
 
 
@@ -244,12 +244,12 @@ RUNNER_IDS = [mode + '-' + ending.replace('_', '-') + ('-output' if output else 
 @pytest.mark.parametrize('mode,ending,text', RUNNER_CASES, ids=RUNNER_IDS)
 def test_runner_preserves_outcomes_without_change_observation(tmp_path, monkeypatch, mode, ending, text):
     # Outcome compatibility only: this non-Git folder also returned None before the change.
-    from orchestrator import config as config_module
-    from orchestrator.config import Config
-    from orchestrator.execution import manager as manager_module
-    from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
-    from orchestrator.execution.lifecycle import TerminalResolution
-    from orchestrator.mcp import server as mcp
+    from modelquad import config as config_module
+    from modelquad.config import Config
+    from modelquad.execution import manager as manager_module
+    from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+    from modelquad.execution.lifecycle import TerminalResolution
+    from modelquad.mcp import server as mcp
 
     fixed_time = datetime(2026, 10, 7, tzinfo=timezone.utc)
 
@@ -342,8 +342,8 @@ def test_runner_preserves_outcomes_without_change_observation(tmp_path, monkeypa
 
 
 def test_raw_stopped_retains_output_through_run_job(git_repo, tmp_path, monkeypatch):
-    from orchestrator.execution.base import WorkerTaskStatus
-    from orchestrator.service import history
+    from modelquad.execution.base import WorkerTaskStatus
+    from modelquad.service import history
 
     db_path = tmp_path / 'jobs.sqlite'
     attempt = history.record_delegation_attempt(

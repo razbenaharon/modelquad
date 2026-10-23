@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator.adapters import atomicwrite, backup, file_security, registration
+from modelquad.adapters import atomicwrite, backup, file_security, registration
 
 
 windows = pytest.mark.skipif(os.name != "nt", reason="Requires native Windows persistent DACLs")

@@ -21,9 +21,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from orchestrator.service import db as service_db
-from orchestrator.service.api import state_identity_tag
-from orchestrator.service.app import create_app
+from modelquad.service import db as service_db
+from modelquad.service.api import state_identity_tag
+from modelquad.service.app import create_app
 
 
 
@@ -48,7 +48,7 @@ def _client(tmp_path, **kwargs):
     tmp_path.mkdir(parents=True, exist_ok=True)
     usage_dir = tmp_path / "usage"
     usage_dir.mkdir(parents=True, exist_ok=True)
-    db_path = kwargs.pop("db_path", tmp_path / "orchestrator.db")
+    db_path = kwargs.pop("db_path", tmp_path / "modelquad.db")
     kwargs.setdefault("poll_providers", False)
     app = create_app(db_path=db_path, usage_directory=usage_dir, poll_interval=3600.0, **kwargs)
     client = TestClient(app, base_url="http://127.0.0.1")
@@ -95,7 +95,7 @@ def test_foreign_state_identity_is_detected_not_silently_accepted():
     no state identity. It previously probed READY.
     """
 
-    from orchestrator.service import control_plane as shell
+    from modelquad.service import control_plane as shell
 
     pre_identity = {
         "status": "ok",
@@ -118,7 +118,7 @@ def _pin_context(monkeypatch, state_root):
     the probe -- the same trap documented in test_desktop_shell.py.
     """
 
-    from orchestrator import statecontext
+    from modelquad import statecontext
 
     context = statecontext.StateContext(
         mode=statecontext.StateMode.DEVELOPMENT,
@@ -131,7 +131,7 @@ def _pin_context(monkeypatch, state_root):
 
 
 def _healthy_payload(**overrides):
-    from orchestrator.branding import installed_version
+    from modelquad.branding import installed_version
 
     payload = {
         "status": "ok",
@@ -149,7 +149,7 @@ def _healthy_payload(**overrides):
 def test_matching_identity_still_probes_ready(monkeypatch):
     """The guard must not make the normal, matching case noisy."""
 
-    from orchestrator.service import control_plane as shell
+    from modelquad.service import control_plane as shell
 
     _pin_context(monkeypatch, "shared-state-root")
     verdict, _ = shell._classify_health_payload(_healthy_payload())
@@ -159,7 +159,7 @@ def test_matching_identity_still_probes_ready(monkeypatch):
 def test_a_different_state_root_is_the_incident_shape_and_is_rejected(monkeypatch):
     """Published identity that DISAGREES is the split, caught explicitly."""
 
-    from orchestrator.service import control_plane as shell
+    from modelquad.service import control_plane as shell
 
     _pin_context(monkeypatch, "development-state-root")
     verdict, detail = shell._classify_health_payload(
@@ -172,7 +172,7 @@ def test_a_different_state_root_is_the_incident_shape_and_is_rejected(monkeypatc
 def test_a_different_schema_version_is_rejected(monkeypatch):
     """Two builds can share a version string while disagreeing about the store."""
 
-    from orchestrator.service import control_plane as shell
+    from modelquad.service import control_plane as shell
 
     _pin_context(monkeypatch, "shared-state-root")
     verdict, detail = shell._classify_health_payload(

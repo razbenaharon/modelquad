@@ -15,9 +15,9 @@ from dataclasses import replace
 
 import pytest
 
-from orchestrator.onboarding import ProviderDetection, _find_in_install_dirs, detect_providers
-from orchestrator.provider_setup import fix_provider_path, providers_needing_path_fix
-from orchestrator.registry import ProviderInstallInfo, ProviderRegistry, default_registry
+from modelquad.onboarding import ProviderDetection, _find_in_install_dirs, detect_providers
+from modelquad.provider_setup import fix_provider_path, providers_needing_path_fix
+from modelquad.registry import ProviderInstallInfo, ProviderRegistry, default_registry
 
 
 class FakeEnvBackend:
@@ -156,7 +156,7 @@ def test_fix_path_is_a_no_op_when_already_reachable():
 
 
 def test_hashed_only_codex_is_detected_but_never_written_to_path(tmp_path, monkeypatch):
-    from orchestrator import codexcli
+    from modelquad import codexcli
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     exe = tmp_path / "OpenAI" / "Codex" / "bin" / "8aaf" / "codex.exe"
@@ -245,8 +245,8 @@ def test_path_fix_selection_excludes_only_codex_version_folders(tmp_path, monkey
 
 @pytest.mark.parametrize("with_claude", [False, True])
 def test_tools_fix_path_skips_hashed_codex(tmp_path, monkeypatch, capsys, with_claude):
-    from orchestrator import onboarding, provider_setup
-    from orchestrator.cli import main
+    from modelquad import onboarding, provider_setup
+    from modelquad.cli import main
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     codex = _detection(

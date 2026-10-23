@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-import orchestrator.cli as cli_module
+import modelquad.cli as cli_module
 
-from orchestrator.adapters import ActionKind, FileAction, InstallReport
-from orchestrator.cli import main
-from orchestrator.doctor import CheckStatus, DoctorCheck, DoctorReport
-from orchestrator.execution import ExecutionResult
-from orchestrator.registry import HostAdapterDescriptor
+from modelquad.adapters import ActionKind, FileAction, InstallReport
+from modelquad.cli import main
+from modelquad.doctor import CheckStatus, DoctorCheck, DoctorReport
+from modelquad.execution import ExecutionResult
+from modelquad.registry import HostAdapterDescriptor
 from routing_mode_fixtures import save_legacy_mode
 
 
@@ -25,7 +25,7 @@ def isolated_cleanup_home(tmp_path, monkeypatch, isolate_home_directory):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     # Keep the import-time DB default aligned with this module's later home
     # override.
-    from orchestrator import paths
+    from modelquad import paths
     monkeypatch.setattr(cli_module.service_db, "DEFAULT_DB_PATH", paths.db_path())
 
 
@@ -124,7 +124,7 @@ def test_global_install_dry_run_uses_lazy_detection_and_skips_undetected_host(tm
     payload = json.loads(capsys.readouterr().out)
     assert not detected_target.exists()
     assert _RecordingAdapter.calls == [("install", detected_target, True)]
-    from orchestrator.disclosure import DATA_FLOW
+    from modelquad.disclosure import DATA_FLOW
 
     assert payload.pop("data_flow_notice") == list(DATA_FLOW)
     assert payload == {
@@ -156,7 +156,7 @@ def test_global_install_dry_run_uses_lazy_detection_and_skips_undetected_host(tm
 
 
 def test_global_install_then_uninstall_round_trips_only_test_targets(tmp_path, monkeypatch):
-    from orchestrator.adapters.claude_adapter import ClaudeAdapter
+    from modelquad.adapters.claude_adapter import ClaudeAdapter
 
     descriptors = {
         "claude": HostAdapterDescriptor("claude", "Claude Code", "claude", ClaudeAdapter, lambda: tmp_path / "claude", detect=lambda: True),
@@ -214,7 +214,7 @@ def test_status_global_json_uses_doctor_adapter_checks_and_detection(tmp_path, m
 
 
 def test_activity_cli_filters_and_renders_project_without_an_absolute_path(tmp_path, capsys):
-    from orchestrator.service import history
+    from modelquad.service import history
 
     db_path = tmp_path / "history.db"
     history.record_execution(
@@ -307,7 +307,7 @@ def test_hook_gate_cli_advises_once_per_session_and_never_decides(tmp_path, caps
     """The first gated call of a session gets the advisory note, the next gets
     nothing, and neither carries a permission decision."""
 
-    from orchestrator.adapters.gate import ADVISORY_NOTE
+    from modelquad.adapters.gate import ADVISORY_NOTE
 
     monkeypatch.setattr(cli_module, "state_root", lambda: tmp_path / "state")
     payload = {"tool_name": "Bash", "transcript_path": None, "session_id": "cli-gate-session-1"}
@@ -339,7 +339,7 @@ def test_build_parser_accepts_mcp_subcommand():
 def test_run_mcp_command_reports_error_when_mcp_extra_missing(capsys, monkeypatch):
     import sys
 
-    monkeypatch.setitem(sys.modules, "orchestrator.mcp.server", None)
+    monkeypatch.setitem(sys.modules, "modelquad.mcp.server", None)
 
     parser = cli_module.build_parser()
     args = parser.parse_args(["mcp"])
@@ -353,9 +353,9 @@ def test_run_mcp_command_invokes_mcp_main_on_success(monkeypatch):
     import types
 
     called = []
-    fake_module = types.ModuleType("orchestrator.mcp.server")
+    fake_module = types.ModuleType("modelquad.mcp.server")
     fake_module.main = lambda: called.append(True)
-    monkeypatch.setitem(sys.modules, "orchestrator.mcp.server", fake_module)
+    monkeypatch.setitem(sys.modules, "modelquad.mcp.server", fake_module)
 
     parser = cli_module.build_parser()
     args = parser.parse_args(["mcp"])
@@ -372,7 +372,7 @@ def test_main_dispatches_to_mcp_command(monkeypatch):
 
 
 def _expected_service_options(port):
-    from orchestrator.statecontext import resolve_state_context
+    from modelquad.statecontext import resolve_state_context
     args = cli_module.build_parser().parse_args(["serve"])
     context = resolve_state_context()
     expected = ["--port", str(port),
@@ -460,7 +460,7 @@ def test_service_autostart_command_targets_the_windowless_interpreter(monkeypatc
 
 def test_service_autostart_command_degrades_when_no_windowless_sibling_exists(monkeypatch, tmp_path):
     """An absent admitted windowless image refuses, with no console fallback."""
-    from orchestrator.executable_resolution import UnsafeExecutable
+    from modelquad.executable_resolution import UnsafeExecutable
     monkeypatch.setattr(cli_module.sys, "platform", "win32")
     (tmp_path / "python.exe").write_bytes(b"fixture")
     monkeypatch.setattr(cli_module.sys, "executable", str(tmp_path / "python.exe"))
@@ -490,7 +490,7 @@ def test_the_registered_autostart_image_is_not_console_subsystem_on_this_machine
 
 @pytest.mark.parametrize("redirected", [True, False])
 def test_managed_service_stream_binding_discards_existing_or_absent_streams(monkeypatch, redirected):
-    import orchestrator.windowless_diagnostics as diagnostics
+    import modelquad.windowless_diagnostics as diagnostics
     sentinel_out, sentinel_err = io.StringIO(), io.StringIO()
     monkeypatch.setattr(cli_module.sys, 'stdout', sentinel_out if redirected else None)
     monkeypatch.setattr(cli_module.sys, 'stderr', sentinel_err if redirected else None)
@@ -508,7 +508,7 @@ def test_managed_service_stream_binding_discards_existing_or_absent_streams(monk
 
 
 def test_service_binding_does_not_roll_or_append_to_legacy_log(monkeypatch, tmp_path):
-    import orchestrator.windowless_diagnostics as diagnostics
+    import modelquad.windowless_diagnostics as diagnostics
     log_path = tmp_path / 'service.log'
     log_path.write_text('old legacy content', encoding='utf-8')
     monkeypatch.setattr(cli_module.sys, 'stdout', None)
@@ -522,7 +522,7 @@ def test_service_binding_does_not_roll_or_append_to_legacy_log(monkeypatch, tmp_
 
 
 def test_service_diagnostic_binding_failure_does_not_break_streams(monkeypatch):
-    import orchestrator.windowless_diagnostics as diagnostics
+    import modelquad.windowless_diagnostics as diagnostics
     monkeypatch.setattr(cli_module.sys, 'stdout', None)
     monkeypatch.setattr(cli_module.sys, 'stderr', None)
     monkeypatch.setattr(diagnostics, '_active', False)
@@ -536,7 +536,7 @@ def test_service_diagnostic_binding_failure_does_not_break_streams(monkeypatch):
 def test_run_service_command_binds_absent_streams_before_touching_uvicorn(monkeypatch):
     """Ordering is the whole point: uvicorn reads sys.stdout on the way in."""
     import uvicorn
-    import orchestrator.service.app as service_app_module
+    import modelquad.service.app as service_app_module
 
     order = []
     monkeypatch.setattr(cli_module, "_bind_absent_std_streams", lambda: order.append("bind"))
@@ -559,7 +559,7 @@ def test_dev_command_is_removed(capsys):
 
 def test_run_service_command_has_no_static_serving(monkeypatch):
     import uvicorn
-    import orchestrator.service.app as service_app_module
+    import modelquad.service.app as service_app_module
 
     captured = {}
 
@@ -582,8 +582,8 @@ def test_run_service_command_has_no_static_serving(monkeypatch):
 
 
 def test_hook_gate_cli_treats_retired_saved_mode_as_automatic(tmp_path, capsys, monkeypatch):
-    from orchestrator.service import db as service_db
-    from orchestrator.service import history as service_history
+    from modelquad.service import db as service_db
+    from modelquad.service import history as service_history
 
     db_path = tmp_path / "gate_manual.db"
     original_default = service_db.DEFAULT_DB_PATH
@@ -633,7 +633,7 @@ def test_cli_network_command(tmp_path, capsys):
 
 
 def test_cli_privacy_command_reports_no_telemetry_and_the_loopback_rule(tmp_path, capsys, monkeypatch):
-    import orchestrator.paths as paths_module
+    import modelquad.paths as paths_module
 
     monkeypatch.setattr(paths_module, "state_root", lambda: tmp_path / "state")
     db_path = tmp_path / "cli_privacy.db"
@@ -657,7 +657,7 @@ def test_run_service_command_discards_raw_logs_for_exactly_the_life_of_the_run(m
     """No raw log/watchdog; quiet uvicorn on success and interruption."""
 
     import uvicorn
-    import orchestrator.service.app as service_app_module
+    import modelquad.service.app as service_app_module
 
     order: list[str] = []
 

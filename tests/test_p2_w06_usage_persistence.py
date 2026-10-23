@@ -15,10 +15,10 @@ import time
 
 import pytest
 
-from orchestrator.models import Freshness, ProviderStatus
-from orchestrator.service import health
-from orchestrator.usage import base, refresh
-from orchestrator.usage.claude import retain_last_known_claude
+from modelquad.models import Freshness, ProviderStatus
+from modelquad.service import health
+from modelquad.usage import base, refresh
+from modelquad.usage.claude import retain_last_known_claude
 
 
 # Coordination needs slack on the shared, memory-constrained runner.
@@ -131,7 +131,7 @@ def test_retention_callback_reads_under_the_shared_lock(tmp_path):
 
 
 def test_codex_unobserved_probe_cannot_reenable_signed_out_provider(tmp_path, monkeypatch):
-    from orchestrator.usage import codex_appserver
+    from modelquad.usage import codex_appserver
 
     target = tmp_path / "usage-codex.json"
     base.write_usage_snapshot(target, _reading("codex", available=False, reason="signed out"))
@@ -359,7 +359,7 @@ def test_explicit_invalid_observation_never_uses_collection_time(tmp_path, stamp
 
 @pytest.mark.parametrize("stamp", [None, "", "malformed"], ids=["null", "empty", "malformed"])
 def test_publisher_preserves_invalid_observation_with_current_reader_fallback(tmp_path, stamp):
-    from orchestrator.providers.base import observation_from
+    from modelquad.providers.base import observation_from
 
     target = tmp_path / "usage-codex.json"
     prior = _reading("codex")

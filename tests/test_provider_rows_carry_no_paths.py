@@ -13,9 +13,9 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from orchestrator.doctor import CheckStatus, DoctorCheck, DoctorReport
-from orchestrator.models import Freshness, ProviderStatus, ResourcePool
-from orchestrator.service import history
+from modelquad.doctor import CheckStatus, DoctorCheck, DoctorReport
+from modelquad.models import Freshness, ProviderStatus, ResourcePool
+from modelquad.service import history
 
 QUOTA_FILE = "C:\\Users\\example\\.claude\\usage-codex.json"
 CODEX_EXE = "C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd"
@@ -30,7 +30,7 @@ def _rows(db_path, sql):
 
 
 def test_a_usage_reading_stores_no_quota_file_path(tmp_path):
-    db_path = tmp_path / "orchestrator.db"
+    db_path = tmp_path / "modelquad.db"
     # Sub-pool rows are written only when a reading has more than one pool.
     pools = tuple(
         ResourcePool(
@@ -61,7 +61,7 @@ def test_a_usage_reading_stores_no_quota_file_path(tmp_path):
 
 
 def test_a_health_row_stores_no_found_at_path(tmp_path):
-    db_path = tmp_path / "orchestrator.db"
+    db_path = tmp_path / "modelquad.db"
     report = DoctorReport(checks=(
         DoctorCheck("codex CLI", CheckStatus.OK, "Found at " + CODEX_EXE),
         DoctorCheck("codex adapter installed", CheckStatus.OK, "Installed at C:\\Users\\example\\.codex"),

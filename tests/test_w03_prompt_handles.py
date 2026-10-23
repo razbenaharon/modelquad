@@ -15,18 +15,18 @@ import pytest
 
 from conftest import no_window_kwargs
 from test_mcp_jobs import reserve_only, synthetic  # shared isolated DB/service seam
-from orchestrator.config import Config
-from orchestrator.mcp import server as mcp
-from orchestrator.models import Freshness, ProviderStatus
-from orchestrator.providers import CodexProvider
-from orchestrator.providers import base
-from orchestrator.router import Router
-from orchestrator.registry import default_registry
-from orchestrator.service import health
-from orchestrator.service import history
-from orchestrator.usage import codex_appserver, refresh
-from orchestrator import usage
-from orchestrator.usage.base import write_usage_snapshot
+from modelquad.config import Config
+from modelquad.mcp import server as mcp
+from modelquad.models import Freshness, ProviderStatus
+from modelquad.providers import CodexProvider
+from modelquad.providers import base
+from modelquad.router import Router
+from modelquad.registry import default_registry
+from modelquad.service import health
+from modelquad.service import history
+from modelquad.usage import codex_appserver, refresh
+from modelquad import usage
+from modelquad.usage.base import write_usage_snapshot
 
 
 NOW = datetime(2026, 10, 6, 12, tzinfo=timezone.utc)
@@ -135,7 +135,7 @@ def test_route_and_initial_status_never_probe_provider(
                          ids=["missing_snapshot", "stale_snapshot"])
 def test_cli_route_never_refreshes(synthetic, sources, probes, monkeypatch, snapshot, capsys):
     import json
-    from orchestrator import cli
+    from modelquad import cli
 
     directory, providers = sources
     if snapshot == "stale_snapshot":
@@ -166,8 +166,8 @@ def test_status_helper_accepts_plugin_without_refresh(refresh_status):
     "poll", "status", "cli",
 ], ids=["poll", "status", "cli"])
 def test_status_callers_read_without_probing(synthetic, sources, probes, monkeypatch, caller):
-    from orchestrator import cli
-    from orchestrator.service import collector
+    from modelquad import cli
+    from modelquad.service import collector
 
     directory, providers = sources
     if caller == "poll":

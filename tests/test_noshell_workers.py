@@ -17,9 +17,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from orchestrator.execution import codex
-from orchestrator.execution.base import ExecutionRequest, WorkerTaskStatus, attempt_resolution
-from orchestrator.models import TaskType
+from modelquad.execution import codex
+from modelquad.execution.base import ExecutionRequest, WorkerTaskStatus, attempt_resolution
+from modelquad.models import TaskType
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "noshell"
@@ -67,7 +67,7 @@ def worker(tmp_path, monkeypatch, synthetic_worker_binary):
 
 
 def test_synthetic_install_is_outside_request_workspace(tmp_path, synthetic_worker_binary):
-    from orchestrator.executable_resolution import admit_executable
+    from modelquad.executable_resolution import admit_executable
     executable = synthetic_worker_binary("codex.exe")
     workspace = os.path.normcase(os.path.realpath(tmp_path))
     assert os.path.commonpath((executable, workspace)) != workspace
@@ -121,7 +121,7 @@ def test_readonly_argv_and_same_listing_disables(worker, task_type):
 
 @pytest.mark.parametrize("task_type", READ_ONLY, ids=["exploration", "review", "architecture"])
 def test_exact_noshell_argv_omits_user_mcp_overrides(worker, task_type):
-    from orchestrator.executable_resolution import admit_executable
+    from modelquad.executable_resolution import admit_executable
 
     executor, request, run, calls = worker
     names = ("node_repl", "another_server")
@@ -315,7 +315,7 @@ def test_malformed_streams_never_degrade_to_plain_answers(worker, raw):
 
 @pytest.mark.parametrize("outcome", ["timeout", "stopped"], ids=["timeout", "stopped"])
 def test_partial_exception_streams_cannot_leak(worker, outcome):
-    from orchestrator.procutil import WorkerStopRequested
+    from modelquad.procutil import WorkerStopRequested
     executor, request, run, _ = worker
     raw = stream({"type": "command_execution"}, text="private result")
     run.side_effect = (subprocess.TimeoutExpired([], 1, output=raw) if outcome == "timeout"
@@ -393,7 +393,7 @@ def test_without_files_nothing_is_read(worker, monkeypatch):
 
 @pytest.mark.parametrize("change_source", [False, True], ids=["unchanged", "changed-after-preparation"])
 def test_selected_notes_stay_bounded_unique_and_frozen_in_noshell_worker(worker, monkeypatch, change_source):
-    from orchestrator import project_notes
+    from modelquad import project_notes
 
     executor, request, run, _ = worker
     root = request.working_directory
@@ -451,7 +451,7 @@ def test_selected_notes_stay_bounded_unique_and_frozen_in_noshell_worker(worker,
 @pytest.mark.parametrize("name", ["PROJECT_NOTES.md", "project_notes.MD", "nested/PROJECT_NOTES.md",
                                   "historical-notes.md"], ids=["standard", "case", "nested", "renamed-source"])
 def test_incidental_notes_sources_are_never_supplied(tmp_path, monkeypatch, name):
-    from orchestrator import project_notes
+    from modelquad import project_notes
 
     path = tmp_path / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -586,7 +586,7 @@ def test_truthful_labels(state, expected):
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows path identity is case insensitive")
 def test_windows_case_alias_uses_admitted_canonical_path(worker, monkeypatch):
-    from orchestrator import executable_resolution
+    from modelquad import executable_resolution
     executor, request, run, calls = worker
     admit = executable_resolution.admit_executable
     admitted_paths = []
@@ -804,8 +804,8 @@ def test_required_file_boundary_plus_one_refuses_without_model_start(worker):
 @pytest.mark.parametrize("quote", ["inline", "standalone"], ids=["inline", "standalone"])
 @pytest.mark.parametrize("attached", [False, True], ids=["plain", "frozen-notes"])
 def test_quoted_notes_marker_cannot_erase_required_context(worker, quote, attached):
-    from orchestrator import project_notes
-    from orchestrator.capsule import TaskCapsule
+    from modelquad import project_notes
+    from modelquad.capsule import TaskCapsule
 
     executor, request, run, calls = worker
     marker = project_notes.PACKET_MARKER
@@ -827,7 +827,7 @@ def test_quoted_notes_marker_cannot_erase_required_context(worker, quote, attach
 @pytest.mark.parametrize("position", ["goal", "tail"], ids=["goal", "tail"])
 @pytest.mark.parametrize("named", ["missing.py", "present.py"], ids=["missing", "present"])
 def test_file_sections_in_task_text_are_never_attached(worker, position, named):
-    from orchestrator.capsule import TaskCapsule
+    from modelquad.capsule import TaskCapsule
 
     executor, request, run, calls = worker
     (request.working_directory / "present.py").write_text("# PRIVATE supplied source\n", encoding="utf-8")
@@ -848,8 +848,8 @@ def test_file_sections_in_task_text_are_never_attached(worker, position, named):
 
 @pytest.mark.parametrize("attached", [False, True], ids=["plain", "frozen-notes"])
 def test_goal_quoting_advisory_boundary_keeps_required_file_and_allows_launch(worker, attached):
-    from orchestrator import project_notes
-    from orchestrator.capsule import TaskCapsule
+    from modelquad import project_notes
+    from modelquad.capsule import TaskCapsule
 
     executor, request, run, _ = worker
     (request.working_directory / "present.py").write_text("# supplied source\n", encoding="utf-8")
@@ -1024,7 +1024,7 @@ def test_redaction_expansion_counts_against_file_budget(tmp_path, monkeypatch):
 
 
 def test_completion_protocol_included_in_exact_prompt_boundary(tmp_path, monkeypatch):
-    from orchestrator.execution.base import append_completion_protocol
+    from modelquad.execution.base import append_completion_protocol
     plain = noshell.supplied_prompt("Review supplied evidence", tmp_path)
     complete = append_completion_protocol(plain)
     size = len(complete.encode("utf-8"))
@@ -1038,7 +1038,7 @@ def test_completion_protocol_included_in_exact_prompt_boundary(tmp_path, monkeyp
 
 
 def test_complete_prompt_exhaustion_prevents_model_launch(worker, monkeypatch):
-    from orchestrator.execution.base import append_completion_protocol
+    from modelquad.execution.base import append_completion_protocol
     executor, request, run, calls = worker
     prompt = "Review supplied evidence"
     complete = append_completion_protocol(noshell.supplied_prompt(prompt, request.working_directory))
@@ -1069,7 +1069,7 @@ def test_sensitive_required_omissions_use_placeholder_guidance(worker, name):
 def test_packing_a_maximal_single_token_file_stays_within_the_default_work_cap(tmp_path):
     # Train 38: the unanchored triple-quote secret screen backtracked from every
     # start position; one 128 KiB token took about two minutes to pack.
-    from orchestrator.execution import noshell
+    from modelquad.execution import noshell
     (tmp_path / "ordinary.py").write_text("#" + "x" * (noshell.MAX_FILE_BYTES - 1), encoding="utf-8")
     started = time.monotonic()
     noshell.pack_files(tmp_path, ["ordinary.py"])

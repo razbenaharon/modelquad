@@ -10,7 +10,7 @@ import time
 import pytest
 
 from conftest import no_window_kwargs
-from orchestrator.jobs import changes
+from modelquad.jobs import changes
 
 
 def git(directory, *args):

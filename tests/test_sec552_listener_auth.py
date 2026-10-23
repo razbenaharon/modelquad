@@ -12,9 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator.service import control_plane as shell
-from orchestrator.service import listener, listener_proof as proof, socket_identity as identity
-from orchestrator.service.socket_identity import ListenerError
+from modelquad.service import control_plane as shell
+from modelquad.service import listener, listener_proof as proof, socket_identity as identity
+from modelquad.service.socket_identity import ListenerError
 
 SECRET = "synthetic-installation-secret-0123456789abcdef"
 KEY = proof.derive_key(SECRET)
@@ -25,7 +25,7 @@ HEALTH = {"product": "modelquad", "service_role": "control-plane"}
 
 @pytest.mark.parametrize("host", ["python.exe", "pythonw.exe"], ids=["console-host", "windowless-host"])
 def test_installation_interpreter_images_admit_both_directions(tmp_path, monkeypatch, host):
-    from orchestrator import cli, executable_resolution
+    from modelquad import cli, executable_resolution
 
     images = [tmp_path / name for name in ("python.exe", "pythonw.exe")]
     for image in images:
@@ -56,7 +56,7 @@ def test_installation_interpreter_images_admit_both_directions(tmp_path, monkeyp
 @pytest.mark.parametrize("host", ["python.exe", "pythonw.exe"], ids=["console-host", "windowless-host"])
 @pytest.mark.parametrize("sibling", ["absent", "refused"], ids=["absent", "refused"])
 def test_installation_interpreter_sibling_must_pass_admission(tmp_path, monkeypatch, host, sibling):
-    from orchestrator import cli
+    from modelquad import cli
 
     image = tmp_path / host
     image.write_bytes(b"synthetic interpreter; never executed")
@@ -351,7 +351,7 @@ def test_native_inspection_refuses_and_releases_handle(monkeypatch, failure):
 
 
 def test_proof_uses_accepted_transport_not_forwarded_headers(monkeypatch):
-    from orchestrator.service import api
+    from modelquad.service import api
     monkeypatch.setattr(api, "get_health", lambda request: HEALTH)
     async def chunks():
         yield proof.canonical({"v": 1, "nonce": NONCE})

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.models import (
+from modelquad.models import (
     ModelIdentitySource,
     RuntimeModelIdentity,
     RuntimeRole,

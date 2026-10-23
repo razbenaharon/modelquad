@@ -96,9 +96,9 @@ Claude Code starts `modelquad` and `modelquad-mcp` by name, so the folder pip
 put them in must be on the PATH that Claude Code sees. `modelquad doctor`
 checks this.
 
-A plain install keeps its state in `%LOCALAPPDATA%\MultiAgentOrchestrator`.
+A plain install keeps its state in `%LOCALAPPDATA%\ModelQuad`.
 An editable install (`pip install -e`) is treated as a development checkout
-and keeps its state in `%USERPROFILE%\.orchestrator` instead. `modelquad state`
+and keeps its state in `%USERPROFILE%\.modelquad` instead. `modelquad state`
 shows which folder is in use.
 
 ## Quick start
@@ -192,7 +192,7 @@ While it runs, ModelQuad also writes:
 Only when you ask for them:
 
 - `modelquad service install`: a Task Scheduler task named
-  `MultiAgentOrchestrator_ControlPlane` that starts the local service when you
+  `ModelQuad_Service` that starts the local service when you
   sign in. It runs as you, with limited rights.
 - `modelquad tools --fix-path`: adds the folder of an installed Claude Code or
   Codex CLI that is not on PATH to your user PATH.

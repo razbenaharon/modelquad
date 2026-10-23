@@ -18,9 +18,9 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp.client import Client
 
-from orchestrator import buildinfo, executable_resolution
-from orchestrator.branding import installed_version
-from orchestrator.service.app import create_app
+from modelquad import buildinfo, executable_resolution
+from modelquad.branding import installed_version
+from modelquad.service.app import create_app
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
@@ -135,7 +135,7 @@ def test_health_carries_the_build_and_no_path(tmp_path, monkeypatch):
 
 
 def test_mcp_initialize_names_the_build():
-    from orchestrator.mcp import server as mcp_server
+    from modelquad.mcp import server as mcp_server
 
     async def handshake():
         async with Client(mcp_server.server, mode="legacy") as client:

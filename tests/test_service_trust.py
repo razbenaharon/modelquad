@@ -21,10 +21,10 @@ from fastapi import FastAPI, __version__ as fastapi_version
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 
-from orchestrator.service import trust
-from orchestrator.service.app import create_app
-from orchestrator.usage.codex_appserver import collect_codex_appserver_usage
-from orchestrator.service.trust import (
+from modelquad.service import trust
+from modelquad.service.app import create_app
+from modelquad.usage.codex_appserver import collect_codex_appserver_usage
+from modelquad.service.trust import (
     LoopbackTrustMiddleware,
     host_authority,
     hostname_of,
@@ -46,7 +46,7 @@ def _app(tmp_path, **kwargs):
     usage = tmp_path / "usage"
     usage.mkdir(exist_ok=True)
     kwargs.setdefault("write_secret", SECRET)
-    return create_app(db_path=tmp_path / "orchestrator.db", usage_directory=usage, poll_providers=False, **kwargs)
+    return create_app(db_path=tmp_path / "modelquad.db", usage_directory=usage, poll_providers=False, **kwargs)
 
 
 def _client(tmp_path, **kwargs) -> TestClient:
@@ -227,7 +227,7 @@ def test_an_app_with_no_secret_refuses_every_change(tmp_path):
 
 
 def test_an_unverifiable_secret_refuses_every_change_and_says_why(tmp_path):
-    from orchestrator.service.auth import ServiceSecret
+    from modelquad.service.auth import ServiceSecret
 
     problem = "The service secret file grants access to another account."
     client = _client(tmp_path, write_secret=ServiceSecret(problem=problem))
@@ -341,9 +341,9 @@ def test_an_opaque_or_malformed_origin_may_not_change_state():
 ])
 def test_no_cors_origin_is_honoured_with_or_without_the_dev_flag(tmp_path, monkeypatch, dev_flag, origin):
     if dev_flag is None:
-        monkeypatch.delenv("ORCHESTRATOR_DEV", raising=False)
+        monkeypatch.delenv("MODELQUAD_DEV", raising=False)
     else:
-        monkeypatch.setenv("ORCHESTRATOR_DEV", dev_flag)
+        monkeypatch.setenv("MODELQUAD_DEV", dev_flag)
     client = _client(tmp_path)
     with client:
         for metadata in ({}, {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "cors"}):
@@ -471,7 +471,7 @@ def test_vocabulary_is_closed():
 def test_default_usage_refresh_never_starts_a_subprocess(tmp_path, monkeypatch):
     import subprocess
 
-    from orchestrator.usage import refresh_all
+    from modelquad.usage import refresh_all
 
     # Make the real collector see an installed CLI on every machine. Its
     # lookup default is bound before the autouse isolation runs.

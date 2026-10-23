@@ -12,11 +12,11 @@ import uuid
 
 import pytest
 
-from orchestrator import procutil
-from orchestrator.provenance import new_decision_id
-from orchestrator.jobs import fate, recovery
-from orchestrator.jobs.seam import JobRef
-from orchestrator.service import db, history, fate_history as fh
+from modelquad import procutil
+from modelquad.provenance import new_decision_id
+from modelquad.jobs import fate, recovery
+from modelquad.jobs.seam import JobRef
+from modelquad.service import db, history, fate_history as fh
 
 NOW = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
 START = NOW - timedelta(hours=1)
@@ -398,9 +398,9 @@ def test_release_pass_boot_observation_after_pass_start_uses_later_clock(lab):
 
 
 def test_pending_answer_is_preserved_and_late_publication_refuses(lab):
-    from orchestrator.jobs.store import FileOutputStore
-    from orchestrator.jobs.seam import JobOutput, JobStatus
-    from orchestrator.execution.base import WorkerTaskStatus
+    from modelquad.jobs.store import FileOutputStore
+    from modelquad.jobs.seam import JobOutput, JobStatus
+    from modelquad.execution.base import WorkerTaskStatus
     job = lab.add(terminal=True)
     snap = fh.snapshot(lab.path,job)
     sink = FileOutputStore(lab.root/'answers')
@@ -418,9 +418,9 @@ def test_pending_answer_is_preserved_and_late_publication_refuses(lab):
 
 def test_release_waits_for_publication_without_locking_lifecycle_db(lab, monkeypatch):
     from contextlib import contextmanager
-    from orchestrator.jobs.seam import JobOutput, JobStatus
-    from orchestrator.jobs.store import FileOutputStore
-    from orchestrator.execution.base import WorkerTaskStatus
+    from modelquad.jobs.seam import JobOutput, JobStatus
+    from modelquad.jobs.store import FileOutputStore
+    from modelquad.execution.base import WorkerTaskStatus
 
     job = lab.add(terminal=True)
     snap = fh.snapshot(lab.path, job)
@@ -455,7 +455,7 @@ def test_release_waits_for_publication_without_locking_lifecycle_db(lab, monkeyp
 
 
 def test_publication_lock_failure_refuses_release_and_sink_entry(lab, monkeypatch):
-    from orchestrator.usage import base
+    from modelquad.usage import base
 
     job = lab.add()
     before = fh.snapshot(lab.path, job)

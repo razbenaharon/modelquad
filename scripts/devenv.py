@@ -6,7 +6,7 @@
 Stdlib-only and dependency-free, for the same reason `check.py` is: every
 path that uses it must work in a fresh worktree with nothing installed. It is
 development tooling, not the product, so nothing here may import
-`orchestrator`.
+`modelquad`.
 
 **The problem.** Windows Defender's real-time scanner is a measurable cost on
 this repository's test runs, and profiling after the Dev Drive migration said

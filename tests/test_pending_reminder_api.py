@@ -14,12 +14,12 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 
-from orchestrator.adapters import pending_reminder as reminder
-from orchestrator.execution.base import WorkerTaskStatus
-from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus, RETENTION
-from orchestrator.jobs import store as storage
-from orchestrator.service import api, db, history, trust
-from orchestrator.service.app import create_app
+from modelquad.adapters import pending_reminder as reminder
+from modelquad.execution.base import WorkerTaskStatus
+from modelquad.jobs.seam import JobOutput, JobRef, JobStatus, RETENTION
+from modelquad.jobs import store as storage
+from modelquad.service import api, db, history, trust
+from modelquad.service.app import create_app
 
 NOW = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
 KEY = 'a' * 32
@@ -167,7 +167,7 @@ def test_projection_does_not_mutate(state, monkeypatch):
     for name in ('__init__', 'collect', 'pending', 'acknowledge', 'purge_expired', '_load',
                  '_commit', '_transaction', '_apply', '_compact'):
         monkeypatch.setattr(storage.FileOutputStore, name, forbidden)
-    from orchestrator import paths
+    from modelquad import paths
     monkeypatch.setattr(paths, 'pending_output_dir', lambda: state[1].root)
     assert summary(state)['count'] == 1
     assert storage.default_store(metadata_only=True).host_summary(

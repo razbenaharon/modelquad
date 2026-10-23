@@ -19,11 +19,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from orchestrator import cli as cli_module
-from orchestrator.procutil import no_window_kwargs
-from orchestrator.service import auth, trust
-from orchestrator.service.app import create_app
-from orchestrator.service.auth import ServiceSecret, ensure_service_secret, read_service_secret
+from modelquad import cli as cli_module
+from modelquad.procutil import no_window_kwargs
+from modelquad.service import auth, trust
+from modelquad.service.app import create_app
+from modelquad.service.auth import ServiceSecret, ensure_service_secret, read_service_secret
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows access lists")
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
@@ -33,7 +33,7 @@ def test_the_development_flag_adds_no_cors_middleware():
     """The development-origin relaxation is removed entirely, not gated."""
     for flag in ("0", "1"):
         with pytest.MonkeyPatch.context() as patch:
-            patch.setenv("ORCHESTRATOR_DEV", flag)
+            patch.setenv("MODELQUAD_DEV", flag)
             app = create_app(poll_providers=False, write_secret="synthetic-test-secret")
             assert all(m.cls.__name__ != "CORSMiddleware" for m in app.user_middleware)
             client = TestClient(app, base_url="http://127.0.0.1:8765")
@@ -386,7 +386,7 @@ _UNSAFE = [
 
 
 def test_the_secret_is_not_in_health_or_the_pending_summary(tmp_path):
-    from orchestrator import paths
+    from modelquad import paths
 
     secret = ensure_service_secret(paths.state_root())
     usage = tmp_path / "usage"
@@ -400,7 +400,7 @@ def test_the_secret_is_not_in_health_or_the_pending_summary(tmp_path):
 
 
 def test_the_secret_is_not_in_cli_doctor_output(capsys):
-    from orchestrator import paths
+    from modelquad import paths
 
     secret = ensure_service_secret(paths.state_root())
     cli_module.main(["doctor"])
@@ -411,7 +411,7 @@ def test_the_secret_is_not_in_cli_doctor_output(capsys):
 def _run_service(monkeypatch, command: str, managed_service_child) -> tuple[dict, list[str]]:
     import uvicorn
 
-    import orchestrator.service.app as service_app_module
+    import modelquad.service.app as service_app_module
 
     created: dict = {}
     opened: list[str] = []
@@ -429,7 +429,7 @@ def _run_service(monkeypatch, command: str, managed_service_child) -> tuple[dict
 
 
 def test_the_service_command_creates_the_secret_and_requires_it(monkeypatch, capsys, managed_service_child):
-    from orchestrator import paths
+    from modelquad import paths
 
     created, _ = _run_service(monkeypatch, "serve", managed_service_child)
     secret = created["write_secret"]
@@ -440,8 +440,8 @@ def test_the_service_command_creates_the_secret_and_requires_it(monkeypatch, cap
 
 
 def test_an_unverifiable_secret_is_logged_without_its_value(monkeypatch, capsys, managed_service_child):
-    from orchestrator import paths
-    from orchestrator import windowless_diagnostics
+    from modelquad import paths
+    from modelquad import windowless_diagnostics
 
     events = []
     monkeypatch.setattr(windowless_diagnostics, 'emit', lambda *args: events.append(args))

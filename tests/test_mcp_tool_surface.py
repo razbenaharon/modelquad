@@ -30,8 +30,8 @@ import pytest
 
 from conftest import tool_payload
 
-from orchestrator.mcp import server as mcp_server
-from orchestrator.service import db as service_db
+from modelquad.mcp import server as mcp_server
+from modelquad.service import db as service_db
 
 
 # -- the schemas take no settings file and no settings or usage directory -----

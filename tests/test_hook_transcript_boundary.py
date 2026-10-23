@@ -29,17 +29,17 @@ from pathlib import Path
 
 import pytest
 
-import orchestrator
-import orchestrator.cli as cli_module
-from orchestrator.adapters import gate as gate_module
-from orchestrator.cli import main
-from orchestrator.execution.base import WORKER_ENV_VAR
-from orchestrator.procutil import no_window_kwargs
-from orchestrator.service import history as service_history
+import modelquad
+import modelquad.cli as cli_module
+from modelquad.adapters import gate as gate_module
+from modelquad.cli import main
+from modelquad.execution.base import WORKER_ENV_VAR
+from modelquad.procutil import no_window_kwargs
+from modelquad.service import history as service_history
 
 # The imported package, not the source tree: CI also runs these tests against a
 # non-editable install, where the code that executes lives in site-packages.
-PKG = Path(orchestrator.__file__).resolve().parent
+PKG = Path(modelquad.__file__).resolve().parent
 # Looked up rather than imported so the regression test below runs -- and
 # fails on its assertions -- against the pre-advisory gate, which has no note.
 ADVISORY_NOTE = getattr(gate_module, "ADVISORY_NOTE", None)
@@ -343,7 +343,7 @@ def test_gate_module_has_no_transcript_reader_and_no_file_read():
         for node in ast.walk(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     }
-    assert not defined & {"scan_orchestrator_calls", "transcript_has_orchestrator_call", "OrchestratorCallState"}
+    assert not defined & {"scan_modelquad_calls", "transcript_has_modelquad_call", "ModelQuadCallState"}
 
     called = set()
     for node in ast.walk(tree):
@@ -414,9 +414,9 @@ def test_quiet_guard_catches_a_subprocess(tmp_path, monkeypatch):
 def test_quiet_guard_names_the_code_that_is_imported():
     # The guard matches frames by file, so its paths must be the files that
     # actually run -- in site-packages under a non-editable install.
-    from orchestrator.providers import codex as providers_codex
-    from orchestrator.usage import codex_appserver
-    from orchestrator.usage import refresh as usage_refresh
+    from modelquad.providers import codex as providers_codex
+    from modelquad.usage import codex_appserver
+    from modelquad.usage import refresh as usage_refresh
 
     for module in (codex_appserver, usage_refresh):
         assert _real(module.__file__) in _FORBIDDEN_FILES, module.__file__
@@ -424,7 +424,7 @@ def test_quiet_guard_names_the_code_that_is_imported():
 
 
 def test_quiet_guard_catches_usage_collection_code(tmp_path, monkeypatch):
-    from orchestrator.usage import codex_appserver
+    from modelquad.usage import codex_appserver
 
     canary = _write_canary(tmp_path)
     public = [

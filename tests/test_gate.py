@@ -9,20 +9,20 @@ from pathlib import Path
 
 import pytest
 
-import orchestrator
-from orchestrator import hostobs
-from orchestrator.adapters import ActionKind
-from orchestrator.adapters.gate import (
+import modelquad
+from modelquad import hostobs
+from modelquad.adapters import ActionKind
+from modelquad.adapters.gate import (
     ADVISORY_NOTE,
     GATED_TOOL_NAMES,
     evaluate_gate,
 )
-from orchestrator.adapters.hooksmerge import (
+from modelquad.adapters.hooksmerge import (
     has_hook_entry,
     remove_hook_entry,
     upsert_hook_entry,
 )
-from orchestrator.execution.base import WORKER_ENV_VAR
+from modelquad.execution.base import WORKER_ENV_VAR
 
 
 
@@ -33,12 +33,12 @@ from orchestrator.execution.base import WORKER_ENV_VAR
 
 
 def test_gate_and_hooksmerge_source_does_not_reference_legacy_routing():
-    """Confirm the legacy path (router.py, orchestrator.md) is never referenced.
+    """Confirm the legacy path (router.py, modelquad.md) is never referenced.
 
     gate.py and hooksmerge.py must never import or reference the retired
-    router.py or orchestrator.md legacy chain.
+    router.py or modelquad.md legacy chain.
     """
-    repo_src = Path(orchestrator.__file__).resolve().parent
+    repo_src = Path(modelquad.__file__).resolve().parent
     gate_source = (repo_src / "adapters" / "gate.py").read_text(encoding="utf-8")
     hooksmerge_source = (repo_src / "adapters" / "hooksmerge.py").read_text(encoding="utf-8")
     cli_source = (repo_src / "cli.py").read_text(encoding="utf-8")
@@ -48,22 +48,22 @@ def test_gate_and_hooksmerge_source_does_not_reference_legacy_routing():
         ("hooksmerge.py", hooksmerge_source),
     ]:
         assert "router.py" not in text, f"Legacy router.py referenced in {path_name}"
-        assert "orchestrator.md" not in text, f"Legacy orchestrator.md referenced in {path_name}"
+        assert "modelquad.md" not in text, f"Legacy modelquad.md referenced in {path_name}"
 
     # Verify hook-gate wiring in cli.py does not reference legacy routing
     hook_gate_section = cli_source[cli_source.find('args.command == "hook-gate"') :]
     hook_gate_section = hook_gate_section[: hook_gate_section.find("return 0")]
     assert "router.py" not in hook_gate_section
-    assert "orchestrator.md" not in hook_gate_section
+    assert "modelquad.md" not in hook_gate_section
 
 
-def test_gate_source_omits_orchestrator_routing_business_logic():
+def test_gate_source_omits_modelquad_routing_business_logic():
     """Routing business logic stays absent from the host policy layer.
 
-    gate.py must only decide *whether* to consult the Orchestrator, never
+    gate.py must only decide *whether* to consult ModelQuad, never
     *which* provider/model/effort to pick.
     """
-    repo_src = Path(orchestrator.__file__).resolve().parent
+    repo_src = Path(modelquad.__file__).resolve().parent
     gate_source = (repo_src / "adapters" / "gate.py").read_text(encoding="utf-8")
 
     forbidden_terms = ("task_fit", "quota_penalty", "resource_strategy", "reasoning_effort")
@@ -312,7 +312,7 @@ def test_upsert_hook_entry_idempotence_and_preservation(tmp_path):
 def test_upsert_hook_entry_preserves_sibling_hook_manually_added_to_owned_group(tmp_path):
     """Regression test for an independent-review finding: if a user manually
     added a second hook command into the same group we own (matching
-    matcher), a later upsert (e.g. from `orchestrator install claude` re-run
+    matcher), a later upsert (e.g. from `modelquad install claude` re-run
     for repair/upgrade) must not silently delete it by replacing the whole
     group object.
     """
@@ -477,5 +477,4 @@ def test_has_hook_entry_checks(tmp_path):
     # Corrupt JSON -> False
     settings_path.write_text("{bad json", encoding="utf-8")
     assert has_hook_entry(settings_path, "PreToolUse", "cmd") is False
-
 

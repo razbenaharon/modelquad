@@ -22,8 +22,8 @@ import json
 
 import pytest
 
-from orchestrator import hostobs
-from orchestrator.hostobs import (
+from modelquad import hostobs
+from modelquad.hostobs import (
     CLAUDE_ENV_ALLOWLIST,
     CLAUDE_ENV_REFUSED,
     ClaudeCodeHostObserver,
@@ -40,7 +40,7 @@ from orchestrator.hostobs import (
     uptime_bucket,
     with_decision_context,
 )
-from orchestrator.models import ModelIdentitySource, RuntimeRole
+from modelquad.models import ModelIdentitySource, RuntimeRole
 
 # The SHAPE of a real Claude Code session environment, observed 2026-08-26.
 # The variable NAMES and the format of the values we parse are real; every
@@ -253,7 +253,7 @@ def test_a_session_fingerprint_is_stable_and_never_the_raw_session_id(tmp_path):
 
 
 def test_resetting_the_installation_id_severs_the_fingerprint(tmp_path):
-    from orchestrator.identity import reset_installation_id
+    from modelquad.identity import reset_installation_id
 
     raw = REAL_ENV["CLAUDE_CODE_SESSION_ID"]
     before = session_fingerprint(raw, state_dir=tmp_path)
@@ -597,7 +597,7 @@ def test_concurrent_host_pushes_never_corrupt_the_cache_or_leave_staging_files(t
 
     import threading
 
-    from orchestrator.adapters import atomicwrite
+    from modelquad.adapters import atomicwrite
 
     staged_through_atomic_write: list[str] = []
     real_atomic_write = atomicwrite.atomic_write

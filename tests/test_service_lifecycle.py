@@ -16,11 +16,11 @@ from pathlib import Path
 
 import pytest
 
-import orchestrator.cli as cli_module
-import orchestrator.service.lifecycle as lifecycle
-from orchestrator.executable_resolution import Resolution
-from orchestrator.execution import no_window_kwargs
-from orchestrator.service.lifecycle import (
+import modelquad.cli as cli_module
+import modelquad.service.lifecycle as lifecycle
+from modelquad.executable_resolution import Resolution
+from modelquad.execution import no_window_kwargs
+from modelquad.service.lifecycle import (
     ProcessResult,
     ProcessStatus,
     RegistrationResult,
@@ -100,12 +100,12 @@ def windows_platform(tmp_path, monkeypatch):
         assert name == 'schtasks'
         return Resolution(resolved, 'system', 'binary', None)
 
-    monkeypatch.setattr('orchestrator.service.auth.current_user_sid', lambda: 'S-1-5-21-1')
+    monkeypatch.setattr('modelquad.service.auth.current_user_sid', lambda: 'S-1-5-21-1')
     monkeypatch.setattr(lifecycle, 'system_executable', resolve)
     monkeypatch.setattr(lifecycle, 'system_directory', lambda: str(executable.parent))
     monkeypatch.setattr(lifecycle.sys, "platform", "win32")
-    monkeypatch.setattr("orchestrator.jobs.handle._launch_policy", lambda: (0, False, None))
-    monkeypatch.setattr("orchestrator.jobs.handle._process_in_any_job", lambda handle: False)
+    monkeypatch.setattr("modelquad.jobs.handle._launch_policy", lambda: (0, False, None))
+    monkeypatch.setattr("modelquad.jobs.handle._process_in_any_job", lambda handle: False)
     return resolved
 
 
@@ -151,7 +151,7 @@ def _identity(
 def _ready_authenticate(port, **kwargs):
     """Explicit fake readiness: absence before launch, proof for a managed PID."""
     from types import SimpleNamespace
-    from orchestrator.service.socket_identity import ListenerError
+    from modelquad.service.socket_identity import ListenerError
     if "expected_pid" not in kwargs:
         raise ListenerError("service_absent")
     assert kwargs["require_runner"] is False
@@ -253,7 +253,7 @@ def test_task_scheduler_register_refuses_when_windows_reports_no_user_name(
 
     monkeypatch.delenv("USERDOMAIN", raising=False)
     monkeypatch.setenv("USERNAME", "")
-    monkeypatch.setattr("orchestrator.service.auth.current_user_sid", lambda: (_ for _ in ()).throw(OSError("fixture")))
+    monkeypatch.setattr("modelquad.service.auth.current_user_sid", lambda: (_ for _ in ()).throw(OSError("fixture")))
     run = RecordingRun()
 
     result = TaskSchedulerRegistrar(run=run).register(command=_command())
@@ -421,8 +421,8 @@ def test_service_start_job_policy_mapping(tmp_path, windows_platform, monkeypatc
     popen = RecordingPopen()
     popen._handle = 99
     inspected = []
-    monkeypatch.setattr("orchestrator.jobs.handle._launch_policy", probe)
-    monkeypatch.setattr("orchestrator.jobs.handle._process_in_any_job", lambda handle: inspected.append(handle) or False)
+    monkeypatch.setattr("modelquad.jobs.handle._launch_policy", probe)
+    monkeypatch.setattr("modelquad.jobs.handle._process_in_any_job", lambda handle: inspected.append(handle) or False)
     manager = ServiceProcessManager(authenticate=_ready_authenticate, working_directory=lambda: str(tmp_path), process_created_at=lambda pid: _STARTED_EPOCH - 0.2, state_dir=tmp_path, popen=popen)
     result = manager.start(command=_command())
     assert result.success and result.running
@@ -441,7 +441,7 @@ def test_service_escape_inspection_keeps_child_and_pidfile(
 ):
     popen = RecordingPopen()
     popen._handle = 99
-    monkeypatch.setattr("orchestrator.jobs.handle._launch_policy", lambda: policy)
+    monkeypatch.setattr("modelquad.jobs.handle._launch_policy", lambda: policy)
 
     def inspect(handle):
         assert handle == 99
@@ -449,7 +449,7 @@ def test_service_escape_inspection_keeps_child_and_pidfile(
             raise inspection
         return inspection
 
-    monkeypatch.setattr("orchestrator.jobs.handle._process_in_any_job", inspect)
+    monkeypatch.setattr("modelquad.jobs.handle._process_in_any_job", inspect)
     manager = ServiceProcessManager(authenticate=_ready_authenticate, working_directory=lambda: str(tmp_path), process_created_at=lambda pid: _STARTED_EPOCH - 0.2, state_dir=tmp_path, popen=popen)
     result = manager.start(command=_command())
     assert result.success and result.contained == contained
@@ -458,7 +458,7 @@ def test_service_escape_inspection_keeps_child_and_pidfile(
 
 
 def test_service_nested_job_denial_retries_once_with_shared_log(tmp_path, windows_platform, monkeypatch):
-    monkeypatch.setattr("orchestrator.jobs.handle._launch_policy", lambda: (0x01000000, True, None))
+    monkeypatch.setattr("modelquad.jobs.handle._launch_policy", lambda: (0x01000000, True, None))
     popen = RecordingPopen()
 
     def spawn(argv, **kwargs):
@@ -481,7 +481,7 @@ def test_service_nested_job_denial_retries_once_with_shared_log(tmp_path, window
 
 @pytest.mark.parametrize("winerror,expected_calls", [(5, 2), (87, 1)])
 def test_service_launch_retry_is_bounded(tmp_path, windows_platform, monkeypatch, winerror, expected_calls):
-    monkeypatch.setattr("orchestrator.jobs.handle._launch_policy", lambda: (0x01000000, True, None))
+    monkeypatch.setattr("modelquad.jobs.handle._launch_policy", lambda: (0x01000000, True, None))
     calls = []
 
     def spawn(argv, **kwargs):
@@ -592,7 +592,7 @@ def test_service_early_returns_do_not_probe_jobs_or_acquire_guard(tmp_path, wind
     def forbidden(*args, **kwargs):
         pytest.fail("dry run must not inspect containment or acquire the guard")
 
-    monkeypatch.setattr("orchestrator.jobs.handle._launch_policy", forbidden)
+    monkeypatch.setattr("modelquad.jobs.handle._launch_policy", forbidden)
     monkeypatch.setattr(lifecycle, "_service_start_guard", forbidden)
     manager = ServiceProcessManager(
         state_dir=tmp_path, popen=RecordingPopen(), pid_exists=lambda pid: True, **_identity(created=None)
@@ -710,7 +710,7 @@ def test_process_stop_uses_the_pid_scoped_terminator_and_removes_pidfile(tmp_pat
 # ---------------------------------------------------------------------------
 # stop() and status() prove that the recorded PID is the
 # recorded service before acting on it. Every ModelQuad process is an
-# `orchestrator.exe`, a Host's MCP server included, so an image *name* proves
+# `modelquad.exe`, a Host's MCP server included, so an image *name* proves
 # nothing once Windows hands a dead service's PID to another process.
 # ---------------------------------------------------------------------------
 
@@ -748,9 +748,9 @@ def test_process_stop_stops_a_process_whose_identity_matches_within_the_toleranc
         # Created before the recorded start: an older process, not the service.
         (_command()[0], _STARTED_EPOCH - 3600.0),
         # Another image, whatever its creation time.
-        (r"C:\Program Files\ModelQuad\orchestrator.exe", _STARTED_EPOCH),
+        (r"C:\Program Files\ModelQuad\modelquad.exe", _STARTED_EPOCH),
         # Another image is proof enough when the creation time is unreadable.
-        (r"C:\Program Files\ModelQuad\orchestrator.exe", None),
+        (r"C:\Program Files\ModelQuad\modelquad.exe", None),
         # A later creation time is proof enough when the image is unreadable.
         (None, _STARTED_EPOCH + 3600.0),
     ],
@@ -1100,7 +1100,7 @@ def test_cli_service_install_registers_the_windowless_localhost_launch_command(m
 
     assert cli_module.main(["service", "install", "--dry-run", "--port", "9123"]) == 0
 
-    from orchestrator.statecontext import resolve_state_context
+    from modelquad.statecontext import resolve_state_context
     context = resolve_state_context()
     assert captured == {
         "command": [str(tmp_path / "pythonw.exe"), "-I",
@@ -1167,7 +1167,7 @@ def test_cli_service_status_combines_fake_scheduler_and_process_status_as_json(m
                 running=True,
                 pid=2468,
                 started_at="2026-08-16T00:00:00+00:00",
-                argv=("python", "-m", "orchestrator.cli"),
+                argv=("python", "-m", "modelquad.cli"),
             )
 
     monkeypatch.setattr(cli_module, "TaskSchedulerRegistrar", FakeRegistrar)
@@ -1184,7 +1184,7 @@ def test_cli_service_status_combines_fake_scheduler_and_process_status_as_json(m
 def test_process_manager_defaults_state_dir_to_installed_state_root(monkeypatch):
     # With no explicit state_dir, the pidfile/log root follows the installation
     # mode's state_root() so an installed package keeps them beside the history DB.
-    from orchestrator import paths
+    from modelquad import paths
 
     sentinel = paths.Path("/tmp/example-state-root")
     monkeypatch.setattr(paths, "state_root", lambda: sentinel)
@@ -1195,14 +1195,14 @@ def test_process_manager_defaults_state_dir_to_installed_state_root(monkeypatch)
 
 
 def test_process_manager_default_state_dir_installed_windows_uses_localappdata(monkeypatch, tmp_path):
-    from orchestrator import paths
+    from modelquad import paths
 
     monkeypatch.setattr(paths, "is_dev_checkout", lambda: False)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
 
     manager = ServiceProcessManager()
-    expected = tmp_path / "MultiAgentOrchestrator"
+    expected = tmp_path / "ModelQuad"
     assert manager.state_dir == expected
     assert manager.pid_path == expected / "service.pid"
 
@@ -1259,7 +1259,7 @@ def test_lifecycle_probes_omit_creationflags_on_non_windows(windows_platform, mo
 def test_service_real_breakaway_in_separate_helper(tmp_path):
     """Only the helper joins a test-owned job; pytest's job is never changed."""
     import textwrap
-    from orchestrator.jobs import handle
+    from modelquad.jobs import handle
 
     in_job = handle._caller_in_job()
     limits = handle._caller_job_limits() if in_job else 0
@@ -1272,9 +1272,9 @@ def test_service_real_breakaway_in_separate_helper(tmp_path):
         import ctypes,json,os,subprocess,sys
         from ctypes import wintypes
         from pathlib import Path
-        from orchestrator import procutil
-        from orchestrator.jobs import handle
-        from orchestrator.service.lifecycle import ServiceProcessManager
+        from modelquad import procutil
+        from modelquad.jobs import handle
+        from modelquad.service.lifecycle import ServiceProcessManager
 
         class Basic(ctypes.Structure):
             _fields_ = [('process_time', ctypes.c_int64), ('job_time', ctypes.c_int64),
@@ -1307,7 +1307,7 @@ def test_service_real_breakaway_in_separate_helper(tmp_path):
                     children.append(child)
                     return child
                 from types import SimpleNamespace
-                from orchestrator.service.socket_identity import ListenerError
+                from modelquad.service.socket_identity import ListenerError
                 def readiness(port, **kwargs):
                     if 'expected_pid' not in kwargs:
                         raise ListenerError('service_absent')

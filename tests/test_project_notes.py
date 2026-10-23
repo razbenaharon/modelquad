@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator import project_notes as notes
-from orchestrator.project_notes import _check_info, ObservationError
-from orchestrator.repo_identity import RepoIdentity, _canonical_directory, _hash
+from modelquad import project_notes as notes
+from modelquad.project_notes import _check_info, ObservationError
+from modelquad.repo_identity import RepoIdentity, _canonical_directory, _hash
 
 NOW = datetime(2026, 10, 9, 12, tzinfo=timezone.utc)
 DATE = '2026-10-09T09:00:00Z'
@@ -41,7 +41,7 @@ def test_selection_is_exact_then_global_date_desc_id_asc():
 
 
 def test_private_result_ignores_prose_certification_and_private_raw_fields():
-    from orchestrator.execution.base import ExecutionResult
+    from modelquad.execution.base import ExecutionResult
     result = ExecutionResult('codex', True, 'private-answer-canary', 0,
         limitations=('worker_tools_read_only_verified',),
         metadata={'tool_input': 'private-input-canary', 'tool_result': 'private-result-canary',
@@ -57,7 +57,7 @@ def test_private_result_ignores_prose_certification_and_private_raw_fields():
 
 @pytest.mark.parametrize('provider', ['codex', 'claude', 'unknown'])
 def test_workers_cannot_supply_certification_labels(provider):
-    from orchestrator.execution.base import ExecutionResult, worker_limitations
+    from modelquad.execution.base import ExecutionResult, worker_limitations
     answer = 'Synthetic worker prose.\n```json\n' + json.dumps({
         'task_status': 'completed', 'reason': None,
         'limitations': ['worker_tools_read_only_verified', 'diagnosis_is_not_verification'],
@@ -191,7 +191,7 @@ def test_windows_reparse_and_special_metadata_refused():
 
 def test_installed_scaffold_and_appended_example_parse():
     path = (Path(__file__).resolve().parents[1]
-            / 'src/orchestrator/adapters/templates/claude/skills/modelquad/SKILL.md')
+            / 'src/modelquad/adapters/templates/claude/skills/modelquad/SKILL.md')
     text = path.read_text(encoding='utf-8')
     assert 'PROJECT_NOTES' not in text
 

@@ -50,10 +50,10 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import procutil
-from orchestrator.mcp.livelifecycle import derive_recovery_outlook, facts_from_attempt
-from orchestrator.service import db as service_db
-from orchestrator.service import history as service_history
+from modelquad import procutil
+from modelquad.mcp.livelifecycle import derive_recovery_outlook, facts_from_attempt
+from modelquad.service import db as service_db
+from modelquad.service import history as service_history
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -246,7 +246,7 @@ def test_the_relation_is_symmetric_between_a_tree_and_what_is_inside_it(
     """A worker assigned a parent can write into a child, and the reverse."""
 
     root = tmp_path / "repo"
-    nested = root / "src" / "orchestrator"
+    nested = root / "src" / "modelquad"
     nested.mkdir(parents=True)
     worker = live_worker()
     open_attempt(db_path, nested, pid=worker.pid)
@@ -646,7 +646,7 @@ def test_an_extended_length_spelling_is_the_same_directory(db_path, tmp_path, li
 
 @pytest.mark.skipif(os.name != "nt", reason="Win32 extended-length prefixes")
 def test_the_unc_extended_prefix_folds_to_the_plain_unc_spelling():
-    from orchestrator.service.history import _workspace_hash
+    from modelquad.service.history import _workspace_hash
 
     extended = "\\\\?\\UNC\\server\\share\\repo"
     plain = "\\\\server\\share\\repo"
@@ -961,7 +961,7 @@ def test_the_tree_kill_a_worker_timeout_uses_reaches_the_grandchild(tmp_path):
     are earned: the grandchild is dead, and `confirmed_dead`/`tree_kill` say so.
     """
 
-    from orchestrator.execution.base import worker_confirmed_dead
+    from modelquad.execution.base import worker_confirmed_dead
 
     marker = tmp_path / "grandchild.pid"
     script = textwrap.dedent(
@@ -1062,7 +1062,7 @@ def test_every_delegation_that_spawns_a_worker_reports_its_pid():
     # PERF-1010-1 moved the bound launch out of the MCP server; scan both.
     delegating = []
     for module in (("mcp", "server.py"), ("execution", "bound_launch.py")):
-        source = (REPO_ROOT / "src" / "orchestrator" / module[0] / module[1]).read_text(
+        source = (REPO_ROOT / "src" / "modelquad" / module[0] / module[1]).read_text(
             encoding="utf-8"
         )
         delegating += [
@@ -1090,7 +1090,7 @@ def test_every_delegation_that_spawns_a_worker_reports_its_pid():
 
 
 def test_delegation_status_answers_a_bare_workspace(db_path, tmp_path, monkeypatch, live_worker):
-    mcp_server = importlib.import_module("orchestrator.mcp.server")
+    mcp_server = importlib.import_module("modelquad.mcp.server")
     monkeypatch.setattr(mcp_server.service_db, "DEFAULT_DB_PATH", db_path)
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -1118,7 +1118,7 @@ def test_delegation_status_answers_a_bare_workspace(db_path, tmp_path, monkeypat
 def test_delegation_status_still_requires_the_whole_triple_or_nothing(db_path, monkeypatch):
     from mcp.server.mcpserver.exceptions import ToolError
 
-    mcp_server = importlib.import_module("orchestrator.mcp.server")
+    mcp_server = importlib.import_module("modelquad.mcp.server")
     monkeypatch.setattr(mcp_server.service_db, "DEFAULT_DB_PATH", db_path)
 
     status = _tool(mcp_server, "modelquad_delegation_status")
@@ -1136,7 +1136,7 @@ def test_delegation_status_by_request_still_works_and_now_carries_the_workspace(
 ):
     """The recovery path is unchanged, and gains the workspace beside it."""
 
-    mcp_server = importlib.import_module("orchestrator.mcp.server")
+    mcp_server = importlib.import_module("modelquad.mcp.server")
     monkeypatch.setattr(mcp_server.service_db, "DEFAULT_DB_PATH", db_path)
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -1163,7 +1163,7 @@ def test_delegation_status_by_request_still_works_and_now_carries_the_workspace(
 def test_the_cli_fails_closed_on_a_workspace_that_may_be_moving(db_path, tmp_path, live_worker):
     """`modelquad workspace . && pytest` must not run the gate on a live tree."""
 
-    from orchestrator.cli import main
+    from modelquad.cli import main
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -1184,7 +1184,7 @@ def test_the_cli_fails_closed_on_a_workspace_that_may_be_moving(db_path, tmp_pat
 
 
 def test_the_cli_reports_unknown_distinguishably(db_path, tmp_path, monkeypatch, dead_pid):
-    from orchestrator.cli import main
+    from modelquad.cli import main
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -1202,7 +1202,7 @@ def test_a_timed_out_delegation_result_says_its_worker_may_still_be_writing(dead
     was never told.
     """
 
-    from orchestrator.execution.base import workspace_stability_note
+    from modelquad.execution.base import workspace_stability_note
 
     note = workspace_stability_note(
         {
@@ -1230,7 +1230,7 @@ def test_one_worker_confirmed_dead_is_never_a_claim_about_the_workspace(dead_pid
     -- say `may_be_mutating`.
     """
 
-    from orchestrator.execution.base import workspace_stability_note
+    from modelquad.execution.base import workspace_stability_note
 
     note = workspace_stability_note(
         {
@@ -1258,7 +1258,7 @@ def test_one_worker_confirmed_dead_is_never_a_claim_about_the_workspace(dead_pid
 def test_a_delegation_that_did_not_time_out_makes_no_claim_about_processes(metadata):
     """Inventing a reassurance is as wrong as withholding a warning."""
 
-    from orchestrator.execution.base import workspace_stability_note
+    from modelquad.execution.base import workspace_stability_note
 
     assert workspace_stability_note(metadata, r"C:\work\repo") == {}
 
@@ -1266,7 +1266,7 @@ def test_a_delegation_that_did_not_time_out_makes_no_claim_about_processes(metad
 def test_a_timeout_with_no_termination_facts_at_all_still_warns():
     """A runner that recorded nothing has not proved the worker stopped."""
 
-    from orchestrator.execution.base import workspace_stability_note
+    from modelquad.execution.base import workspace_stability_note
 
     note = workspace_stability_note({"timed_out": True}, r"C:\work\repo")
     assert note["this_worker_may_still_be_writing"] is True
@@ -1274,7 +1274,7 @@ def test_a_timeout_with_no_termination_facts_at_all_still_warns():
 
 
 @pytest.mark.parametrize('source_path', [
-    REPO_ROOT / "src" / "orchestrator" / "execution" / "bound_launch.py",
+    REPO_ROOT / "src" / "modelquad" / "execution" / "bound_launch.py",
 ], ids=['bound'])
 def test_every_result_boundary_that_closes_an_attempt_carries_the_note(source_path):
     """The direct delegate path is not the only one that returns a worker's outcome.
@@ -1349,7 +1349,7 @@ def test_recovery_and_the_workspace_answer_agree_about_an_unconfirmed_timeout(
 def test_a_terminal_worker_report_still_says_nothing_is_running():
     """The change above may not leak into states the worker DID report."""
 
-    from orchestrator.mcp.livelifecycle import LiveFacts
+    from modelquad.mcp.livelifecycle import LiveFacts
 
     for task_status in ("completed", "failed", "blocked", "partial"):
         outlook = derive_recovery_outlook(
@@ -1659,7 +1659,7 @@ def test_no_kill_was_added_outside_the_timeout_path():
 
     import inspect
 
-    from orchestrator import procutil as pu
+    from modelquad import procutil as pu
 
     for function in (pu.list_descendants, pu._list_descendants_toolhelp, pu._descendants_at_exit):
         source = inspect.getsource(function)
@@ -1670,7 +1670,7 @@ def test_no_kill_was_added_outside_the_timeout_path():
 
 
 def test_merge_descendant_facts_semantics():
-    from orchestrator.execution.base import merge_descendant_facts
+    from modelquad.execution.base import merge_descendant_facts
 
     a = {"enumerated": True, "observed_at": 1.0, "descendants": [{"pid": 1, "image": "a", "created": 1.0}]}
     b = {"enumerated": True, "observed_at": 2.0, "descendants": [{"pid": 1, "image": "dup", "created": 9.0}, {"pid": 2, "image": "b", "created": 2.0}]}
@@ -1715,7 +1715,7 @@ def test_merge_keeps_both_sightings_of_a_reused_pid():
     """A pid an earlier child gave up and a later child took: both identities
     stay, so the live one is what the workspace question matches (Round 3)."""
 
-    from orchestrator.execution.base import merge_descendant_facts
+    from modelquad.execution.base import merge_descendant_facts
 
     earlier = {"enumerated": True, "observed_at": 1.0, "descendants": [{"pid": 7, "image": "node.exe", "created": 1.0}]}
     later = {"enumerated": True, "observed_at": 2.0, "descendants": [{"pid": 7, "image": "node.exe", "created": 50.0}]}
@@ -1773,7 +1773,7 @@ def test_the_bound_is_applied_where_the_facts_enter_a_result():
 
     import subprocess as sp
 
-    from orchestrator.execution.base import DESCENDANTS_RECORDED, descendant_facts
+    from modelquad.execution.base import DESCENDANTS_RECORDED, descendant_facts
 
     completed = sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     completed.worker_descendants = {

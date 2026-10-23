@@ -7,10 +7,10 @@ import json
 
 import pytest
 
-from orchestrator.config import Config
-from orchestrator.models import Freshness, ProviderStatus
-from orchestrator.providers import CodexProvider
-from orchestrator.router import Router
+from modelquad.config import Config
+from modelquad.models import Freshness, ProviderStatus
+from modelquad.providers import CodexProvider
+from modelquad.router import Router
 
 
 NOW = datetime(2026, 8, 14, tzinfo=timezone.utc)

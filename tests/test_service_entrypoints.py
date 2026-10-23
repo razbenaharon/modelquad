@@ -13,13 +13,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator import background_cwd, cli, executable_resolution as resolver
-from orchestrator.service import entry, lifecycle
+from modelquad import background_cwd, cli, executable_resolution as resolver
+from modelquad.service import entry, lifecycle
 
 
 @pytest.fixture
 def layout(tmp_path, monkeypatch):
-    from orchestrator import windowless_diagnostics as diagnostics
+    from modelquad import windowless_diagnostics as diagnostics
     monkeypatch.setattr(sys, "stdout", sys.stdout)
     monkeypatch.setattr(sys, "stderr", sys.stderr)
     monkeypatch.setattr(diagnostics, "_active", False)
@@ -51,7 +51,7 @@ def test_logon_cwd(layout, monkeypatch, case):
     h = layout
     poisoned = h.tmp_path / "poisoned"
     poisoned.mkdir()
-    (poisoned / "orchestrator.py").write_text("raise RuntimeError('planted')", encoding="utf-8")
+    (poisoned / "modelquad.py").write_text("raise RuntimeError('planted')", encoding="utf-8")
     if case == "poisoned_parent":
         monkeypatch.chdir(poisoned)
         monkeypatch.setenv("PYTHONPATH", str(poisoned))
@@ -127,7 +127,7 @@ def test_source_bootstrap_uses_own_file_and_forwards_without_cwd_imports(layout,
 
 
 def test_dependency_restore_failure_logs_only_in_explicit_selected_state(layout, monkeypatch):
-    from orchestrator import windowless_diagnostics as diagnostics
+    from modelquad import windowless_diagnostics as diagnostics
     chosen = layout.tmp_path / "explicit-state"
     previous_path = list(sys.path)
     monkeypatch.setattr(diagnostics, "_budgets", {})
@@ -246,8 +246,8 @@ def test_process_result_renders_unknown_pid_conservatively(layout, capsys, reaso
 @pytest.mark.parametrize("case", ["ready", "unmanaged", "identity-unknown", "record-unavailable", "absent"],
                          ids=["ready", "unmanaged", "identity-unknown", "record-unavailable", "absent"])
 def test_doctor_uses_public_managed_readiness(layout, monkeypatch, case):
-    from orchestrator import doctor
-    from orchestrator.service import control_plane as shell
+    from modelquad import doctor
+    from modelquad.service import control_plane as shell
 
     h = layout
     code = {"unmanaged": "service_unmanaged", "identity-unknown": "service_process_identity_unconfirmed",
@@ -274,7 +274,7 @@ def test_explicit_state_selection_also_selects_its_default_database(layout):
     root = layout.tmp_path / "other-state"
     args = cli.build_parser().parse_args(["serve", "--state-root", str(root), "--state-mode", "test"])
     command = cli._service_launch_command(8765, args)
-    assert command[command.index("--db") + 1] == str(root / "orchestrator.db")
+    assert command[command.index("--db") + 1] == str(root / "modelquad.db")
 
 
 def _cli_service_sites(source):
@@ -335,7 +335,7 @@ def _cli_service_sites(source):
 def test_installed_command_entry_has_no_service_call_sites():
     """cli_entry is the installed command (PERF-1010-1): it may only dispatch
     the pending hook or hand over to cli.main, never start or stop the service."""
-    from orchestrator import cli_entry
+    from modelquad import cli_entry
     source = Path(cli_entry.__file__).read_text(encoding="utf-8")
     assert _cli_service_sites(source) == Counter()
     bypass = source + "\nimport subprocess as s\ndef bypass():\n s.Popen(['serve'])\n"
@@ -346,8 +346,8 @@ def test_installed_command_entry_has_no_service_call_sites():
     "import subprocess as s\ndef bypass():\n s.Popen(['serve'])",
     "from subprocess import Popen as spawn\ndef bypass():\n launch = spawn\n launch(['serve'])",
     "import uvicorn as u\ndef bypass():\n u.run(object())",
-    "from orchestrator.procutil import terminate_pid as stop\ndef bypass():\n stop(42)",
-    "from orchestrator.service.lifecycle import _process_exists as alive\ndef bypass():\n alive(42)",
+    "from modelquad.procutil import terminate_pid as stop\ndef bypass():\n stop(42)",
+    "from modelquad.service.lifecycle import _process_exists as alive\ndef bypass():\n alive(42)",
 ], ids=["direct-launch", "aliased-launch", "direct-server", "direct-stop", "direct-process-check"])
 def test_cli_scanner_detects_synthetic_bypasses(snippet):
     assert _cli_service_sites(snippet)

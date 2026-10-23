@@ -28,9 +28,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from orchestrator.config import Config
-from orchestrator.service import control_plane as shell
-from orchestrator.doctor import CheckStatus, _control_plane_check, run_doctor
+from modelquad.config import Config
+from modelquad.service import control_plane as shell
+from modelquad.doctor import CheckStatus, _control_plane_check, run_doctor
 
 
 CONTROL_PLANE = "Background service"
@@ -40,7 +40,7 @@ CONTROL_PLANE = "Background service"
                                   "service_proof_invalid", "service_auth_unsupported"],
                          ids=["owner", "image", "proof", "legacy"])
 def test_sec552_authentication_refusals_are_diagnostic_faults(code):
-    from orchestrator.service.socket_identity import ListenerError, RESTART_MESSAGE
+    from modelquad.service.socket_identity import ListenerError, RESTART_MESSAGE
     exc = ListenerError(code)
     verdict = shell.ControlPlaneVerdict(shell.PROBE_MISMATCH, exc.detail, code)
     check = _control_plane_check(8765, probe=lambda port: verdict)
@@ -53,10 +53,10 @@ def _verdict_for(payload: dict) -> shell.ControlPlaneVerdict:
 
 
 def _healthy_installed_payload() -> dict:
-    from orchestrator import statecontext
+    from modelquad import statecontext
 
     state = statecontext.resolve_state_context()
-    from orchestrator.service import db as service_db
+    from modelquad.service import db as service_db
 
     return {
         "status": "ok",
@@ -99,7 +99,7 @@ def test_a_development_instance_on_the_installed_port_is_reported_as_a_fault():
 
     payload = _healthy_installed_payload()
     payload["instance_kind"] = "development"
-    payload["state_root"] = "C:\\Users\\someone\\.orchestrator"
+    payload["state_root"] = "C:\\Users\\someone\\.modelquad"
     verdict = _verdict_for(payload)
     if verdict.state != shell.PROBE_MISMATCH:
         pytest.skip("this process resolves as development, so the payload is a legitimate match")
@@ -273,7 +273,7 @@ def test_the_recovery_only_names_commands_the_product_actually_has():
     """Naming a command that does not exist is the same misleading-instruction
     defect as pointing at a blind doctor."""
 
-    from orchestrator.cli import build_parser
+    from modelquad.cli import build_parser
 
     parser = build_parser()
     for reason in (

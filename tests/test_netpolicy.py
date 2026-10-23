@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from orchestrator import netpolicy
+from modelquad import netpolicy
 
 
 @pytest.mark.parametrize("address", [
@@ -75,16 +75,16 @@ def test_a_child_process_is_not_restricted():
 def test_entry_points_install_the_guard():
     import inspect
 
-    from orchestrator import cli_entry
-    from orchestrator.jobs import runner
-    from orchestrator.mcp import server
+    from modelquad import cli_entry
+    from modelquad.jobs import runner
+    from modelquad.mcp import server
 
     for function in (cli_entry.main, server.main, runner.main):
         assert "install_loopback_guard()" in inspect.getsource(function), function
 
 
 def test_an_api_execution_provider_is_refused_before_routing(monkeypatch):
-    from orchestrator import registry
+    from modelquad import registry
 
     monkeypatch.setattr(registry, "api_execution_providers", lambda registry=None: ("vendor",))
     assert netpolicy.providers_refused_by_policy() == {"vendor": netpolicy.LOOPBACK_ONLY_REASON}

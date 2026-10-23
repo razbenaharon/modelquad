@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.mcp.presentation import (
+from modelquad.mcp.presentation import (
     ACTIVITY_STATES,
     activity_state,
     activity_state_from_attempt,
@@ -32,8 +32,8 @@ from orchestrator.mcp.presentation import (
     build_activity_entry,
     build_activity_feed,
 )
-from orchestrator.service import db as service_db
-from orchestrator.service import history as service_history
+from modelquad.service import db as service_db
+from modelquad.service import history as service_history
 
 NOW = "2026-08-27T12:00:00+00:00"
 
@@ -167,7 +167,7 @@ def test_every_activity_state_has_a_label_a_tone_and_a_note():
     """A state that reaches a surface without one of the three is a KeyError
     in front of a user, so the three tables are pinned to the vocabulary."""
 
-    from orchestrator.mcp import presentation as pres
+    from modelquad.mcp import presentation as pres
 
     for state in ACTIVITY_STATES:
         assert state in pres._STATE_LABELS, state
@@ -203,7 +203,7 @@ def test_a_live_worker_pid_does_not_override_the_caller_having_left(monkeypatch)
     """A probe that proves the worker is alive is the very evidence
     `unattended` rests on -- it must not be rounded back up to `running`."""
 
-    monkeypatch.setattr("orchestrator.procutil.pid_alive", lambda pid: True)
+    monkeypatch.setattr("modelquad.procutil.pid_alive", lambda pid: True)
     entry = build_activity_entry(
         attempt(liveness="in_flight", caller_abandoned=True, worker_pid=4242)
     )
@@ -367,7 +367,7 @@ def test_an_attempt_with_no_proven_worker_reads_as_delegating_not_a_result():
 
 
 def test_an_attempt_with_a_live_worker_pid_reads_as_running(monkeypatch):
-    monkeypatch.setattr("orchestrator.procutil.pid_alive", lambda pid: True)
+    monkeypatch.setattr("modelquad.procutil.pid_alive", lambda pid: True)
     entry = build_activity_entry(attempt(liveness="in_flight", worker_pid=4242))
     assert entry["state"] == "running"
     assert entry["label"] == "Running"
@@ -551,17 +551,17 @@ def test_rows_are_ordered_newest_first_across_all_three_kinds():
 # -- the module stays a leaf ------------------------------------------------
 
 
-def test_presentation_imports_nothing_from_the_orchestrator_package_at_module_level():
+def test_presentation_imports_nothing_from_the_modelquad_package_at_module_level():
     """It is a reader of decisions, so it must not be able to cause one.
 
-    A module-level import of the orchestrator package would let this adapter
+    A module-level import of the modelquad package would let this adapter
     reach back into routing, state, or the database -- and would make it
     importable only alongside the machinery it is meant to describe. The one
-    orchestrator import it makes (`registry`, for a provider's display name)
+    modelquad import it makes (`registry`, for a provider's display name)
     is function-local and guarded on purpose.
     """
 
-    source = Path("src/orchestrator/mcp/presentation.py").read_text(encoding="utf-8")
+    source = Path("src/modelquad/mcp/presentation.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     module_level = [
         node
@@ -571,10 +571,10 @@ def test_presentation_imports_nothing_from_the_orchestrator_package_at_module_le
     for node in module_level:
         if isinstance(node, ast.ImportFrom):
             assert node.level == 0, f"relative import at module level: {ast.dump(node)}"
-            assert not (node.module or "").startswith("orchestrator"), node.module
+            assert not (node.module or "").startswith("modelquad"), node.module
         else:
             for alias in node.names:
-                assert not alias.name.startswith("orchestrator"), alias.name
+                assert not alias.name.startswith("modelquad"), alias.name
 
 
 # -- the storage layer feeding it -------------------------------------------
@@ -671,7 +671,7 @@ def test_a_confirmed_stop_leaves_the_open_feed_and_is_shown_by_current_task(tmp_
 
 
 def test_verification_status_survives_the_compact_listing(tmp_path):
-    from orchestrator.execution.base import ExecutionResult, OutcomeEvidence, WorkerTaskStatus
+    from modelquad.execution.base import ExecutionResult, OutcomeEvidence, WorkerTaskStatus
 
     db_path = tmp_path / "history.db"
     for verification_level, provider in (("objective", "codex"), ("semantic", "claude")):
@@ -714,7 +714,7 @@ def test_verification_status_survives_the_compact_listing(tmp_path):
 
 
 def test_decision_sources_are_looked_up_never_reconstructed(tmp_path):
-    from orchestrator.models import Freshness, ProviderScore, RoutingResult
+    from modelquad.models import Freshness, ProviderScore, RoutingResult
 
     db_path = tmp_path / "history.db"
     result = RoutingResult(
@@ -748,9 +748,9 @@ def test_decision_sources_are_looked_up_never_reconstructed(tmp_path):
 def test_the_activity_tool_serves_a_plain_language_view_beside_the_raw_record(tmp_path, monkeypatch):
     import importlib
 
-    from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
+    from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
 
-    mcp_server = importlib.import_module("orchestrator.mcp.server")
+    mcp_server = importlib.import_module("modelquad.mcp.server")
     db_path = tmp_path / "history.db"
     monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
 

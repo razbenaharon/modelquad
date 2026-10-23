@@ -8,9 +8,9 @@ import sqlite3
 
 import pytest
 
-from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
-from orchestrator.service import db as service_db
-from orchestrator.service import history as service_history
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+from modelquad.service import db as service_db
+from modelquad.service import history as service_history
 
 
 def _record_execution(db_path, *, provider, host=None, task_status="completed", fallback=False):

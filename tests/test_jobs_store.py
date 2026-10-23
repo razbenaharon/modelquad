@@ -18,11 +18,11 @@ import pytest
 
 import test_jobs_seam as contract
 from test_jobs_runner import PROCESS_SECONDS, probe_interpreter
-from orchestrator.jobs.seam import JobRef, RETENTION, MAX_RETENTION
-from orchestrator.jobs.store import FileOutputStore, MAX_OUTPUT_BYTES, StoreCorrupted, OUTCOME_RETENTION, REMOVED_RETENTION
-from orchestrator.procutil import no_window_kwargs
-from orchestrator.execution.base import WorkerTaskStatus
-from orchestrator.jobs.seam import JobStatus
+from modelquad.jobs.seam import JobRef, RETENTION, MAX_RETENTION
+from modelquad.jobs.store import FileOutputStore, MAX_OUTPUT_BYTES, StoreCorrupted, OUTCOME_RETENTION, REMOVED_RETENTION
+from modelquad.procutil import no_window_kwargs
+from modelquad.execution.base import WorkerTaskStatus
+from modelquad.jobs.seam import JobStatus
 
 NOW = contract.NOW
 output = contract.output
@@ -218,9 +218,9 @@ CHILD = '''
 import os, signal, sys
 from dataclasses import replace
 from datetime import datetime, timezone, timedelta
-from orchestrator.execution.base import WorkerTaskStatus
-from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus
-from orchestrator.jobs.store import FileOutputStore
+from modelquad.execution.base import WorkerTaskStatus
+from modelquad.jobs.seam import JobOutput, JobRef, JobStatus
+from modelquad.jobs.store import FileOutputStore
 now = datetime(2026, 10, 5, 2, 0, 1, tzinfo=timezone.utc)
 item = JobOutput(JobRef("opaque-job-a", 1, "decision-a"), JobStatus.FINISHED,
                  WorkerTaskStatus.UNKNOWN, None, "available answer", False,
@@ -363,8 +363,8 @@ def test_torn_journal_tail_and_stray_temp(tmp_path):
 
 
 def test_paths_factory_and_no_writes_outside_root(tmp_path, monkeypatch):
-    from orchestrator import paths
-    from orchestrator.jobs.store import default_store
+    from modelquad import paths
+    from modelquad.jobs.store import default_store
 
     root = tmp_path / "state"
     monkeypatch.setattr(paths, "state_root", lambda: root)
@@ -383,7 +383,7 @@ def test_private_permissions(tmp_path):
     store = FileOutputStore(tmp_path / "store")
     store.put(output(), NOW)
     if os.name == "nt":
-        from orchestrator.service.auth import current_user_sid, describe_path, directory_is_private
+        from modelquad.service.auth import current_user_sid, describe_path, directory_is_private
 
         assert directory_is_private(describe_path(store.root), current_user_sid())
         # Read-only native ACL inspection, where the command is available.
@@ -418,7 +418,7 @@ def test_ten_thousand_idle_reads_write_nothing(tmp_path):
 
 
 def test_seconds_apart_polls_are_bounded_by_compaction(tmp_path, monkeypatch):
-    import orchestrator.jobs.store as module
+    import modelquad.jobs.store as module
 
     monkeypatch.setattr(module, "JOURNAL_MAX_LINES", 40)
     store = FileOutputStore(tmp_path)
@@ -440,7 +440,7 @@ def test_seconds_apart_polls_are_bounded_by_compaction(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("bound", ["JOURNAL_MAX_LINES", "JOURNAL_MAX_BYTES"])
 def test_compaction_preserves_watermark_outcomes_and_pending(tmp_path, monkeypatch, bound):
-    import orchestrator.jobs.store as module
+    import modelquad.jobs.store as module
 
     store = FileOutputStore(tmp_path)
     store.put(output(), NOW)
@@ -470,7 +470,7 @@ def test_process_death_during_compaction(tmp_path, stage):
     receipt = store.collect("removed", NOW).receipt
     store.acknowledge("removed", receipt, NOW)
     code = CHILD.split('if operation == "put":')[0] + '''
-import orchestrator.jobs.store as module
+import modelquad.jobs.store as module
 module.JOURNAL_MAX_LINES = 1
 store.pending(now + timedelta(seconds=1))
 '''
@@ -770,7 +770,7 @@ def test_recovery_skips_unsafe_files_without_repeated_archives(tmp_path, caplog,
 
 
 def test_oversized_snapshot_is_not_rewritten_after_each_append(tmp_path, monkeypatch):
-    import orchestrator.jobs.store as module
+    import modelquad.jobs.store as module
 
     monkeypatch.setattr(module, "JOURNAL_MAX_BYTES", 4096)
     store = FileOutputStore(tmp_path)

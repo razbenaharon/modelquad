@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-import orchestrator
+import modelquad
 import pytest
 
 from conftest import no_window_kwargs
@@ -29,28 +29,28 @@ import json, sys
 from pathlib import Path
 mode, argv, out = sys.argv[1], json.loads(sys.argv[2]), Path(sys.argv[3])
 if mode == 'pause':
-    from orchestrator.service import db, history
+    from modelquad.service import db, history
     history.put_routing_paused(db.DEFAULT_DB_PATH, True)
     code = 0
 else:
     if mode == 'entry':
-        from orchestrator.cli_entry import main
+        from modelquad.cli_entry import main
     else:
-        from orchestrator.cli import main
+        from modelquad.cli import main
     code = main(argv)
-from orchestrator import paths
-from orchestrator.providers.base import DEFAULT_USAGE_DIRECTORY
+from modelquad import paths
+from modelquad.providers.base import DEFAULT_USAGE_DIRECTORY
 out.write_text(json.dumps({
     'code': code, 'state_root': str(paths.state_root()),
     'usage_directory': str(DEFAULT_USAGE_DIRECTORY),
     'modules': sorted(name for name in sys.modules
-                      if name.startswith('orchestrator') or name == 'yaml'),
+                      if name.startswith('modelquad') or name == 'yaml'),
 }), encoding='utf-8')
 """
 
 # Never imported by the light entry: the whole point of the fast path.
-_HEAVY = ("orchestrator.cli", "orchestrator.router", "orchestrator.registry", "yaml",
-          "orchestrator.providers.factory", "orchestrator.service.history")
+_HEAVY = ("modelquad.cli", "modelquad.router", "modelquad.registry", "yaml",
+          "modelquad.providers.factory", "modelquad.service.history")
 
 
 def _run(home: Path, mode: str, argv: list[str], stdin: bytes = b"{}") -> dict:
@@ -59,7 +59,7 @@ def _run(home: Path, mode: str, argv: list[str], stdin: bytes = b"{}") -> dict:
     env.update(HOME=str(home), USERPROFILE=str(home),
                APPDATA=str(home / "AppData" / "Roaming"),
                LOCALAPPDATA=str(home / "AppData" / "Local"),
-               PYTHONPATH=str(Path(orchestrator.__file__).resolve().parent.parent))
+               PYTHONPATH=str(Path(modelquad.__file__).resolve().parent.parent))
     out = home / "result.json"
     home.mkdir(parents=True, exist_ok=True)
     completed = subprocess.run(
@@ -101,7 +101,7 @@ def _seed_codex(home: Path) -> None:
 
 
 def _resets_clock(now: int) -> str:
-    from orchestrator.assistance import local_clock
+    from modelquad.assistance import local_clock
 
     return local_clock(datetime.fromtimestamp(now + 3600, timezone.utc),
                        datetime.fromtimestamp(now, timezone.utc))
@@ -118,10 +118,10 @@ def test_installed_status_line_writes_and_prints_what_the_full_cli_does(tmp_path
         assert results[mode]["code"] == 0
 
     entry, home = results["entry"], tmp_path / "entry"
-    # The real usage directory (~/.claude), not a private ~/.modelquad one.
+    # The real usage directory (~/.claude), separate from ModelQuad state.
     assert Path(entry["usage_directory"]) == home / ".claude"
     assert (home / ".claude" / "usage-claude.json").is_file()
-    assert not (home / ".modelquad").exists()
+    assert Path(entry["state_root"]) == home / ".modelquad"
     # The host observation the MCP server reads.
     assert (Path(entry["state_root"]) / "host-observation-claude.json").is_file()
     assert files["entry"] == files["cli"]
@@ -195,7 +195,7 @@ def test_installed_gate_uses_the_full_cli_marker_location(tmp_path):
         folders[mode] = {name.rsplit("/", 1)[0] for name in _files(home) if name.endswith(".advised")}
         modules[mode] = set(first["modules"])
     assert folders["entry"] == folders["cli"]
-    assert not (tmp_path / "entry" / ".modelquad").exists()
+    assert folders["entry"] == {".modelquad/gate-state"}
     assert not set(_HEAVY) & modules["entry"]
 
 
@@ -215,4 +215,4 @@ def test_installed_gate_always_exits_zero(tmp_path, stdin):
     result = _run(tmp_path / "home", "entry", ["hook-gate"], stdin)
     assert result["code"] == 0
     assert json.loads(result["stdout"]) == {}
-    assert "orchestrator.cli" not in result["modules"]
+    assert "modelquad.cli" not in result["modules"]

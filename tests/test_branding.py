@@ -6,7 +6,7 @@ import pytest
 
 
 def test_branding_constants():
-    from orchestrator import branding
+    from modelquad import branding
 
     assert branding.PRODUCT_NAME == "ModelQuad"
     assert branding.PRODUCT_SLUG == "modelquad"
@@ -17,10 +17,10 @@ def test_branding_constants():
 
 def test_cli_banner_contains_product_name(monkeypatch, capsys, managed_service_child):
     import uvicorn
-    import orchestrator.cli as cli_module
-    import orchestrator.service.app as service_app_module
-    from orchestrator import windowless_diagnostics as diagnostics
-    from orchestrator.branding import PRODUCT_NAME
+    import modelquad.cli as cli_module
+    import modelquad.service.app as service_app_module
+    from modelquad import windowless_diagnostics as diagnostics
+    from modelquad.branding import PRODUCT_NAME
 
     monkeypatch.setattr(service_app_module, "create_app", lambda **kwargs: object())
     monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
@@ -39,7 +39,7 @@ def test_cli_banner_contains_product_name(monkeypatch, capsys, managed_service_c
         assert isinstance(cli_module.sys.stderr, diagnostics.NullText)
     background_output = capsys.readouterr()
     assert background_output.out == "" and background_output.err == ""
-    from orchestrator.service.lifecycle import ProcessResult
+    from modelquad.service.lifecycle import ProcessResult
     monkeypatch.setattr(manager, "start", lambda **kwargs: ProcessResult(
         success=True, supported=True, running=True, pid=550,
         message="Started the detached control-plane service.", action="start", ready=True))
@@ -56,11 +56,11 @@ def test_version_lookup_falls_back_to_source_version_without_dist_info(monkeypat
 
     from importlib import metadata as importlib_metadata
 
-    import orchestrator
-    from orchestrator.branding import installed_version
+    import modelquad
+    from modelquad.branding import installed_version
 
     def nothing_resolves(name):
         raise importlib_metadata.PackageNotFoundError(name)
 
     monkeypatch.setattr("importlib.metadata.version", nothing_resolves)
-    assert installed_version("n/a") == orchestrator.__version__
+    assert installed_version("n/a") == modelquad.__version__

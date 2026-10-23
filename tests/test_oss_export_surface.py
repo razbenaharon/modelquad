@@ -3,7 +3,7 @@
 
 """Release-facing MCP schema checks for the open-source export."""
 
-from orchestrator.mcp.server import server
+from modelquad.mcp.server import server
 
 
 def test_release_tools_are_small_and_delegation_requires_interaction():

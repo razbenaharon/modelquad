@@ -4,7 +4,7 @@
 
 import json
 
-from orchestrator.service import db
+from modelquad.service import db
 
 
 def save_legacy_mode(path, mode):

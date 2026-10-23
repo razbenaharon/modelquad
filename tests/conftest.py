@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from orchestrator import paths
+from modelquad import paths
 
 if sys.platform == "win32":
     # A test that faults (a bad native call) must fail in the log, never open a
@@ -21,8 +21,8 @@ if sys.platform == "win32":
     import ctypes as _ctypes
 
     _ctypes.WinDLL("kernel32").SetErrorMode(0x0001 | 0x0002 | 0x8000)
-from orchestrator.execution.base import WORKER_ENV_VAR
-from orchestrator.service import db as service_db
+from modelquad.execution.base import WORKER_ENV_VAR
+from modelquad.service import db as service_db
 
 
 @pytest.fixture
@@ -46,7 +46,7 @@ def synthetic_worker_binary(tmp_path_factory):
 @pytest.fixture
 def qualified_codex_inventory(monkeypatch):
     """Opt-in no-shell qualification for inert native-worker integration fixtures."""
-    from orchestrator.execution import codex, noshell
+    from modelquad.execution import codex, noshell
 
     monkeypatch.setattr(codex, "_probe", lambda executable: "0.160.0")
     # Synthetic binaries have identical bytes. Keep their digest/version cache
@@ -135,9 +135,9 @@ def managed_service_child(monkeypatch, isolate_home_directory):
     Only process observation is synthetic. Callers fake app/server execution.
     """
     from datetime import datetime, timezone
-    from orchestrator import cli
-    from orchestrator.service import lifecycle
-    from orchestrator.statecontext import STATE_ROOT_ENV_VAR, STATE_MODE_ENV_VAR
+    from modelquad import cli
+    from modelquad.service import lifecycle
+    from modelquad.statecontext import STATE_ROOT_ENV_VAR, STATE_MODE_ENV_VAR
 
     # cli.main applies the child selections directly to os.environ. Register
     # the originals with monkeypatch, including absence, before that write.
@@ -180,8 +180,8 @@ def _loaded_runner_git_headroom():
     budgets set their own values with monkeypatch, which wins. This fixture
     saves and restores by itself instead of requesting monkeypatch, so it does
     not move monkeypatch's teardown ahead of other fixtures' teardown."""
-    from orchestrator import repo_identity
-    from orchestrator.jobs import changes
+    from modelquad import repo_identity
+    from modelquad.jobs import changes
     saved = [(repo_identity, "RESOLVE_SECONDS", repo_identity.RESOLVE_SECONDS),
              (repo_identity, "GIT_SECONDS", repo_identity.GIT_SECONDS),
              (changes, "GIT_SECONDS", changes.GIT_SECONDS)]  # _git clamps to its own module value
@@ -199,7 +199,7 @@ def _loaded_runner_git_headroom():
 def isolate_worker_recursion_guard(monkeypatch):
     """The suite states whether it is a delegated worker; it never inherits it.
 
-    ``ORCHESTRATOR_WORKER=1`` is ModelQuad's recursion guard (``AGENTS.md``
+    ``MODELQUAD_WORKER=1`` is ModelQuad's recursion guard (``AGENTS.md``
     invariant 1): every delegation entry point refuses outright when it is set.
     The guard is correct. What was wrong is that the suite read it from the
     ambient environment, so 77 tests that assert *successful* delegation got a
@@ -217,7 +217,7 @@ def isolate_worker_recursion_guard(monkeypatch):
     ``tests/test_worker_guard.py`` does exactly that at each entry point, so
     clearing it here cannot quietly delete the guard's coverage.
 
-    ``MODELQUAD_DEV_MODE`` and ``ORCHESTRATOR_DEV`` are deliberately left
+    ``MODELQUAD_DEV_MODE`` and ``MODELQUAD_DEV`` are deliberately left
     alone: both were run against this suite and neither changes a single
     result; a fixture that neutralises a variable nothing reads is a claim
     with no test behind it.
@@ -237,7 +237,7 @@ def isolate_loopback_guard():
     switches its refusal back off after each test.
     """
 
-    from orchestrator import netpolicy
+    from modelquad import netpolicy
 
     netpolicy.guard_active = False
     try:
@@ -266,12 +266,12 @@ def isolate_home_directory(tmp_path, monkeypatch):
     # DEFAULT_DB_PATH is resolved from Path.home() once at import time (like
     # DEFAULT_SESSIONS_PATH and DEFAULT_USAGE_DIRECTORY elsewhere), so setting
     # HOME/USERPROFILE above has no effect on it -- a CLI command that omits
-    # --history-db would otherwise still hit the real ~/.orchestrator even
+    # --history-db would otherwise still hit the real ~/.modelquad even
     # inside an isolated test. Patch the constant itself as a second layer of
     # protection for any test that doesn't pass an explicit history db path.
     #
     # Resolved through paths.db_path() rather than hardcoding the dev-mode
-    # ``~/.orchestrator`` construction, so the constant agrees with the
+    # ``~/.modelquad`` construction, so the constant agrees with the
     # resolver in whichever mode the suite is running. Hardcoding it silently
     # tied the whole suite to dev mode; on the dev machine the two happened to
     # coincide, so the coupling was invisible until CI installed non-editable.
@@ -295,12 +295,12 @@ def isolate_usage_directory(tmp_path, monkeypatch, isolate_home_directory):
 
     Later imports bind the patched base constant.
     """
-    from orchestrator.providers import base
+    from modelquad.providers import base
 
     directory = tmp_path / "usage"
     monkeypatch.setattr(base, "DEFAULT_USAGE_DIRECTORY", directory)
     for name, module in tuple(sys.modules.items()):
-        if name.startswith("orchestrator.") and hasattr(module, "DEFAULT_USAGE_DIRECTORY"):
+        if name.startswith("modelquad.") and hasattr(module, "DEFAULT_USAGE_DIRECTORY"):
             monkeypatch.setattr(module, "DEFAULT_USAGE_DIRECTORY", directory)
     return directory
 
@@ -322,8 +322,8 @@ def isolate_provider_cli_spawns(monkeypatch):
     also opt in with an explicit runner.
     """
 
-    from orchestrator import usage
-    from orchestrator.usage import codex_appserver
+    from modelquad import usage
+    from modelquad.usage import codex_appserver
 
     real_codex = codex_appserver.collect_codex_appserver_usage
     reason = "Live provider usage is unobserved under default test isolation."
@@ -343,7 +343,7 @@ def isolate_provider_cli_spawns(monkeypatch):
     # version on a developer machine that has the CLI and UNKNOWN in CI --
     # the exact machine-dependent result this fixture exists to prevent.
     # Tests that assert on version capture patch `_probe_version` themselves.
-    from orchestrator import workerevidence
+    from modelquad import workerevidence
 
     monkeypatch.setattr(workerevidence, "_probe_version", lambda _executable: None)
     workerevidence.clear_version_cache()
@@ -352,7 +352,7 @@ def isolate_provider_cli_spawns(monkeypatch):
     # (codexcli.py), so the same rule applies: a developer machine with the
     # Codex desktop app would resolve differently from CI. Tests see no
     # official install unless they inject candidates themselves.
-    from orchestrator import codexcli
+    from modelquad import codexcli
 
     monkeypatch.setattr(codexcli, "official_candidates", lambda: [])
     codexcli.clear_cache()
@@ -363,7 +363,7 @@ def isolate_provider_cli_spawns(monkeypatch):
     # integration tests opt in with `qualified_codex_inventory`.
     import subprocess
 
-    from orchestrator.execution import codex as codex_module
+    from modelquad.execution import codex as codex_module
 
     monkeypatch.setattr(
         codex_module, "run_inventory",
@@ -395,7 +395,7 @@ def isolate_windows_registry(monkeypatch):
         def broadcast_change(self) -> None:
             pass
 
-    from orchestrator import pathenv
+    from modelquad import pathenv
 
     monkeypatch.setattr(pathenv, "WindowsRegistryBackend", _IsolatedEnvBackend)
 

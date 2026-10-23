@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator.jobs import store as module
-from orchestrator.jobs.seam import MAX_RETENTION
+from modelquad.jobs import store as module
+from modelquad.jobs.seam import MAX_RETENTION
 from test_jobs_seam import NOW, output
 
 
@@ -80,7 +80,7 @@ def test_persistent_uninspectable_entry_is_not_reported_absent(tmp_path, monkeyp
     store, item, path = retained(tmp_path)
     patch_lstat(monkeypatch, path.name, denied)
     if operation == 'collect':
-        from orchestrator.mcp import jobs_tools
+        from modelquad.mcp import jobs_tools
 
         monkeypatch.setattr(jobs_tools, '_guard', lambda: None)
         monkeypatch.setattr(jobs_tools, 'default_store', lambda: store)
@@ -407,7 +407,7 @@ def test_staging_is_rechecked_immediately_before_replace(tmp_path, monkeypatch, 
 @pytest.mark.parametrize('operation', ['wait', 'wait-history-unavailable', 'list', 'acknowledge', 'collect-state'],
                          ids=['wait', 'wait-history-unavailable', 'list', 'acknowledge', 'collect-state'])
 def test_mcp_transient_error_mapping(tmp_path, monkeypatch, operation):
-    from orchestrator.mcp import jobs_tools
+    from modelquad.mcp import jobs_tools
 
     store, item, path = retained(tmp_path)
     patch_lstat(monkeypatch, path.name, denied)
@@ -429,7 +429,7 @@ def test_mcp_transient_error_mapping(tmp_path, monkeypatch, operation):
     elif operation == 'wait':
         response = jobs_tools.modelquad_job_wait(item.job.job_id, project, 1)
     elif operation == 'list':
-        from orchestrator.jobs import service_client
+        from modelquad.jobs import service_client
 
         def no_service(*a, **kw):
             raise OSError('service absent')

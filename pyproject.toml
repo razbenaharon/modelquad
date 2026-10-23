@@ -46,8 +46,8 @@ Source = "https://github.com/razbenaharon/modelquad"
 Issues = "https://github.com/razbenaharon/modelquad/issues"
 
 [project.scripts]
-modelquad = "orchestrator.cli_entry:main"
-modelquad-mcp = "orchestrator.mcp.server:main"
+modelquad = "modelquad.cli_entry:main"
+modelquad-mcp = "modelquad.mcp.server:main"
 
 [project.optional-dependencies]
 # setuptools is listed because tests drive it in-process (egg_info), and the
@@ -76,14 +76,14 @@ service = [
 package-dir = { "" = "src" }
 
 [tool.setuptools.dynamic]
-version = { attr = "orchestrator.__version__" }
+version = { attr = "modelquad.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-orchestrator = ["default.yaml"]
-"orchestrator.adapters" = ["templates/**/*"]
+modelquad = ["default.yaml"]
+"modelquad.adapters" = ["templates/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

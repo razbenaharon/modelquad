@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.adapters.codex_hooks import manage_pending_hook
-from orchestrator.adapters import registration
-from orchestrator.adapters import staging
-from orchestrator.adapters.report import ActionKind
-from orchestrator import hostruntime
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.adapters.codex_hooks import manage_pending_hook
+from modelquad.adapters import registration
+from modelquad.adapters import staging
+from modelquad.adapters.report import ActionKind
+from modelquad import hostruntime
 
 
 @pytest.fixture

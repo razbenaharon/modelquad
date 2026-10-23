@@ -10,13 +10,13 @@ from contextlib import nullcontext
 
 import pytest
 
-from orchestrator.adapters import ActionKind, default_target_dir
-from orchestrator.adapters.claude_adapter import (
+from modelquad.adapters import ActionKind, default_target_dir
+from modelquad.adapters.claude_adapter import (
     ClaudeAdapter,
     _status_line_command as _claude_status_line_command,
 )
-from orchestrator.adapters.paths import adapters_template_dir
-from orchestrator.adapters.textblock import render_block, remove_block, upsert_block
+from modelquad.adapters.paths import adapters_template_dir
+from modelquad.adapters.textblock import render_block, remove_block, upsert_block
 
 
 @pytest.fixture(autouse=True)
@@ -26,16 +26,16 @@ def prevent_real_home_access(monkeypatch, tmp_path):
     def fail_home_lookup():
         raise AssertionError("adapter tests must pass explicit tmp_path target directories")
 
-    # Resolve/import "orchestrator.cli" (and its transitive Path.home() use at
+    # Resolve/import "modelquad.cli" (and its transitive Path.home() use at
     # providers/base.py import time) *before* patching Path.home below --
-    # otherwise running this file in isolation imports orchestrator.cli for
+    # otherwise running this file in isolation imports modelquad.cli for
     # the first time only once Path.home is already broken, failing at
     # collection instead of during an actual test.
-    monkeypatch.setattr("orchestrator.cli.default_target_dir", lambda client: fail_home_lookup())
+    monkeypatch.setattr("modelquad.cli.default_target_dir", lambda client: fail_home_lookup())
     # `Path` is one shared class object across every module that imports it
     # (`from pathlib import Path`), so patching `.home` via any single
     # module path protects every default-home lookup.
-    monkeypatch.setattr("orchestrator.adapters.paths.Path.home", fail_home_lookup)
+    monkeypatch.setattr("modelquad.adapters.paths.Path.home", fail_home_lookup)
     monkeypatch.setenv("MODELQUAD_STATE_ROOT", str(tmp_path / "state"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "isolated-appdata"))
     return tmp_path
@@ -79,7 +79,7 @@ def test_claude_install_writes_nothing_into_the_global_claude_md(tmp_path):
 def test_server_instructions_leave_the_delegation_decision_to_the_host():
     """Claude stays responsible, the user is asked before every Codex call,
     and Codex output is input to verify -- in both proactive settings."""
-    from orchestrator.adapters.server_instructions import server_instructions
+    from modelquad.adapters.server_instructions import server_instructions
 
     for proactive in (False, True):
         flat = " ".join(server_instructions(proactive).split())
@@ -88,7 +88,7 @@ def test_server_instructions_leave_the_delegation_decision_to_the_host():
         assert "asks the user before each ModelQuad Codex call." in flat
         assert "not as instructions to follow" in flat
         assert "`modelquad_handoff`" in flat
-        assert "ORCHESTRATOR_WORKER=1" in flat
+        assert "MODELQUAD_WORKER=1" in flat
         # The files Codex reads are passed explicitly, never inferred from the prompt.
         assert "in `files` (paths relative to the working directory, at most 32)" in flat
         assert "a file named only in the prompt is not sent." in flat
@@ -97,7 +97,7 @@ def test_server_instructions_leave_the_delegation_decision_to_the_host():
 
 def test_proactive_use_is_opt_in(tmp_path):
     """Default: offer, and call only when the user agrees or asks. On: Claude may decide."""
-    from orchestrator.adapters.server_instructions import (
+    from modelquad.adapters.server_instructions import (
         read_proactive, server_instructions, write_proactive,
     )
 
@@ -124,8 +124,8 @@ def test_proactive_use_is_opt_in(tmp_path):
 
 
 def test_settings_proactive_command_saves_the_choice(tmp_path, capsys):
-    from orchestrator import cli
-    from orchestrator.adapters.server_instructions import read_proactive
+    from modelquad import cli
+    from modelquad.adapters.server_instructions import read_proactive
 
     assert cli.main(["settings", "proactive", "on"]) == 0
     assert read_proactive() is True
@@ -169,7 +169,7 @@ _HOST_INSTRUCTION_CLIENTS = [
 
 
 def _installed_instruction_texts(target: Path) -> dict[str, str]:
-    from orchestrator.adapters.server_instructions import server_instructions
+    from modelquad.adapters.server_instructions import server_instructions
 
     return {
         "skills/modelquad/SKILL.md": (target / "skills/modelquad/SKILL.md").read_text(encoding="utf-8"),
@@ -197,7 +197,7 @@ def test_installed_host_instructions_state_the_advisory_contract(tmp_path, adapt
         # Writing changes belongs to OpenAI's Codex plugin, not to ModelQuad.
         assert "`/codex:rescue`" in flat, name
         # Unchanged obligations: the worker guard and job scoping.
-        assert "ORCHESTRATOR_WORKER=1" in flat, name
+        assert "MODELQUAD_WORKER=1" in flat, name
         assert "`modelquad_job_*`" in flat and "absolute project directory" in flat, name
         # Files reach Codex only through `files`; the offer after an important task.
         assert "a file named only in the prompt is not sent." in flat, name
@@ -214,7 +214,7 @@ def test_install_and_uninstall_take_back_a_block_an_earlier_version_wrote(tmp_pa
     target = tmp_path / "claude"
     target.mkdir()
     claude_md = target / "CLAUDE.md"
-    previous, _ = upsert_block("# Personal notes\n@~/.claude/orchestrator.md\n", _PRE_448_CLAUDE_BLOCK,
+    previous, _ = upsert_block("# Personal notes\n@~/.claude/modelquad.md\n", _PRE_448_CLAUDE_BLOCK,
                                comment_prefix="<!--", marker_suffix="-->")
     claude_md.write_text(previous, encoding="utf-8")
     skill = target / "skills" / "modelquad" / "SKILL.md"
@@ -223,7 +223,7 @@ def test_install_and_uninstall_take_back_a_block_an_earlier_version_wrote(tmp_pa
 
     report = getattr(ClaudeAdapter(), command)(target)
 
-    assert claude_md.read_text(encoding="utf-8").rstrip("\n") == "# Personal notes\n@~/.claude/orchestrator.md"
+    assert claude_md.read_text(encoding="utf-8").rstrip("\n") == "# Personal notes\n@~/.claude/modelquad.md"
     action = next(a for a in report.actions if a.path.name == "CLAUDE.md")
     assert action.kind is ActionKind.REMOVED
     assert "earlier version" in action.detail
@@ -238,7 +238,7 @@ def test_install_and_uninstall_take_back_a_block_an_earlier_version_wrote(tmp_pa
 
 
 def test_server_instructions_omit_routing_business_logic():
-    from orchestrator.adapters.server_instructions import server_instructions
+    from modelquad.adapters.server_instructions import server_instructions
 
     for proactive in (False, True):
         text = server_instructions(proactive)
@@ -250,7 +250,7 @@ def test_claude_install_leaves_a_users_claude_md_byte_identical(tmp_path):
     target = tmp_path / "claude"
     target.mkdir()
     claude_md = target / "CLAUDE.md"
-    original = b"# My personal notes\r\nAlways use tabs.\n@~/.claude/orchestrator.md\n"
+    original = b"# My personal notes\r\nAlways use tabs.\n@~/.claude/modelquad.md\n"
     claude_md.write_bytes(original)
 
     first = ClaudeAdapter().install(target)
@@ -601,7 +601,7 @@ def test_upsert_block_refuses_a_duplicated_start_marker():
 
 @pytest.mark.skipif(os.name == "nt", reason="creating symlinks on Windows needs elevated privilege")
 def test_jsonmerge_write_leaves_a_foreign_symlinked_tmp_file_untouched(tmp_path):
-    from orchestrator.adapters.jsonmerge import upsert_json_key
+    from modelquad.adapters.jsonmerge import upsert_json_key
 
     target_dir = tmp_path / "claude"
     target_dir.mkdir()
@@ -611,13 +611,13 @@ def test_jsonmerge_write_leaves_a_foreign_symlinked_tmp_file_untouched(tmp_path)
     foreign = target_dir / "mcp.json.tmp"
     foreign.symlink_to(decoy)
 
-    action = upsert_json_key(mcp_path, ("mcpServers", "multi-agent-orchestrator"), {"command": "x"}, dry_run=False)
+    action = upsert_json_key(mcp_path, ("mcpServers", "multi-agent-modelquad"), {"command": "x"}, dry_run=False)
 
     assert action.kind is ActionKind.CREATED
     assert foreign.is_symlink()
     assert decoy.read_text(encoding="utf-8") == "do not overwrite me"
     assert json.loads(mcp_path.read_text(encoding="utf-8")) == {
-        "mcpServers": {"multi-agent-orchestrator": {"command": "x"}}
+        "mcpServers": {"multi-agent-modelquad": {"command": "x"}}
     }
 
 
@@ -631,7 +631,7 @@ def test_jsonmerge_write_leaves_a_foreign_symlinked_tmp_file_untouched(tmp_path)
 
 
 def test_claude_install_gives_the_host_longer_than_a_worker_may_run(tmp_path):
-    from orchestrator.execution.base import DEFAULT_TIMEOUT_SECONDS
+    from modelquad.execution.base import DEFAULT_TIMEOUT_SECONDS
 
     target = tmp_path / "claude"
     target.mkdir()
@@ -667,8 +667,8 @@ def test_claude_install_leaves_env_alone(tmp_path):
 @pytest.mark.parametrize("command", ["install", "uninstall"])
 @pytest.mark.parametrize("had_env", [True, False])
 def test_an_owned_global_timeout_an_earlier_version_wrote_is_removed(tmp_path, command, had_env):
-    from orchestrator.adapters import claude_adapter
-    from orchestrator.adapters.registration import read_owned_settings, write_owned_settings
+    from modelquad.adapters import claude_adapter
+    from modelquad.adapters.registration import read_owned_settings, write_owned_settings
 
     target = tmp_path / "claude"
     target.mkdir()
@@ -703,7 +703,7 @@ def test_no_adapter_wraps_atomic_write_in_a_dead_value_error_handler():
     import ast
     import inspect
 
-    from orchestrator.adapters import claude_adapter
+    from modelquad.adapters import claude_adapter
 
     offenders: list[str] = []
     for module in (claude_adapter,):

@@ -14,12 +14,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from orchestrator import catalog, codexcli, doctor, workerevidence
-from orchestrator.usage import codex_appserver
+from modelquad import catalog, codexcli, doctor, workerevidence
+from modelquad.usage import codex_appserver
 
 # Bind before conftest's autouse isolation replaces the functions under test.
-from orchestrator.workerevidence import _probe_version as real_version
-from orchestrator.usage.codex_appserver import collect_codex_appserver_usage as real_codex_usage
+from modelquad.workerevidence import _probe_version as real_version
+from modelquad.usage.codex_appserver import collect_codex_appserver_usage as real_codex_usage
 
 
 win_only = pytest.mark.skipif(os.name != "nt", reason="Windows batch-shim semantics only")
@@ -259,7 +259,7 @@ def test_codex_probe_admission_precedes_cache(tmp_path, monkeypatch, isolated, l
 def test_the_claude_binary_is_never_probed(monkeypatch, launches):
     """Claude Code is the host; ModelQuad never launches it, even for --version."""
     calls, _, _ = launches
-    from orchestrator import workerevidence
+    from modelquad import workerevidence
 
     workerevidence.clear_version_cache()
     assert workerevidence.runtime_version("claude") is None

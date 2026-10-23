@@ -6,15 +6,15 @@ import subprocess
 
 import pytest
 
-from orchestrator.catalog import (
+from modelquad.catalog import (
     AvailabilityState,
     ModelCatalog,
     ModelDescriptor,
     discover_claude_models,
     discover_codex_models,
 )
-from orchestrator.config import Config, load_config
-from orchestrator.registry import ProviderPluginContext
+from modelquad.config import Config, load_config
+from modelquad.registry import ProviderPluginContext
 
 
 def test_model_descriptor_rejects_invalid_availability():
@@ -82,7 +82,7 @@ def test_discover_claude_models_uses_static_catalog():
 def test_model_discovery_failure_does_not_affect_provider_availability(tmp_path, *, synthetic_worker_binary):
     """Discovery is independent of provider execution readiness (point 21)."""
 
-    from orchestrator.execution.codex import CodexExecutor
+    from modelquad.execution.codex import CodexExecutor
 
     executor = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'))
     assert executor.is_available() is True
@@ -98,7 +98,7 @@ def test_model_discovery_failure_does_not_affect_provider_availability(tmp_path,
 
 
 def test_cached_catalog_reads_configured_entries_without_spawning(tmp_path, monkeypatch):
-    from orchestrator import catalog as catalog_module
+    from modelquad import catalog as catalog_module
 
     def _forbidden(*args, **kwargs):  # pragma: no cover - only on regression
         raise AssertionError("cached_catalog spawned a process")
@@ -123,7 +123,7 @@ def test_cached_catalog_reads_configured_entries_without_spawning(tmp_path, monk
 
 
 def test_cached_catalog_prefers_the_users_local_codex_model_over_the_static_list(tmp_path):
-    from orchestrator import catalog as catalog_module
+    from modelquad import catalog as catalog_module
 
     codex_home = tmp_path / ".codex"
     codex_home.mkdir()
@@ -148,7 +148,7 @@ def test_f10_undecodable_local_codex_config_is_skipped_not_raised(tmp_path):
     unreadable local file used to be an exception out of ROUTING rather than
     one unusable source.
     """
-    from orchestrator import catalog as catalog_module
+    from modelquad import catalog as catalog_module
 
     codex_home = tmp_path / ".codex"
     codex_home.mkdir()
@@ -167,7 +167,7 @@ def test_f10_undecodable_local_codex_config_is_skipped_not_raised(tmp_path):
 
 
 def test_f10_a_missing_local_codex_config_is_still_simply_absent(tmp_path):
-    from orchestrator import catalog as catalog_module
+    from modelquad import catalog as catalog_module
 
     config = Config(model_catalog_static={"codex": ({"model_id": "packaged-prior"},)})
 
@@ -182,7 +182,7 @@ def test_f10_malformed_entries_are_isolated_and_the_good_ones_survive(tmp_path):
     `tuple(None)` is a `TypeError`; `tuple("high")` is four nonsense levels.
     Neither may cost the catalog, and neither may be silently mangled.
     """
-    from orchestrator import catalog as catalog_module
+    from modelquad import catalog as catalog_module
 
     config = Config(
         model_catalog_static={
@@ -214,9 +214,9 @@ def test_f10_an_unusable_static_section_leaves_routing_running(tmp_path, monkeyp
     The truthful fallback is the one routing already has: no model claim, the
     runtime's own default -- never an exception out of `Router.route`.
     """
-    from orchestrator import catalog as catalog_module
-    from orchestrator.models import Freshness, ProviderStatus
-    from orchestrator.router import Router
+    from modelquad import catalog as catalog_module
+    from modelquad.models import Freshness, ProviderStatus
+    from modelquad.router import Router
 
     class Hostile:
         model_catalog_static = {"claude": ({"model_id": "ok"},)}

@@ -21,11 +21,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from orchestrator.execution import codex, file_rules, noshell
-from orchestrator.execution.base import ExecutionRequest, ExecutionResult, WorkerTaskStatus
-from orchestrator.models import TaskType
-from orchestrator.mcp import server as mcp
-from orchestrator.procutil import no_window_kwargs
+from modelquad.execution import codex, file_rules, noshell
+from modelquad.execution.base import ExecutionRequest, ExecutionResult, WorkerTaskStatus
+from modelquad.models import TaskType
+from modelquad.mcp import server as mcp
+from modelquad.procutil import no_window_kwargs
 
 SECRET = "PRIVATE-DENIED-CONTENTS"
 
@@ -227,7 +227,7 @@ def test_outside_a_repository_the_git_check_is_skipped(project):
 
 
 def test_without_git_the_git_check_is_skipped(project, monkeypatch):
-    from orchestrator import executable_resolution
+    from modelquad import executable_resolution
 
     monkeypatch.setattr(executable_resolution, "resolve_executable",
                         lambda *args, **kwargs: SimpleNamespace(path=None, refusal="not_found"))
@@ -276,9 +276,9 @@ def test_closed_file_audit_drops_anything_outside_its_shape():
 # --- Audit record --------------------------------------------------------------
 
 def test_audit_survives_persistence_and_is_scoped_to_the_project(project, tmp_path):
-    from orchestrator import project_notes
-    from orchestrator.adapters.pending_reminder import project_key
-    from orchestrator.service import history
+    from modelquad import project_notes
+    from modelquad.adapters.pending_reminder import project_key
+    from modelquad.service import history
 
     audit = noshell.file_audit({"sent": [{"path": "src/app.py", "bytes": 13, "sha256": "0123456789abcdef"}],
                                 "skipped": [{"path": ".env", "reason": "denied_by_claude_settings"}]},

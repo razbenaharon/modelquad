@@ -7,7 +7,7 @@ from pathlib import Path
 
 def test_packaged_adapter_templates_exist_without_project_duplicates():
     root = Path(__file__).resolve().parents[1]
-    templates = root / "src" / "orchestrator" / "adapters" / "templates" / "claude"
+    templates = root / "src" / "modelquad" / "adapters" / "templates" / "claude"
     # The guidance moved to the MCP server's instructions; no CLAUDE.md block ships.
     assert not (templates / "CLAUDE.md.block").exists()
     assert (templates / "skills" / "modelquad" / "SKILL.md").is_file()

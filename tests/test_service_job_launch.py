@@ -17,9 +17,9 @@ from fastapi.testclient import TestClient
 import pytest
 from process_diagnostics import non_killing_service_spawn
 
-from orchestrator.jobs import handle, recovery
-from orchestrator.service import auth, db, history, jobs_api
-from orchestrator.service.app import create_app
+from modelquad.jobs import handle, recovery
+from modelquad.service import auth, db, history, jobs_api
+from modelquad.service.app import create_app
 
 native = pytest.mark.skipif(os.name != 'nt', reason='Windows file-handle/DACL acceptance')
 TOKEN = {'X-ModelQuad-Token': 'test-install-secret'}
@@ -263,7 +263,7 @@ def test_file_swap_between_check_and_open_is_refused(tmp_path, monkeypatch):
 def test_parent_junction_refused(tmp_path):
     spec, _ = reservation(tmp_path)
     caller = handle._write_spec(spec)
-    from orchestrator import procutil
+    from modelquad import procutil
     link = tmp_path / 'linked-parent'
     try:
         result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(tmp_path)],
@@ -468,7 +468,7 @@ def test_before_claim_failure_keeps_fallback_ownership(service, tmp_path, monkey
     if failure == 'claim_lost':
         monkeypatch.setattr(history, 'claim_job_launch', lambda *a, **kw: False)
     else:
-        from orchestrator import procutil
+        from modelquad import procutil
         monkeypatch.setattr(procutil, 'process_creation_epoch', lambda pid: None)
     assert_refusal(post(client, job_id, caller.name), 409, 'job_not_launchable')
     assert history.release_unlaunched_job(database, job_id)
@@ -516,7 +516,7 @@ def test_service_starter_deadline_still_closes_both_records(tmp_path):
 
 
 def test_dead_service_starter_is_recovered_without_new_sweep(tmp_path):
-    from orchestrator.jobs.runner import _NoOutputSink
+    from modelquad.jobs.runner import _NoOutputSink
     spec, job_id = reservation(tmp_path)
     assert history.claim_job_launch(spec.db_path, job_id, attempt_id=spec.attempt_id,
                                     decision_id='test-decision', starter_pid=123, starter_created=1.0)
@@ -648,9 +648,9 @@ def test_service_rewrite_uses_own_database_spelling(service, tmp_path, monkeypat
 @native
 def test_real_route_reserved_spec_finishes_with_offline_output(tmp_path, monkeypatch,
                                                              non_killing_service_spawn):
-    from orchestrator.jobs.store import default_store
-    from orchestrator.lineage import DecisionLineage
-    from orchestrator.models import ExpectedConsumption
+    from modelquad.jobs.store import default_store
+    from modelquad.lineage import DecisionLineage
+    from modelquad.models import ExpectedConsumption
     from test_jobs_runner import cleanup, product_import_paths, wait_for
 
     # Load headroom: the service admits a reserved job only within

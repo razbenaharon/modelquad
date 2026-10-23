@@ -19,9 +19,9 @@ import subprocess
 
 import pytest
 
-from orchestrator.execution.base import ExecutionRequest, WorkerTaskStatus
-from orchestrator.execution.codex import CodexExecutor
-from orchestrator.models import TaskType
+from modelquad.execution.base import ExecutionRequest, WorkerTaskStatus
+from modelquad.execution.codex import CodexExecutor
+from modelquad.models import TaskType
 
 # --- planted secrets -------------------------------------------------------
 # Canary values for the adversarial privacy assertions below.
@@ -272,7 +272,7 @@ def test_no_secret_survives_into_execution_result_metadata(execute, stream):
 
 @pytest.mark.parametrize("stream", [_hostile_stream, _clean_stream], ids=["hostile", "clean"])
 def test_secrets_do_not_reach_sqlite_history(tmp_path, execute, stream):
-    from orchestrator.service import history as service_history
+    from modelquad.service import history as service_history
 
     db = tmp_path / "history.db"
     result = execute(_Run(stdout=stream(), stderr=STDERR_WITH_CREDS))
@@ -293,7 +293,7 @@ def test_secrets_do_not_reach_sqlite_history(tmp_path, execute, stream):
 
 
 def test_secrets_do_not_reach_outcome_evidence(tmp_path, execute):
-    from orchestrator.outcome import finalize_execution_result
+    from modelquad.outcome import finalize_execution_result
 
     result = finalize_execution_result(execute(_Run(stdout=_clean_stream(), stderr=STDERR_WITH_CREDS)),
                                        working_directory=tmp_path)

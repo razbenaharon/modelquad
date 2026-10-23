@@ -20,7 +20,7 @@ import datetime as dt
 
 import pytest
 
-from orchestrator.capability import (
+from modelquad.capability import (
     ALL_CAPABILITIES,
     CAP_COMMAND,
     CAP_READ,
@@ -37,11 +37,11 @@ from orchestrator.capability import (
     restricted,
     unsupported,
 )
-from orchestrator.config import Config
-from orchestrator.mcp.presentation import _alternatives
-from orchestrator.models import Freshness, ProviderStatus, TaskType
-from orchestrator.registry import default_registry
-from orchestrator.router import Router
+from modelquad.config import Config
+from modelquad.mcp.presentation import _alternatives
+from modelquad.models import Freshness, ProviderStatus, TaskType
+from modelquad.registry import default_registry
+from modelquad.router import Router
 
 
 def _statuses(names=("claude", "codex")):
@@ -218,7 +218,7 @@ def test_out_of_workspace_authority_is_not_a_routing_capability():
     worker may publish", which is the confusion the security model forbids.
     """
 
-    from orchestrator.capability import FINE_TO_COARSE
+    from modelquad.capability import FINE_TO_COARSE
 
     for key in ("push", "release", "external_write", "external_network"):
         assert key not in FINE_TO_COARSE
@@ -374,9 +374,9 @@ def test_doctor_treats_a_withheld_capability_as_healthy_not_broken():
     """Restriction is by design; only a configured-but-not-working capability
     is something a user can and should repair."""
 
-    from orchestrator.doctor import CheckStatus, run_doctor
+    from modelquad.doctor import CheckStatus, run_doctor
 
-    from orchestrator.registry import (
+    from modelquad.registry import (
         WORKSPACE_DEVELOPMENT_GRANT, ProviderCapabilities, ProviderPlugin, UsageSourceKind,
     )
 

@@ -15,9 +15,9 @@ import sys
 
 import pytest
 
-from orchestrator.adapters import file_security
-from orchestrator.jobs import handle
-from orchestrator.service import jobs_api
+from modelquad.adapters import file_security
+from modelquad.jobs import handle
+from modelquad.service import jobs_api
 from test_adapter_file_security import (
     _assert_exclusive, _assert_private, _broad_folder, _read,
     acl_tree, native, user,

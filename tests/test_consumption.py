@@ -6,15 +6,15 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.capsule import TaskCapsule
-from orchestrator.consumption import (
+from modelquad.capsule import TaskCapsule
+from modelquad.consumption import (
     CHAR_HIGH_THRESHOLD,
     CHAR_MEDIUM_THRESHOLD,
     FILES_HIGH_THRESHOLD,
     FILES_MEDIUM_THRESHOLD,
     estimate_expected_consumption,
 )
-from orchestrator.models import ConsumptionBucket, ConsumptionSource, ExpectedConsumption
+from modelquad.models import ConsumptionBucket, ConsumptionSource, ExpectedConsumption
 
 
 def test_consumption_models_enums_and_dataclass():

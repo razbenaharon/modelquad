@@ -9,13 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator import procutil
-from orchestrator.execution.base import DESCENDANTS_RECORDED, WorkerTaskStatus
-from orchestrator.jobs import recovery
-from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus
-from orchestrator.jobs.store import FileOutputStore
-from orchestrator.mcp.livelifecycle import derive_recovery_outlook, facts_from_attempt
-from orchestrator.service import db, history
+from modelquad import procutil
+from modelquad.execution.base import DESCENDANTS_RECORDED, WorkerTaskStatus
+from modelquad.jobs import recovery
+from modelquad.jobs.seam import JobOutput, JobRef, JobStatus
+from modelquad.jobs.store import FileOutputStore
+from modelquad.mcp.livelifecycle import derive_recovery_outlook, facts_from_attempt
+from modelquad.service import db, history
 
 NOW = datetime(2026, 10, 6, 12, tzinfo=timezone.utc)
 OLD = NOW - timedelta(minutes=5)

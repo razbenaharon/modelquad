@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exact source launch inventory and Host integration boundary regressions.
 
-Scope is src/orchestrator only; scripts/ has separate guards. The allow-list
+Scope is src/modelquad only; scripts/ has separate guards. The allow-list
 records admission evidence, not executable authenticity or launch authority.
 Qualnames use class/function chains, <locals> for nested scopes, <lambda> for
 lambdas and <module> for top-level expressions. Line numbers diagnose drift;
@@ -21,9 +21,9 @@ from types import ModuleType
 
 import pytest
 
-from orchestrator import executable_resolution as resolver, hostruntime
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.adapters.cliintegration import owns_cli_command
+from modelquad import executable_resolution as resolver, hostruntime
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.adapters.cliintegration import owns_cli_command
 
 
 win_only = pytest.mark.skipif(os.name != "nt", reason="Windows system-directory/batch discovery semantics")
@@ -205,7 +205,7 @@ def _inventory(source):
     return sites
 
 
-# (module relative to src/orchestrator, qualname, kind, count, admission reason).
+# (module relative to src/modelquad, qualname, kind, count, admission reason).
 # Exact counts include non-call references/defaults as well as actual calls.
 # Sites that are not admitted are never listed here: they are pinned in
 # OPEN_FINDINGS below with the same exact counts until their owners close them.
@@ -291,8 +291,8 @@ OPEN_FINDINGS = ()
 
 
 def test_service_bootstrap_and_system_cwd_use_admitted_absolute_shapes(tmp_path, monkeypatch):
-    from orchestrator import cli, background_cwd
-    from orchestrator.service import lifecycle
+    from modelquad import cli, background_cwd
+    from modelquad.service import lifecycle
     image = tmp_path / "python.exe"
     image.write_bytes(b"synthetic interpreter; never execute")
     image.chmod(0o700)
@@ -325,7 +325,7 @@ def _inventory_problems(found, allowed):
 
 
 def test_src_launches_use_central_resolution():
-    root = Path(__file__).resolve().parents[1] / "src" / "orchestrator"
+    root = Path(__file__).resolve().parents[1] / "src" / "modelquad"
     found = [(path.relative_to(root).as_posix(), qualname, kind, line)
              for path in sorted(root.rglob("*.py"))
              for qualname, kind, line in _inventory(path.read_text(encoding="utf-8-sig"))]

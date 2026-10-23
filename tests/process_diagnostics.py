@@ -26,18 +26,18 @@ def runner_driver_command(bootstrap, arguments, *, command=None):
     explicit test import roots provide only the synthetic executor/diagnostics.
     No containment verdict or startup check is replaced.
     """
-    from orchestrator.jobs import handle
+    from modelquad.jobs import handle
 
     if command is None:
         command = handle._runner_command('fixture', 'fixture.json', 'fixture.db')
-    if command[1:3] == ['-m', 'orchestrator.jobs.runner']:
+    if command[1:3] == ['-m', 'modelquad.jobs.runner']:
         return [command[0], '-c', bootstrap, *arguments]
     assert command[1:3] == ['-I', '-S'] and command[4] == '--installation-python', command
     root = str(Path(command[3]).resolve().parents[2])
     prelude = (
         'import os, sys\n'
         f'sys.path.insert(0, {root!r})\n'
-        'from orchestrator.service.entry import _restore_installation\n'
+        'from modelquad.service.entry import _restore_installation\n'
         f'_restore_installation({command[5]!r})\n'
         # -I intentionally ignores PYTHONPATH; synthetic fixtures explicitly
         # restore their own absolute roots after installation verification.
@@ -56,7 +56,7 @@ def non_killing_runner_job(*, resume):
     The worker's own kill-on-close job remains untouched. Closing this fixture
     handle happens only after its runners have exited.
     """
-    from orchestrator import procutil
+    from modelquad import procutil
 
     popen = subprocess.Popen
     if os.name != 'nt':
@@ -103,7 +103,7 @@ def non_killing_service_spawn():
 
 def process_snapshot(pid):
     """Read identities/status only; no command lines or environment contents."""
-    from orchestrator import procutil
+    from modelquad import procutil
 
     if os.name != "nt":
         return [{"pid": pid, "unavailable": "unsupported_platform"}]
@@ -182,7 +182,7 @@ def instrument_runner_command(command, stages_path):
     arguments/results. Startup and containment failures propagate unchanged.
     No provider, report module, test module or environment dump is introduced.
     """
-    module = "orchestrator.jobs.runner"
+    module = "modelquad.jobs.runner"
     if command[1:3] == ['-I', '-S']:
         assert command[4] == '--installation-python', command
         arguments = command[6:]
@@ -204,7 +204,7 @@ try:
     runner = importlib.import_module({module!r})
     emit('runner_import_end', source=runner.__file__)
     try:
-        handle = importlib.import_module('orchestrator.jobs.handle')
+        handle = importlib.import_module('modelquad.jobs.handle')
         in_job = handle._caller_in_job()
         emit('containment', in_job=in_job,
              limits=handle._caller_job_limits() if in_job else 0)

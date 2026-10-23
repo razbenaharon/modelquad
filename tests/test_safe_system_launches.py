@@ -16,10 +16,10 @@ import time
 
 import pytest
 
-from orchestrator import buildinfo, executable_resolution as resolver, procutil
-from orchestrator.jobs import changes
-from orchestrator import repo_identity
-from orchestrator.service import lifecycle
+from modelquad import buildinfo, executable_resolution as resolver, procutil
+from modelquad.jobs import changes
+from modelquad import repo_identity
+from modelquad.service import lifecycle
 
 
 win_only = pytest.mark.skipif(os.name != "nt", reason="Windows system-directory and extended-path semantics only")
@@ -375,12 +375,12 @@ def _scheduler_call(registrar, action, command, *, dry_run=False):
 
 @pytest.fixture
 def scheduler_context(tmp_path, monkeypatch):
-    from orchestrator import cli
+    from modelquad import cli
     monkeypatch.setattr(lifecycle.sys, "platform", "win32")
     monkeypatch.setenv("USERDOMAIN", "SYNTHETIC")
     monkeypatch.setenv("USERNAME", "Fixture")
     # Identity now comes from the OS token; environment identity is untrusted.
-    monkeypatch.setattr("orchestrator.service.auth.current_user_sid", lambda: "S-1-5-21-1")
+    monkeypatch.setattr("modelquad.service.auth.current_user_sid", lambda: "S-1-5-21-1")
     monkeypatch.setattr(lifecycle.tempfile, "tempdir", str(tmp_path))
     # Keep cwd validation independent of the schtasks-resolution fault below.
     # The real service_working_directory still validates this existing path.

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.config import Config, ProviderConfig
-from orchestrator.registry import (
+from modelquad.config import Config, ProviderConfig
+from modelquad.registry import (
     HostAdapterDescriptor,
     ProviderCapabilities,
     ProviderPlugin,
@@ -115,7 +115,7 @@ def test_default_registry_describes_each_host_adapter_independently():
 
 
 def test_host_detection_is_lazy_and_uses_runtime_path_and_home_probes(tmp_path, monkeypatch):
-    import orchestrator.registry as registry_module
+    import modelquad.registry as registry_module
 
     probes: list[str] = []
     monkeypatch.setattr(registry_module.Path, "home", lambda: tmp_path)
@@ -140,9 +140,9 @@ def test_host_detection_is_lazy_and_uses_runtime_path_and_home_probes(tmp_path, 
 
 def test_unknown_provider_name_is_refused(tmp_path):
     """A provider the registry does not know is refused before any worker starts."""
-    from orchestrator.config import load_config
-    from orchestrator.execution.base import WorkerTaskStatus
-    from orchestrator.execution.manager import ExecutionManager
+    from modelquad.config import load_config
+    from modelquad.execution.base import WorkerTaskStatus
+    from modelquad.execution.manager import ExecutionManager
 
     unknown = "retired-tool"
     registry = default_registry()

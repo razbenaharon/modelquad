@@ -7,9 +7,9 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from orchestrator import cli
-from orchestrator.jobs import handle
-from orchestrator.service import lifecycle
+from modelquad import cli
+from modelquad.jobs import handle
+from modelquad.service import lifecycle
 
 
 NS = '{http://schemas.microsoft.com/windows/2004/02/mit/task}'
@@ -141,7 +141,7 @@ def test_normalized_legacy_action_still_requires_explicit_update(task):
 @pytest.mark.parametrize('fail', [False, True])
 def test_token_account_lookup_uses_sid_sizes_and_always_frees_memory(monkeypatch, fail):
     import ctypes
-    from orchestrator.service import auth
+    from modelquad.service import auth
     calls, freed = [], []
     def convert(value, output):
         assert value == SID

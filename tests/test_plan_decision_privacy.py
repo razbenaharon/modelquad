@@ -10,7 +10,7 @@ import sqlite3
 
 import pytest
 
-from orchestrator.service import history
+from modelquad.service import history
 
 
 PATHS = (

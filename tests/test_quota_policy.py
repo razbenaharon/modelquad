@@ -14,13 +14,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from orchestrator.models import (
+from modelquad.models import (
     CapacityState,
     Freshness,
     ProviderStatus,
     ResourcePool,
 )
-from orchestrator.quota_policy import (
+from modelquad.quota_policy import (
     QUOTA_ABUNDANT_MINIMUM,
     QUOTA_EXHAUSTED_BELOW,
     QUOTA_HEALTHY_MINIMUM,

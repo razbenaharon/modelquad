@@ -9,7 +9,7 @@ env/
 .env.*
 *credentials*
 *secrets*
-!src/orchestrator/secrets.py
+!src/modelquad/secrets.py
 usage-*.json
 sessions.json
 .pytest_cache/

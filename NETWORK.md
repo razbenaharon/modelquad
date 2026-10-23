@@ -16,7 +16,7 @@ programs it starts make, and how to check.
 
 ## The loopback rule
 
-`src/orchestrator/netpolicy.py` adds an audit hook (`sys.addaudithook`) in
+`src/modelquad/netpolicy.py` adds an audit hook (`sys.addaudithook`) in
 each ModelQuad entry point: the `modelquad` command (which also runs the
 hooks and the local service), the MCP server (`modelquad-mcp`) and the
 background job runner. The hook refuses `socket.connect` and `socket.sendto`

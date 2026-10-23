@@ -18,12 +18,12 @@ import json
 
 import pytest
 
-from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
-from orchestrator.models import Freshness, ProviderScore, RoutingResult, TaskType
-from orchestrator.service import db as service_db
-from orchestrator.service import history as service_history
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+from modelquad.models import Freshness, ProviderScore, RoutingResult, TaskType
+from modelquad.service import db as service_db
+from modelquad.service import history as service_history
 
-mcp_server = importlib.import_module("orchestrator.mcp.server")
+mcp_server = importlib.import_module("modelquad.mcp.server")
 
 
 def _call(tool, **kwargs):

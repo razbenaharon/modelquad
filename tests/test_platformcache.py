@@ -5,7 +5,7 @@
 An earlier fix removed the popup at its source and the **packaged** product still
 opened one: a Sandbox acceptance run against a freshly installed build at
 `043e8b0` observed `cmd.exe /c "ver"` and its `conhost.exe` parented directly
-by `orchestrator.exe` on every startup path measured, `--version` included,
+by `modelquad.exe` on every startup path measured, `--version` included,
 while the same code from source spawned nothing. So the caller was inside the
 frozen bundle (since removed), and the fix removes what it reaches rather than
 hunting it:
@@ -85,7 +85,7 @@ def test_the_seed_creates_no_process():
         "    setattr(subprocess, name, trip('subprocess.' + name))\n"
         "os.system = trip('os.system')\n"
         "os.popen = trip('os.popen')\n"
-        "from orchestrator.platformcache import preseed_windows_uname\n"
+        "from modelquad.platformcache import preseed_windows_uname\n"
         "seeded = preseed_windows_uname()\n"
         "print(json.dumps({'seeded': seeded, 'calls': calls}))\n"
     )
@@ -106,7 +106,7 @@ def test_uname_after_the_seed_never_reaches_syscmd_ver():
         "    raise AssertionError('reached')\n"
         "platform._syscmd_ver = explode\n"
         "platform.win32_ver = explode\n"
-        "from orchestrator.platformcache import preseed_windows_uname\n"
+        "from modelquad.platformcache import preseed_windows_uname\n"
         "seeded = preseed_windows_uname()\n"
         "u = platform.uname()\n"
         "print(json.dumps({'seeded': seeded, 'system': u.system, 'version': u.version}))\n"
@@ -133,7 +133,7 @@ def test_the_dependent_apis_read_the_seeded_values():
         "    raise AssertionError('bypassed the cache')\n"
         "platform._syscmd_ver = explode\n"
         "platform.win32_ver = explode\n"
-        "from orchestrator.platformcache import preseed_windows_uname\n"
+        "from modelquad.platformcache import preseed_windows_uname\n"
         "preseed_windows_uname()\n"
         "c = platform._uname_cache\n"
         "print(json.dumps({\n"
@@ -168,7 +168,7 @@ def test_the_seeded_identity_matches_what_platform_would_report():
     reference = platform_reference()
     seeded = _probe(
         "import json\n"
-        "from orchestrator.platformcache import windows_uname_result\n"
+        "from modelquad.platformcache import windows_uname_result\n"
         "u = windows_uname_result()\n"
         "print(json.dumps({'system': u.system, 'release': u.release,\n"
         "                  'version': u.version, 'machine': u.machine}))\n"
@@ -200,7 +200,7 @@ def test_a_failed_getwindowsversion_read_seeds_nothing():
         "def broken(*a, **k):\n"
         "    raise OSError('rigged: getwindowsversion unavailable')\n"
         "sys.getwindowsversion = broken\n"
-        "from orchestrator.platformcache import preseed_windows_uname, windows_uname_result\n"
+        "from modelquad.platformcache import preseed_windows_uname, windows_uname_result\n"
         "result_is_none = windows_uname_result() is None\n"
         "seeded = preseed_windows_uname()\n"
         "print(json.dumps({'result_is_none': result_is_none, 'seeded': seeded,\n"
@@ -225,7 +225,7 @@ def test_a_literal_unknown_is_blanked_the_way_uname_blanks_it():
         "import json, platform, socket\n"
         "socket.gethostname = lambda: 'unknown'\n"
         "platform._get_machine_win32 = lambda: 'unknown'\n"
-        "from orchestrator.platformcache import windows_uname_result\n"
+        "from modelquad.platformcache import windows_uname_result\n"
         "u = windows_uname_result()\n"
         "print(json.dumps({'node': u.node, 'machine': u.machine,\n"
         "                  'system': u.system, 'version': u.version}))\n"
@@ -245,7 +245,7 @@ def test_nothing_happens_off_windows():
     result = _probe(
         "import json, sys\n"
         "sys.platform = 'linux'\n"
-        "from orchestrator.platformcache import preseed_windows_uname, windows_uname_result\n"
+        "from modelquad.platformcache import preseed_windows_uname, windows_uname_result\n"
         "print(json.dumps({'seeded': preseed_windows_uname(),\n"
         "                  'result_is_none': windows_uname_result() is None}))\n"
     )
@@ -267,7 +267,7 @@ def test_seeding_twice_changes_nothing_and_never_replaces_an_existing_cache():
 
     result = _probe(
         "import json, platform\n"
-        "from orchestrator.platformcache import preseed_windows_uname\n"
+        "from modelquad.platformcache import preseed_windows_uname\n"
         "first = preseed_windows_uname()\n"
         "cached = platform._uname_cache\n"
         "second = preseed_windows_uname()\n"
@@ -289,11 +289,11 @@ def test_seeding_twice_changes_nothing_and_never_replaces_an_existing_cache():
 # --- 8. the packaged entry points seed first ---------------------------------
 
 
-def _first_orchestrator_import_line(source: str) -> int:
+def _first_modelquad_import_line(source: str) -> int:
     tree = ast.parse(source)
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("orchestrator"):
-            if node.module != "orchestrator.platformcache":
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("modelquad"):
+            if node.module != "modelquad.platformcache":
                 return node.lineno
     return 10**9
 
@@ -310,7 +310,7 @@ def _seed_call_line(source: str) -> int:
 def test_the_cli_seeds_before_it_parses(mode="source"):
     """Source mode matters too: a developer's terminal is where it was noticed."""
 
-    source = (REPO_ROOT / "src/orchestrator/cli.py").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "src/modelquad/cli.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     functions = {
         node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)

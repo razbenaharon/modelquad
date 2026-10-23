@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.provider_connection import (
+from modelquad.provider_connection import (
     ACTION_CONNECT,
     ACTION_FIX_PATH,
     ACTION_INSTALL,
@@ -33,7 +33,7 @@ from orchestrator.provider_connection import (
     needs_attention,
     probe_sign_in,
 )
-from orchestrator.registry import (
+from modelquad.registry import (
     HostAdapterDescriptor,
     ProviderCapabilities,
     ProviderPlugin,
@@ -114,8 +114,8 @@ def stub_hostruntime(monkeypatch):
     def fake_classify(command: str, *, which=None):
         return _Verdict(command, command in state["canonical"])
 
-    monkeypatch.setattr("orchestrator.hostruntime.read_registered_command", fake_read)
-    monkeypatch.setattr("orchestrator.hostruntime.classify_registration", fake_classify)
+    monkeypatch.setattr("modelquad.hostruntime.read_registered_command", fake_read)
+    monkeypatch.setattr("modelquad.hostruntime.classify_registration", fake_classify)
     return state
 
 
@@ -134,7 +134,7 @@ def test_claude_sign_in_true_when_credential_file_present(tmp_path):
 
 
 def test_claude_sign_in_false_on_windows_when_absent(tmp_path, monkeypatch):
-    monkeypatch.setattr("orchestrator.provider_connection.sys.platform", "win32")
+    monkeypatch.setattr("modelquad.provider_connection.sys.platform", "win32")
     evidence = probe_sign_in("claude", home=tmp_path)
     assert evidence.state is SignInState.SIGNED_OUT
 
@@ -142,7 +142,7 @@ def test_claude_sign_in_false_on_windows_when_absent(tmp_path, monkeypatch):
 def test_claude_sign_in_unknown_off_windows_because_of_the_keychain(tmp_path, monkeypatch):
     """Absence is not evidence on a platform that may use the system keychain."""
 
-    monkeypatch.setattr("orchestrator.provider_connection.sys.platform", "darwin")
+    monkeypatch.setattr("modelquad.provider_connection.sys.platform", "darwin")
     evidence = probe_sign_in("claude", home=tmp_path)
     assert evidence.state is SignInState.UNKNOWN
     assert "keychain" in evidence.detail.lower()
@@ -215,7 +215,7 @@ def test_install_not_found(tmp_path, stub_hostruntime):
 def test_install_off_path_is_reported_separately_from_missing(tmp_path, stub_hostruntime, monkeypatch):
     """A vendor installer that skips PATH must not be reported as "not installed"."""
 
-    from orchestrator import onboarding as onboarding_module
+    from modelquad import onboarding as onboarding_module
 
     real_detect = onboarding_module.detect_providers
 
@@ -255,7 +255,7 @@ def test_hashed_codex_connection_skips_path_fix(
     signed_in, integration, expected_state, expected_action,
 ):
     from argparse import Namespace
-    from orchestrator import cli, codexcli, onboarding, provider_connection
+    from modelquad import cli, codexcli, onboarding, provider_connection
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -304,7 +304,7 @@ def test_stable_off_path_codex_connection_keeps_path_fix(
     tmp_path, stub_hostruntime, monkeypatch, capsys, layout,
 ):
     from argparse import Namespace
-    from orchestrator import cli, codexcli, onboarding, provider_connection
+    from modelquad import cli, codexcli, onboarding, provider_connection
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     exe = tmp_path.joinpath(*layout) / "codex.exe"

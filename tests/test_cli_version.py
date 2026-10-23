@@ -14,9 +14,9 @@ import subprocess
 
 import pytest
 
-from orchestrator import buildinfo
-from orchestrator.branding import PRODUCT_NAME, installed_version
-from orchestrator.cli import build_parser
+from modelquad import buildinfo
+from modelquad.branding import PRODUCT_NAME, installed_version
+from modelquad.cli import build_parser
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 
@@ -43,7 +43,7 @@ def test_version_flag_names_the_product_a_user_recognizes(capsys):
 
     printed = capsys.readouterr().out
     assert printed.startswith(PRODUCT_NAME)
-    assert "orchestrator" not in printed.lower()
+    assert "modelquad " not in printed
 
 
 def test_version_flag_does_not_displace_subcommands():

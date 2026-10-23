@@ -14,8 +14,8 @@ import json
 import os
 from pathlib import Path
 
-from orchestrator.usage import write_usage_snapshot, write_usage_snapshot_if_newer
-from orchestrator.usage.refresh import refresh_provider
+from modelquad.usage import write_usage_snapshot, write_usage_snapshot_if_newer
+from modelquad.usage.refresh import refresh_provider
 
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
@@ -153,7 +153,7 @@ def test_refresh_keeps_the_newer_reading_when_the_active_probe_fails(tmp_path):
 import threading
 import time
 
-from orchestrator.usage import base as usage_base
+from modelquad.usage import base as usage_base
 
 # Lock coordination needs slack on the shared, memory-constrained runner.
 LOAD_HEADROOM_S = 60

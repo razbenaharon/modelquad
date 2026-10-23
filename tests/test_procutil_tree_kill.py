@@ -31,9 +31,9 @@ from pathlib import Path
 import pytest
 
 from conftest import no_window_kwargs
-from orchestrator import procutil
-from orchestrator.execution.base import describe_worker_termination, worker_confirmed_dead
-from orchestrator.procutil import WorkerContainmentError, run_with_tree_kill
+from modelquad import procutil
+from modelquad.execution.base import describe_worker_termination, worker_confirmed_dead
+from modelquad.procutil import WorkerContainmentError, run_with_tree_kill
 
 _PARENT_SCRIPT = """
 import subprocess, sys, time
@@ -242,7 +242,7 @@ def test_a_large_stdin_prompt_is_delivered_whole():
 
 
 def test_on_spawn_reports_the_live_worker_pid():
-    from orchestrator.procutil import pid_alive
+    from modelquad.procutil import pid_alive
 
     seen = []
     completed = run_with_tree_kill(
@@ -263,7 +263,7 @@ def test_pid_alive_distinguishes_live_from_dead():
     import os
     import subprocess as sp
 
-    from orchestrator.procutil import pid_alive
+    from modelquad.procutil import pid_alive
 
     assert pid_alive(os.getpid()) is True
     proc = sp.Popen([sys.executable, "-c", "pass"], **no_window_kwargs())
@@ -274,9 +274,9 @@ def test_pid_alive_distinguishes_live_from_dead():
 def test_executors_default_to_tree_killing_run():
     """The defect returns silently if an executor reverts to subprocess.run."""
 
-    from orchestrator.execution.codex import CodexExecutor
+    from modelquad.execution.codex import CodexExecutor
 
-    from orchestrator.procutil import run_worker
+    from modelquad.procutil import run_worker
 
     # run_worker is run_with_tree_kill with kill-on-close on by default.
     assert CodexExecutor()._run is run_worker

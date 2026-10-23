@@ -55,12 +55,12 @@ jobs:
       - name: Assert no inherited ModelQuad state
         # A CI pass must never be explained by leftover configuration.
         run: |
-          if (Test-Path "$env:LOCALAPPDATA\MultiAgentOrchestrator") {
+          if (Test-Path "$env:LOCALAPPDATA\ModelQuad") {
             Write-Error "Pre-existing ModelQuad state found in the isolated root; the run would not be clean."
             exit 1
           }
-          if ($env:ORCHESTRATOR_WORKER) {
-            Write-Error "ORCHESTRATOR_WORKER is set; the recursion guard would change delegation behavior."
+          if ($env:MODELQUAD_WORKER) {
+            Write-Error "MODELQUAD_WORKER is set; the recursion guard would change delegation behavior."
             exit 1
           }
           Write-Host "Clean: no inherited state, worker guard unset."
@@ -73,7 +73,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install the package (non-editable) and its extras
-        # NOT `pip install -e .`: an editable install resolves `orchestrator`
+        # NOT `pip install -e .`: an editable install resolves `modelquad`
         # back into src/, so the suite would test the checkout rather than
         # the distribution a user installs.
         run: |
@@ -83,8 +83,8 @@ jobs:
       - name: Verify the package resolves outside the checkout
         working-directory: ${{ runner.temp }}
         run: |
-          $resolved = python -c "import orchestrator, sys; sys.stdout.write(orchestrator.__file__)"
-          Write-Host "orchestrator resolved to: $resolved"
+          $resolved = python -c "import modelquad, sys; sys.stdout.write(modelquad.__file__)"
+          Write-Host "modelquad resolved to: $resolved"
           $ws = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\','/')
           if ([IO.Path]::GetFullPath($resolved).StartsWith($ws, [StringComparison]::OrdinalIgnoreCase)) {
             Write-Error "Editable/source-tree import detected: the suite would not be testing the installed package."

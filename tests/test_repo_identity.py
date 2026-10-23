@@ -13,8 +13,8 @@ import sys
 
 import pytest
 
-from orchestrator import identity, procutil, repo_identity as ri
-from orchestrator.jobs import changes
+from modelquad import identity, procutil, repo_identity as ri
+from modelquad.jobs import changes
 
 KEY = "0123456789abcdef0123456789abcdef"  # gitleaks:allow (synthetic test key)
 OTHER_KEY = "abcdef0123456789abcdef0123456789"  # gitleaks:allow (synthetic test key)
@@ -458,7 +458,7 @@ def test_windows_case_and_extended_aliases(repo):
 def test_cross_drive_worktree(repo, monkeypatch):
     # Headroom for a loaded runner (train 17 preflight: git_timeout under the
     # 15 s per-call budget); the claim is the identity, not the speed.
-    from orchestrator.jobs import changes
+    from modelquad.jobs import changes
     monkeypatch.setattr(ri, "GIT_SECONDS", 60)
     monkeypatch.setattr(changes, "GIT_SECONDS", 60)  # _git clamps to its own module value
     monkeypatch.setattr(ri, "RESOLVE_SECONDS", 90)

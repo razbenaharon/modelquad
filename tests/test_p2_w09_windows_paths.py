@@ -20,13 +20,13 @@ import tomllib
 import pytest
 
 from conftest import no_window_kwargs
-from orchestrator import hostruntime
-from orchestrator.adapters import claude_adapter
-from orchestrator.adapters.cliintegration import owns_cli_command
-from orchestrator.adapters.hooksmerge import wired_commands
-from orchestrator.adapters.report import ActionKind
-from orchestrator.adapters.textblock import render_block, upsert_block
-from orchestrator.statecontext import STATE_MODE_ENV_VAR, STATE_ROOT_ENV_VAR
+from modelquad import hostruntime
+from modelquad.adapters import claude_adapter
+from modelquad.adapters.cliintegration import owns_cli_command
+from modelquad.adapters.hooksmerge import wired_commands
+from modelquad.adapters.report import ActionKind
+from modelquad.adapters.textblock import render_block, upsert_block
+from modelquad.statecontext import STATE_MODE_ENV_VAR, STATE_ROOT_ENV_VAR
 from test_host_integration_runtime import _git_bash
 
 
@@ -56,8 +56,8 @@ def isolated_host_state(monkeypatch, tmp_path):
     Python write/replace proves that real ~/.claude* and ~/.codex
     remain untouched without reading their potentially private contents.
     """
-    from orchestrator import paths
-    from orchestrator.adapters import backup, file_security
+    from modelquad import paths
+    from modelquad.adapters import backup, file_security
 
     class FixedClock(datetime):
         @classmethod
@@ -251,12 +251,12 @@ def test_adapter_install_repair_and_uninstall(monkeypatch, tmp_path, host, folde
 # expected bytes do not call the renderer or derive from the new implementation.
 @pytest.mark.parametrize("cli,mcp,hook,status,toml_line,json_line", [
     pytest.param(
-        r"C:\Users\example\AppData\Local\MultiAgentOrchestrator\bin\modelquad.cmd",
-        r"C:\Users\example\AppData\Local\MultiAgentOrchestrator\bin\modelquad-mcp.cmd",
-        b'C:/Users/example/AppData/Local/MultiAgentOrchestrator/bin/modelquad.cmd hook-gate',
-        b'{"command": "C:/Users/example/AppData/Local/MultiAgentOrchestrator/bin/modelquad.cmd usage-hook claude", "type": "command"}',
-        b"command = 'C:\\Users\\example\\AppData\\Local\\MultiAgentOrchestrator\\bin\\modelquad-mcp.cmd'",
-        b'"command": "C:\\\\Users\\\\example\\\\AppData\\\\Local\\\\MultiAgentOrchestrator\\\\bin\\\\modelquad-mcp.cmd"',
+        r"C:\Users\example\AppData\Local\ModelQuad\bin\modelquad.cmd",
+        r"C:\Users\example\AppData\Local\ModelQuad\bin\modelquad-mcp.cmd",
+        b'C:/Users/example/AppData/Local/ModelQuad/bin/modelquad.cmd hook-gate',
+        b'{"command": "C:/Users/example/AppData/Local/ModelQuad/bin/modelquad.cmd usage-hook claude", "type": "command"}',
+        b"command = 'C:\\Users\\example\\AppData\\Local\\ModelQuad\\bin\\modelquad-mcp.cmd'",
+        b'"command": "C:\\\\Users\\\\example\\\\AppData\\\\Local\\\\ModelQuad\\\\bin\\\\modelquad-mcp.cmd"',
         id="owner_plain",
     ),
     pytest.param(

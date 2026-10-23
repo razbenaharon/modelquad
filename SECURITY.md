@@ -58,7 +58,7 @@ This section describes what the code does now. It is not a guarantee.
 
 **Local only.** ModelQuad has no server of its own. Its own processes connect
 only to loopback addresses: each entry point adds an audit hook that refuses
-any other `socket.connect` or `socket.sendto` (`src/orchestrator/netpolicy.py`,
+any other `socket.connect` or `socket.sendto` (`src/modelquad/netpolicy.py`,
 `tests/test_netpolicy.py`). The hook does not cover the programs ModelQuad
 starts. Provider traffic is made by the provider CLIs. See
 [NETWORK.md](NETWORK.md).
@@ -71,7 +71,7 @@ call (`tests/test_oss_export_surface.py`). ModelQuad adds no permission rule
 for its tools. The job tools answer only for jobs started from the project
 folder they are given.
 
-**Loopback service (optional).** `src/orchestrator/service/`.
+**Loopback service (optional).** `src/modelquad/service/`.
 
 - It binds to `127.0.0.1` only (port 8765 by default) and takes no bind
   address.
@@ -118,7 +118,7 @@ What it does not protect:
   secret, the job launch files, the waiting answers and the registration
   backup are limited to you and SYSTEM.
 
-**Codex worker launch.** `src/orchestrator/execution/`.
+**Codex worker launch.** `src/modelquad/execution/`.
 
 - Only review, exploration and architecture tasks are accepted. Other task
   types, and resuming a Codex session, are refused before Codex starts.
@@ -145,7 +145,7 @@ What it does not protect:
   without the current folder and without unsafe PATH entries. The child
   environment drops other services' credentials and sets
   `NoDefaultCurrentDirectoryInExePath=1`.
-- The worker gets `ORCHESTRATOR_WORKER=1`. With it set, ModelQuad's MCP tools
+- The worker gets `MODELQUAD_WORKER=1`. With it set, ModelQuad's MCP tools
   refuse, so a worker cannot start another worker
   (`tests/test_mcp_worker_guard.py`).
 - On Windows a worker started inside a Claude Code session runs in a Job

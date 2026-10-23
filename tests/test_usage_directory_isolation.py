@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Import-time usage defaults stay inside the suite's temporary directories."""
 
-from orchestrator import cli, doctor
-from orchestrator.mcp import server
-from orchestrator.providers import ClaudeProvider, CodexProvider, base
+from modelquad import cli, doctor
+from modelquad.mcp import server
+from modelquad.providers import ClaudeProvider, CodexProvider, base
 
 
 

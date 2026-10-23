@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.config import Config, ProviderConfig, load_config
+from modelquad.config import Config, ProviderConfig, load_config
 
 
 def test_packaged_default_config_loads():

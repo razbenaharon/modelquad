@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.config import Config
-from orchestrator.models import Freshness, ProviderScore, ProviderStatus, TaskType
-from orchestrator.router import Router
+from modelquad.config import Config
+from modelquad.models import Freshness, ProviderScore, ProviderStatus, TaskType
+from modelquad.router import Router
 
 
 # Claude is granted read+write only: a files-only worker for these tests.

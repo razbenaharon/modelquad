@@ -15,8 +15,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 
-from orchestrator.providers.codex import CodexProvider
-from orchestrator.usage.codex_appserver import _unobserved, parse_rate_limits_result
+from modelquad.providers.codex import CodexProvider
+from modelquad.usage.codex_appserver import _unobserved, parse_rate_limits_result
 
 
 NOW = datetime(2026, 8, 28, 17, 0, tzinfo=timezone.utc)

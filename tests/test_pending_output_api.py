@@ -7,11 +7,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from orchestrator.execution.base import WorkerTaskStatus
-from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus
-from orchestrator.jobs.store import FileOutputStore
-from orchestrator.service import api, history
-from orchestrator.service.app import create_app
+from modelquad.execution.base import WorkerTaskStatus
+from modelquad.jobs.seam import JobOutput, JobRef, JobStatus
+from modelquad.jobs.store import FileOutputStore
+from modelquad.service import api, history
+from modelquad.service.app import create_app
 
 
 @pytest.fixture

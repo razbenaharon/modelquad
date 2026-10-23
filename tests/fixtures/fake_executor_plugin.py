@@ -8,12 +8,12 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-from orchestrator import procutil
-from orchestrator.execution.base import ExecutionResult, Executor, WorkerTaskStatus
-from orchestrator.models import Freshness, ProviderStatus
-from orchestrator.registry import (ProviderCapabilities, ProviderPlugin, ProviderRegistry,
+from modelquad import procutil
+from modelquad.execution.base import ExecutionResult, Executor, WorkerTaskStatus
+from modelquad.models import Freshness, ProviderStatus
+from modelquad.registry import (ProviderCapabilities, ProviderPlugin, ProviderRegistry,
                                    UsageSourceKind, WORKSPACE_DEVELOPMENT_GRANT)
-from orchestrator.workerevidence import parse_codex_stream
+from modelquad.workerevidence import parse_codex_stream
 
 
 class FakeUsage:
@@ -53,7 +53,7 @@ class FakeExecutor(Executor):
             completed = procutil.run_with_tree_kill(
                 [sys.executable, '-c', CHILD], input=request.prompt,
                 cwd=request.working_directory, timeout=request.timeout,
-                env={**os.environ, 'ORCHESTRATOR_WORKER': '1'},
+                env={**os.environ, 'MODELQUAD_WORKER': '1'},
                 capture_output=True, text=True, encoding='utf-8',
                 on_spawn=request.on_spawn, stop_requested=request.stop_requested,
             )

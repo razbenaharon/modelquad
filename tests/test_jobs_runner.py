@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Synthetic, bounded runner acceptance; never starts a provider CLI."""
 
-from orchestrator.execution import bound_launch
+from modelquad.execution import bound_launch
 
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -19,11 +19,11 @@ import pytest
 from load_helpers import retry_temp_permission
 
 
-from orchestrator import paths, procutil
-from orchestrator.jobs._test_sink import FileSink
-from orchestrator.jobs.handle import JobSpec, job_status, start_job, stop_job
-from orchestrator.jobs import handle, runner
-from orchestrator.service import db, history
+from modelquad import paths, procutil
+from modelquad.jobs._test_sink import FileSink
+from modelquad.jobs.handle import JobSpec, job_status, start_job, stop_job
+from modelquad.jobs import handle, runner
+from modelquad.service import db, history
 from test_jobs_changes import git, git_repo  # shared throwaway-repository fixture
 
 
@@ -41,8 +41,8 @@ PROCESS_SECONDS = 60
 
 @pytest.mark.parametrize('ending', ['finished', 'failed', 'stopped', 'timed_out'])
 def test_changed_files_collected_from_raw_worker(git_repo, tmp_path, monkeypatch, caplog, ending):
-    from orchestrator.execution.base import WorkerTaskStatus
-    from orchestrator.jobs.store import FileOutputStore
+    from modelquad.execution.base import WorkerTaskStatus
+    from modelquad.jobs.store import FileOutputStore
     from dataclasses import replace
     caplog.set_level('DEBUG')
     spec = replace(spec_for(tmp_path, 'pass'), cwd=str(git_repo))
@@ -87,8 +87,8 @@ def test_changed_files_collected_from_raw_worker(git_repo, tmp_path, monkeypatch
 
 def test_raw_interrupted_output_carries_observation(git_repo, tmp_path, monkeypatch):
     from dataclasses import replace
-    from orchestrator.execution.base import WorkerTaskStatus
-    from orchestrator.jobs.store import FileOutputStore
+    from modelquad.execution.base import WorkerTaskStatus
+    from modelquad.jobs.store import FileOutputStore
     from process_diagnostics import capture_text
     # This in-process publication test does not measure the startup deadline.
     monkeypatch.setattr(runner, 'STARTUP_SECONDS', PROCESS_SECONDS)
@@ -122,7 +122,7 @@ def test_raw_interrupted_output_carries_observation(git_repo, tmp_path, monkeypa
 
 
 def test_raw_worker_commits_previously_clean_file(git_repo, tmp_path, monkeypatch):
-    from orchestrator.jobs.store import FileOutputStore
+    from modelquad.jobs.store import FileOutputStore
     from dataclasses import replace
     spec = replace(spec_for(tmp_path, 'pass'), cwd=str(git_repo))
     row = history.reserve_job(spec.db_path, 'committed-changes', spec.attempt_id)
@@ -145,15 +145,15 @@ def test_raw_worker_commits_previously_clean_file(git_repo, tmp_path, monkeypatc
 def test_delegation_changed_files_status_matrix(git_repo, tmp_path, monkeypatch, ending, task_type):
     from dataclasses import fields, replace
     from types import SimpleNamespace
-    from orchestrator.config import Config
-    from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
-    from orchestrator.execution.lifecycle import TerminalResolution
-    from orchestrator.jobs.handle import PreparedDelegation
-    from orchestrator.jobs.seam import JobRef
-    from orchestrator.jobs.store import FileOutputStore
-    from orchestrator.execution import manager as manager_module
-    from orchestrator import config as config_module
-    from orchestrator.mcp import server as mcp
+    from modelquad.config import Config
+    from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+    from modelquad.execution.lifecycle import TerminalResolution
+    from modelquad.jobs.handle import PreparedDelegation
+    from modelquad.jobs.seam import JobRef
+    from modelquad.jobs.store import FileOutputStore
+    from modelquad.execution import manager as manager_module
+    from modelquad import config as config_module
+    from modelquad.mcp import server as mcp
     base = spec_for(tmp_path, 'pass')
     # Intentionally different from spec.cwd: execute in the prepared folder.
     # All execution/provider seams are synthetic.
@@ -200,7 +200,7 @@ def test_delegation_changed_files_status_matrix(git_repo, tmp_path, monkeypatch,
 def probe_interpreter(python, *, env=None, cwd=None, evidence="child interpreter"):
     """Prove the exact child environment can import the product dependencies."""
     try:
-        result = subprocess.run([str(python), "-c", "import orchestrator.jobs.handle"],
+        result = subprocess.run([str(python), "-c", "import modelquad.jobs.handle"],
                                 env=env, cwd=cwd, capture_output=True, text=True,
                                 timeout=PROCESS_SECONDS, **procutil.no_window_kwargs())
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -354,7 +354,7 @@ def test_worker_and_child_tree_end(tmp_path, cause):
     child_stderr = tmp_path / 'child.stderr'
     code = (
         "import subprocess,sys,time; from pathlib import Path; "
-        "from orchestrator.procutil import no_window_kwargs; "
+        "from modelquad.procutil import no_window_kwargs; "
         "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(15)'], "
         f"stdout=subprocess.DEVNULL,stderr=open({str(child_stderr)!r}, 'wb'),**no_window_kwargs()); "
         f"Path({str(child_file)!r}).write_text(str(p.pid)); print('partial',flush=True); time.sleep(15)"
@@ -393,7 +393,7 @@ def test_worker_and_child_tree_end(tmp_path, cause):
 
 @pytest.mark.parametrize('worker_started', [False, True])
 def test_runner_crash_closes_records_without_content(tmp_path, monkeypatch, worker_started):
-    from orchestrator import paths
+    from modelquad import paths
     spec = spec_for(tmp_path, 'private-prompt-canary')
     row = history.reserve_job(spec.db_path, 'crashed', spec.attempt_id)
     path = tmp_path / 'spec.json'
@@ -427,7 +427,7 @@ def test_runner_crash_closes_records_without_content(tmp_path, monkeypatch, work
 
 @pytest.mark.parametrize('failure', ['sink', 'resolution'])
 def test_late_failure_keeps_known_worker_fate(tmp_path, monkeypatch, failure):
-    from orchestrator.execution.base import ExecutionResult, describe_worker_termination
+    from modelquad.execution.base import ExecutionResult, describe_worker_termination
     spec = spec_for(tmp_path, 'pass')
     row = history.reserve_job(spec.db_path, 'sink-failure', spec.attempt_id)
     history.update_job(spec.db_path, row['job_id'], worker_pid=123, status='running')
@@ -468,7 +468,7 @@ def test_late_failure_keeps_known_worker_fate(tmp_path, monkeypatch, failure):
 
 
 def test_final_job_write_failure_preserves_completed_attempt(tmp_path, monkeypatch):
-    from orchestrator.execution.base import ExecutionResult
+    from modelquad.execution.base import ExecutionResult
     spec = spec_for(tmp_path, 'pass')
     row = history.reserve_job(spec.db_path, 'final-write', spec.attempt_id)
     history.update_job(spec.db_path, row['job_id'], worker_pid=123, status='running')
@@ -504,7 +504,7 @@ def test_normal_exit_snapshots_before_close_cleanup(tmp_path):
     child_stderr = tmp_path / 'normal-child.stderr'
     code = (
         "import subprocess,sys; from pathlib import Path; "
-        "from orchestrator.procutil import no_window_kwargs; "
+        "from modelquad.procutil import no_window_kwargs; "
         "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(10)'], "
         f"stdout=subprocess.DEVNULL,stderr=open({str(child_stderr)!r}, 'wb'),**no_window_kwargs()); "
         f"Path({str(child_file)!r}).write_text(str(p.pid))"
@@ -531,7 +531,7 @@ def test_normal_exit_snapshots_before_close_cleanup(tmp_path):
 
 
 def test_stop_before_launch_and_structured_claim_are_separate(tmp_path, monkeypatch):
-    from orchestrator.jobs.seam import JobRef, cause_flags_from_result, job_status_from_resolution
+    from modelquad.jobs.seam import JobRef, cause_flags_from_result, job_status_from_resolution
     spec = spec_for(tmp_path, 'pass')
     ref = JobRef('pre-stopped', spec.attempt_id, 'test-decision')
     assert history.request_attempt_stop(spec.db_path, spec.attempt_id) == 'accepted'
@@ -558,7 +558,7 @@ def test_stop_before_launch_and_structured_claim_are_separate(tmp_path, monkeypa
 @pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
 @pytest.mark.parametrize('stage', ['pre_start', 'execute', 'sink'])
 def test_base_exception_records_failure_then_reraises(tmp_path, monkeypatch, error_type, stage):
-    from orchestrator.execution.base import ExecutionResult
+    from modelquad.execution.base import ExecutionResult
     spec = spec_for(tmp_path, 'pass')
     row = history.reserve_job(spec.db_path, 'interrupted', spec.attempt_id)
     path = tmp_path / 'spec.json'
@@ -593,7 +593,7 @@ def test_base_exception_records_failure_then_reraises(tmp_path, monkeypatch, err
 
 
 def test_execution_exception_is_failed_not_finished(tmp_path, monkeypatch):
-    from orchestrator.jobs.seam import JobRef
+    from modelquad.jobs.seam import JobRef
     spec = spec_for(tmp_path, 'pass')
     monkeypatch.setattr(procutil, 'run_with_tree_kill', lambda *a, **kw: (_ for _ in ()).throw(OSError()))
     result = runner._execute(spec, JobRef('exception', spec.attempt_id, None))
@@ -649,7 +649,7 @@ def test_pre_start_failures_close_job_and_attempt(tmp_path, monkeypatch, failure
 
 @pytest.mark.parametrize('case', ['success', 'nonzero', 'exception', 'stop', 'timeout'])
 def test_resolution_detail_keeps_reason_and_worker_fate(tmp_path, monkeypatch, case):
-    from orchestrator.execution.base import ExecutionResult, describe_worker_termination
+    from modelquad.execution.base import ExecutionResult, describe_worker_termination
     spec = spec_for(tmp_path, 'pass')
     row = history.reserve_job(spec.db_path, 'detail', spec.attempt_id)
     history.update_job(spec.db_path, row['job_id'], runner_pid=os.getpid(),

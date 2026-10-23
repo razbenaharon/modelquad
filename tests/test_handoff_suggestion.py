@@ -16,15 +16,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator import assistance
-from orchestrator.assistance import handoff_suggestion, statusline_text
-from orchestrator.config import Config
-from orchestrator.execution import ExecutionManager
-from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
-from orchestrator.mcp import server as mcp
-from orchestrator.models import Freshness, FreshnessThresholds, ProviderStatus
-from orchestrator.router import Router
-from orchestrator.service import db
+from modelquad import assistance
+from modelquad.assistance import handoff_suggestion, statusline_text
+from modelquad.config import Config
+from modelquad.execution import ExecutionManager
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+from modelquad.mcp import server as mcp
+from modelquad.models import Freshness, FreshnessThresholds, ProviderStatus
+from modelquad.router import Router
+from modelquad.service import db
 
 
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
@@ -231,7 +231,7 @@ def test_the_status_line_command_records_the_pace_reading(tmp_path, monkeypatch,
     import io
     import json
 
-    from orchestrator import cli
+    from modelquad import cli
 
     usage = tmp_path / "usage"
     usage.mkdir()
@@ -249,7 +249,7 @@ def test_status_line_command_prints_both_providers(tmp_path, capsys, monkeypatch
     import json
     import time
 
-    from orchestrator import cli
+    from modelquad import cli
 
     usage = tmp_path / "usage"
     usage.mkdir()

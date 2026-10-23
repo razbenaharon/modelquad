@@ -11,8 +11,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from orchestrator.service import api, db, listener, listener_proof
-from orchestrator.service.socket_identity import ListenerError
+from modelquad.service import api, db, listener, listener_proof
+from modelquad.service.socket_identity import ListenerError
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def summary_client(tmp_path):
 
 
 def test_proof_cache_does_not_cache_health_or_identity(summary_client, monkeypatch):
-    from orchestrator.jobs import handle
+    from modelquad.jobs import handle
 
     calls = []
     monkeypatch.setattr(handle, "service_runner_verdict", lambda: calls.append(True) or (True, "not_in_job"))
@@ -74,7 +74,7 @@ def test_proof_cache_does_not_cache_health_or_identity(summary_client, monkeypat
 @pytest.mark.parametrize("expired_cache", [False, True])
 def test_proof_retries_exception_but_caches_measured_verdict(summary_client, monkeypatch,
                                                           verdict, expired_cache):
-    from orchestrator.jobs import handle
+    from modelquad.jobs import handle
 
     calls = []
 
@@ -99,7 +99,7 @@ def test_proof_retries_exception_but_caches_measured_verdict(summary_client, mon
 
 
 def test_proof_never_caches_a_returned_containment_unknown(summary_client, monkeypatch):
-    from orchestrator.jobs import handle
+    from modelquad.jobs import handle
 
     calls = []
 

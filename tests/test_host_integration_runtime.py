@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 
-import orchestrator.paths as paths_module
-from orchestrator import hostruntime
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.adapters.hooksmerge import wired_commands
-from orchestrator.adapters.report import ActionKind
-from orchestrator.statecontext import STATE_MODE_ENV_VAR, STATE_ROOT_ENV_VAR
+import modelquad.paths as paths_module
+from modelquad import hostruntime
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.adapters.hooksmerge import wired_commands
+from modelquad.adapters.report import ActionKind
+from modelquad.statecontext import STATE_MODE_ENV_VAR, STATE_ROOT_ENV_VAR
 
 from conftest import no_window_kwargs
 
@@ -118,7 +118,7 @@ def test_upgrade_removes_the_owned_gate_and_keeps_everything_else(tmp_path, old)
 def test_another_programs_gate_is_never_treated_as_ours(tmp_path):
     """Only ModelQuad's own CLI name is ours; a same-named subcommand elsewhere is not."""
     home = tmp_path / ".claude"
-    foreign = {"matcher": "Bash", "hooks": [{"type": "command", "command": "orchestrator hook-gate"}]}
+    foreign = {"matcher": "Bash", "hooks": [{"type": "command", "command": "other-cli hook-gate"}]}
     write_settings(home, {"hooks": {"PreToolUse": [foreign]}})
     ClaudeAdapter().install(home)
     ClaudeAdapter().uninstall(home)
@@ -128,7 +128,7 @@ def test_another_programs_gate_is_never_treated_as_ours(tmp_path):
 @pytest.mark.parametrize("command,owned", [
     ("python my_modelquad_helper.py", False),
     ("modelquad usage-hook other", False),
-    ('"C:\\old runtime\\orchestrator.cmd" usage-hook claude', False),
+    ('"C:\\old runtime\\other-cli.cmd" usage-hook claude', False),
     ("modelquad usage-hook claude", True),
     ('"C:\\old runtime\\modelquad.cmd" usage-hook claude', True),
 ])
@@ -206,7 +206,7 @@ def test_an_absolute_registration_is_pinned_and_judged_without_a_lookup(tmp_path
 
 
 def cli_registry(tmp_path, host_ids=("claude",)):
-    from orchestrator.registry import (
+    from modelquad.registry import (
         HostAdapterDescriptor, ProviderCapabilities, ProviderPlugin,
         ProviderRegistry, UsageSourceKind,
     )
@@ -225,9 +225,9 @@ def cli_registry(tmp_path, host_ids=("claude",)):
 
 
 def cli_report(tmp_path, *, which, registry=None, claude_dir=None):
-    from orchestrator.config import Config
-    from orchestrator.doctor import run_doctor
-    from orchestrator.service import control_plane as shell
+    from modelquad.config import Config
+    from modelquad.doctor import run_doctor
+    from modelquad.service import control_plane as shell
 
     return run_doctor(
         Config(), registry=registry or cli_registry(tmp_path), which=which,
@@ -241,7 +241,7 @@ _RUNTIME_CHECKS = ("claude MCP runtime", "claude status line runtime")
 
 def test_doctor_is_quiet_on_a_normal_pip_install(tmp_path):
     """The runtime checks are OK when the commands resolve on PATH; no gate is wired."""
-    from orchestrator.doctor import CheckStatus
+    from modelquad.doctor import CheckStatus
 
     ClaudeAdapter().install(tmp_path / "claude")
     checks = {c.name: c for c in cli_report(tmp_path, which=scripts_which(tmp_path)).checks}
@@ -251,7 +251,7 @@ def test_doctor_is_quiet_on_a_normal_pip_install(tmp_path):
 
 
 def test_doctor_warns_when_the_commands_are_not_on_path(tmp_path):
-    from orchestrator.doctor import CheckStatus
+    from modelquad.doctor import CheckStatus
 
     ClaudeAdapter().install(tmp_path / "claude")
     checks = {c.name: c for c in cli_report(tmp_path, which=lambda _: None).checks}
@@ -273,7 +273,7 @@ def test_doctor_leaves_user_status_lines_unjudged(tmp_path, command):
 
 def test_leftover_gate_states(tmp_path):
     """Only an owned gate an earlier version wrote is reported, and it asks for repair."""
-    from orchestrator.doctor import CheckStatus, _leftover_gate_check
+    from modelquad.doctor import CheckStatus, _leftover_gate_check
 
     home = tmp_path / "claude"
     assert _leftover_gate_check(home) is None
@@ -293,9 +293,9 @@ def test_leftover_gate_states(tmp_path):
 ])
 def test_repair_cli_findings_and_byte_idempotence(monkeypatch, tmp_path, name, host, arguments):
     """Each CLI warning must reinstall its real adapter once and leave every file stable thereafter."""
-    from orchestrator import repair
-    from orchestrator.config import Config
-    from orchestrator.doctor import DoctorReport
+    from modelquad import repair
+    from modelquad.config import Config
+    from modelquad.doctor import DoctorReport
 
     registry = cli_registry(tmp_path, (host,))
     home = tmp_path / host
@@ -332,7 +332,7 @@ def test_repair_cli_findings_and_byte_idempotence(monkeypatch, tmp_path, name, h
 @pytest.mark.parametrize("stale_first", [False, True])
 def test_doctor_canonical_gate_cannot_hide_stale_sibling(tmp_path, stale_first):
     """A duplicate stale gate still executes, so report consumers must never see only its healthy sibling."""
-    from orchestrator.doctor import CheckStatus
+    from modelquad.doctor import CheckStatus
 
     stale = '"C:/old runtime/modelquad.exe" hook-gate'
     commands = [hostruntime.integration_command("hook-gate"), stale]
@@ -351,7 +351,7 @@ def test_doctor_canonical_gate_cannot_hide_stale_sibling(tmp_path, stale_first):
 @pytest.mark.parametrize("payload", ["{", "[]", '{"statusLine": []}', '{"statusLine": {"command": 7}}'])
 def test_status_reader_tolerates_foreign_shapes(tmp_path, payload):
     """Malformed host settings must not crash diagnostics or manufacture a repair target."""
-    from orchestrator.adapters.cliintegration import read_status_line_command, remove_owned_status_line
+    from modelquad.adapters.cliintegration import read_status_line_command, remove_owned_status_line
 
     settings = tmp_path / "settings.json"
     assert read_status_line_command(settings) is None
@@ -363,7 +363,7 @@ def test_status_reader_tolerates_foreign_shapes(tmp_path, payload):
 
 
 @pytest.mark.parametrize("recorded", [
-    None, "owned", "python my_status.py", "modelquad usage-hook other", "orchestrator usage-hook claude",
+    None, "owned", "python my_status.py", "modelquad usage-hook other", "other-cli usage-hook claude",
 ])
 def test_install_status_line_ownership(tmp_path, recorded):
     """An unrelated repair must preserve the user's status line and tell them it skipped it."""
@@ -386,7 +386,7 @@ def test_install_status_line_ownership(tmp_path, recorded):
 
 def test_shadowed_gate_has_exactly_one_warning(tmp_path):
     """One stale gate must not falsely report an absent adapter or repeat its runtime defect."""
-    from orchestrator import doctor
+    from modelquad import doctor
 
     home = tmp_path / "claude"
     ClaudeAdapter().install(home)
@@ -410,7 +410,7 @@ def test_shadowed_gate_has_exactly_one_warning(tmp_path):
 @pytest.mark.parametrize("user_status", [False, True])
 def test_survey_cli_surfaces(monkeypatch, tmp_path, user_status):
     """State must expose each managed CLI surface, even without MCP, and leave user commands unjudged."""
-    from orchestrator import registry, statediag
+    from modelquad import registry, statediag
 
     monkeypatch.setattr(registry, "default_registry", lambda: cli_registry(tmp_path))
     gate = hostruntime.integration_command("hook-gate")
@@ -439,7 +439,7 @@ def test_survey_cli_surfaces(monkeypatch, tmp_path, user_status):
         (r'"C:\Users\example\Scripts\modelquad.exe" usage-hook claude', True),
         (r'python "C:\Users\example\.claude\statusline.py"', False),
         (r"python C:\Users\example\.claude\router\usage_agy.py", False),
-        ("orchestrator usage-hook claude", False),
+        ("other-cli usage-hook claude", False),
         ("modelquad usage-hook other", False),
         ("starship prompt", False),
     ],
@@ -447,7 +447,7 @@ def test_survey_cli_surfaces(monkeypatch, tmp_path, user_status):
 def test_status_line_ownership_is_exactly_our_own_command(recorded, ours):
     """Only ``modelquad usage-hook claude`` is ours; every other status line is the user's."""
 
-    from orchestrator.adapters.cliintegration import owns_status_line_command
+    from modelquad.adapters.cliintegration import owns_status_line_command
 
     assert owns_status_line_command(recorded, ("usage-hook", "claude")) is ours
 
@@ -547,9 +547,9 @@ def test_repair_migrates_the_unexecutable_spelling_once(
     monkeypatch, tmp_path, name, host, arguments, root_name,
 ):
     """A machine carrying a pinned spelling bash cannot run converges: one repair, then byte-stable."""
-    from orchestrator import repair
-    from orchestrator.config import Config
-    from orchestrator.doctor import DoctorReport
+    from modelquad import repair
+    from modelquad.config import Config
+    from modelquad.doctor import DoctorReport
 
     executable = _fake_exe(tmp_path, root_name)
     which = lambda _: str(executable)

@@ -28,7 +28,7 @@ Two traps it exists to remove, both evidenced rather than theoretical:
    the branch under test is broken.
 
 This script sets the import root itself, prints the resolved
-`orchestrator.__file__` before running anything, and echoes every command it
+`modelquad.__file__` before running anything, and echoes every command it
 runs. It is a shortcut, not a black box: if you would rather type the commands
 yourself, `--list` prints them.
 """
@@ -48,7 +48,7 @@ from pathlib import Path
 
 #: Windows: a console child of a console-less parent allocates its own console
 #: window, and the desktop shows it for the child's lifetime. The
-#: product suppresses that at every spawn through `orchestrator.procutil`;
+#: product suppresses that at every spawn through `modelquad.procutil`;
 #: this file may not import the product (the harness never depends on what it
 #: repairs), so it carries the same six lines itself. The copy is
 #: identical in every `scripts/` file that spawns, and
@@ -141,7 +141,7 @@ EXIT_UNAVAILABLE = 2
 # Directories that are build output or third-party code. Nothing under these is
 # authored here, so nothing under these is checked.
 EXCLUDED_DIRS = frozenset(
-    {".git", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".venv"}
+    {".git", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".venv", "private"}
 )
 
 
@@ -224,7 +224,7 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) ->
 
 #: Environment flags that change ModelQuad's behaviour, reported before the
 #: suite runs. Deliberately reported and NOT cleared -- see `check_python`.
-BEHAVIOUR_FLAGS = ("ORCHESTRATOR_WORKER", "MODELQUAD_DEV_MODE", "ORCHESTRATOR_DEV")
+BEHAVIOUR_FLAGS = ("MODELQUAD_WORKER", "MODELQUAD_DEV_MODE", "MODELQUAD_DEV")
 
 
 def _pytest_parallel_args() -> list[str]:
@@ -263,7 +263,7 @@ def check_python() -> int:
     the whole point. This is a pre-flight subset whose job is to agree
     with a hand-typed `python -m pytest`; clearing them here would make it
     disagree, and would hide exactly the defect that produced this line --
-    `ORCHESTRATOR_WORKER=1`, inherited from an agent session's environment,
+    `MODELQUAD_WORKER=1`, inherited from an agent session's environment,
     failed 77 tests because the suite read it from the ambient
     environment. `tests/conftest.py` now states that variable for itself, so
     the suite is hermetic wherever it runs rather than only under this script.
@@ -287,7 +287,7 @@ def check_python() -> int:
 
     print("  workers: " + ("pytest-xdist, -n auto" if _pytest_parallel_args() else "none (pytest-xdist not installed; serial)"))
     probe = subprocess.run(
-        [sys.executable, "-c", "import orchestrator, sys; sys.stdout.write(orchestrator.__file__)"],
+        [sys.executable, "-c", "import modelquad, sys; sys.stdout.write(modelquad.__file__)"],
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,
@@ -296,7 +296,7 @@ def check_python() -> int:
     )
     resolved = probe.stdout.strip()
     if probe.returncode != 0 or not resolved:
-        print("FAIL  python: `import orchestrator` failed even with PYTHONPATH set.")
+        print("FAIL  python: `import modelquad` failed even with PYTHONPATH set.")
         print(probe.stderr.strip())
         return EXIT_FAILED
 
@@ -308,7 +308,7 @@ def check_python() -> int:
         # test -- but it is never what someone validating a worktree wants, and
         # it is the exact failure that made a green suite meaningless before.
         print(
-            "WARN  python: orchestrator resolved OUTSIDE this worktree's src/.\n"
+            "WARN  python: modelquad resolved OUTSIDE this worktree's src/.\n"
             "      The suite below is testing that installation, not this branch."
         )
 
@@ -414,7 +414,7 @@ def _importing_tests(changed: list[str], candidates: list[Path]) -> set[str]:
     modules = set()
     packages = set()
     for path in changed:
-        if not path.startswith("src/orchestrator/") or not path.endswith(".py"):
+        if not path.startswith("src/modelquad/") or not path.endswith(".py"):
             continue
         parts = list(Path(path).with_suffix("").parts[1:])
         if parts[-1] == "__init__":
@@ -589,7 +589,7 @@ def focused_tests(changed: list[str]) -> list[str]:
     rules = {"stem": selected, "importer": importers, "path": path_guards, "dir": directory_guards,
              "workflow": workflow, "scan": scans}
     broad = len(whole) > FOCUSED_TEST_FILE_LIMIT or any(
-        path in {"src/orchestrator/__init__.py", "src/orchestrator/config.py", "src/orchestrator/models.py"}
+        path in {"src/modelquad/__init__.py", "src/modelquad/config.py", "src/modelquad/models.py"}
         for path in changed
     )
     print(
@@ -625,11 +625,11 @@ def check_focused() -> int:
     if temp_root:
         print(f"  temp root: {temp_root}")
     probe = subprocess.run(
-        [sys.executable, "-c", "import orchestrator"], cwd=str(REPO_ROOT), env=env, capture_output=True, text=True,
+        [sys.executable, "-c", "import modelquad"], cwd=str(REPO_ROOT), env=env, capture_output=True, text=True,
         **no_window_kwargs(),
     )
     if probe.returncode != 0:
-        print("FAIL  focused: `import orchestrator` failed with PYTHONPATH set.")
+        print("FAIL  focused: `import modelquad` failed with PYTHONPATH set.")
         print(probe.stderr.strip())
         return EXIT_FAILED
     tests = focused_tests(changed)
@@ -682,7 +682,7 @@ SECRET_ALLOW_MARKER = "secret-scan: allow"
 
 
 def _read_constant(module_relpath: str, name: str) -> str | None:
-    path = SRC / "orchestrator" / module_relpath
+    path = SRC / "modelquad" / module_relpath
     if not path.is_file():
         return None
     match = re.search(rf"^{re.escape(name)}\s*=\s*[\"']?([\w.]+)[\"']?", path.read_text(encoding="utf-8"), re.MULTILINE)
@@ -717,7 +717,7 @@ def _check_current_state() -> list[str]:
     for label, module_relpath, constant in CURRENT_STATE_FACTS:
         actual = _read_constant(module_relpath, constant)
         if actual is None:
-            problems.append(f"cannot read {constant} from src/orchestrator/{module_relpath}")
+            problems.append(f"cannot read {constant} from src/modelquad/{module_relpath}")
             continue
         stated = re.search(rf"{re.escape(label)}\s*`([^`]+)`", line)
         if stated is None:

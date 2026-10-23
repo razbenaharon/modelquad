@@ -28,15 +28,15 @@ here; the tool under development is not the instrument for developing it.
 
 | Path | What it is |
 |---|---|
-| `src/orchestrator/` | The product (the Python package keeps its original name) |
-| `src/orchestrator/mcp/` | The MCP server Claude Code talks to (`server.py`, job tools in `jobs_tools.py`) |
-| `src/orchestrator/cli_entry.py`, `src/orchestrator/cli.py` | The `modelquad` command; `cli_entry.py` is the installed entry point and runs the hooks without loading the full CLI |
-| `src/orchestrator/execution/` | The Codex worker; `noshell.py` packs the files sent to Codex and checks its event stream |
-| `src/orchestrator/usage/` | Quota readings: Claude's status line, Codex's app-server, the background refresh |
-| `src/orchestrator/jobs/` | Background jobs and the store of answers waiting to be collected |
-| `src/orchestrator/service/` | The optional loopback service and its HTTP API |
-| `src/orchestrator/adapters/` | Install and uninstall for Claude Code; `adapters/templates/claude/` holds the files they write |
-| `src/orchestrator/netpolicy.py`, `privacy.py`, `disclosure.py` | The loopback rule, redaction of stored text, and the notices shown before install and before background work |
+| `src/modelquad/` | The product (the Python package keeps its original name) |
+| `src/modelquad/mcp/` | The MCP server Claude Code talks to (`server.py`, job tools in `jobs_tools.py`) |
+| `src/modelquad/cli_entry.py`, `src/modelquad/cli.py` | The `modelquad` command; `cli_entry.py` is the installed entry point and runs the hooks without loading the full CLI |
+| `src/modelquad/execution/` | The Codex worker; `noshell.py` packs the files sent to Codex and checks its event stream |
+| `src/modelquad/usage/` | Quota readings: Claude's status line, Codex's app-server, the background refresh |
+| `src/modelquad/jobs/` | Background jobs and the store of answers waiting to be collected |
+| `src/modelquad/service/` | The optional loopback service and its HTTP API |
+| `src/modelquad/adapters/` | Install and uninstall for Claude Code; `adapters/templates/claude/` holds the files they write |
+| `src/modelquad/netpolicy.py`, `privacy.py`, `disclosure.py` | The loopback rule, redaction of stored text, and the notices shown before install and before background work |
 | `adapters/claude/README.md` | Points to the packaged templates |
 | `tests/` | The suite |
 | `scripts/` | Development tooling; none of it ships |
@@ -62,7 +62,7 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
 
 ## Safety invariants: do not weaken these
 
-1. **A worker never re-enters orchestration.** `ORCHESTRATOR_WORKER=1` refuses
+1. **A worker never re-enters orchestration.** `MODELQUAD_WORKER=1` refuses
    delegation at every entry point (`tests/test_mcp_worker_guard.py`).
 2. **At most one active attempt per logical request.** Enforced by a partial
    unique index on `request_key`, not only by an application check.
@@ -95,7 +95,7 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
 9. **ModelQuad's own processes connect only to loopback.** Every entry point
    installs the audit hook in `netpolicy.py` (`tests/test_netpolicy.py`).
 
-Privacy rules live in `src/orchestrator/privacy.py`: free text and metadata
+Privacy rules live in `src/modelquad/privacy.py`: free text and metadata
 are path-redacted where history is written, including folder names with
 spaces (`tests/test_privacy_paths.py`). Tool stdout and the stderr body are
 not persisted in any mode; the persisted worker command names only the

@@ -17,9 +17,9 @@ import pytest
 
 from pathlib import Path
 
-from orchestrator.cli import build_providers
-from orchestrator.config import Config, ProviderConfig, load_config
-from orchestrator.execution import (
+from modelquad.cli import build_providers
+from modelquad.config import Config, ProviderConfig, load_config
+from modelquad.execution import (
     CodexExecutor,
     ExecutionManager,
     ExecutionRequest,
@@ -28,10 +28,10 @@ from orchestrator.execution import (
     WorkerTaskStatus,
     no_window_kwargs,
 )
-from orchestrator.execution.base import WORKER_ENV_VAR
-from orchestrator.models import Freshness, ProviderStatus, TaskType
-from orchestrator.quota_policy import QuotaRefusal, apply_refusal_overlay
-from orchestrator.router import Router
+from modelquad.execution.base import WORKER_ENV_VAR
+from modelquad.models import Freshness, ProviderStatus, TaskType
+from modelquad.quota_policy import QuotaRefusal, apply_refusal_overlay
+from modelquad.router import Router
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +66,7 @@ class _FakeExecutor:
 @pytest.fixture(autouse=True)
 def qualified_codex(monkeypatch):
     """Codex tests here own argv and results, not feature qualification."""
-    from orchestrator.execution import codex as codex_module, noshell
+    from modelquad.execution import codex as codex_module, noshell
 
     monkeypatch.setattr(codex_module, "_probe", lambda executable: "0.160.0")
     monkeypatch.setattr(noshell, "qualify", lambda executable, version, **kwargs:
@@ -124,7 +124,7 @@ def _statuses(config, tmp_path):
 
 
 def test_codex_fresh_run_command_construction(tmp_path, *, synthetic_worker_binary):
-    from orchestrator.execution import noshell
+    from modelquad.execution import noshell
 
     resolved = synthetic_worker_binary('codex.exe')
     run = RecordingRun()
@@ -161,7 +161,7 @@ def test_codex_forces_utf8_encoding_for_stdin(tmp_path, prompt, monkeypatch, *, 
     ASCII; it must round-trip the exact Unicode text via explicit UTF-8.
     """
 
-    from orchestrator.execution import codex as codex_module, noshell
+    from modelquad.execution import codex as codex_module, noshell
     # This test owns UTF-8 delivery; no provider/version listing is run.
     monkeypatch.setattr(codex_module, "_probe", lambda executable: "0.160.0")
     monkeypatch.setattr(noshell, "qualify", lambda executable, version, **kwargs:
@@ -265,7 +265,7 @@ def test_execution_request_rejects_unsafe_model_id(tmp_path):
 
 def test_codex_argv_unchanged_without_model_or_effort(tmp_path, *, synthetic_worker_binary):
     """Regression guard: omitting model/reasoning_effort must not alter argv at all."""
-    from orchestrator.execution import noshell
+    from modelquad.execution import noshell
 
     run = RecordingRun()
     request = _request(tmp_path)
@@ -390,7 +390,7 @@ def test_delegated_workers_always_receive_recursion_guard_environment(
     *, synthetic_worker_binary,
 ):
     run = RecordingRun()
-    monkeypatch.setenv("ORCHESTRATOR_EXECUTOR_TEST_VALUE", "preserved")
+    monkeypatch.setenv("MODELQUAD_EXECUTOR_TEST_VALUE", "preserved")
     if existing_worker_value is None:
         monkeypatch.delenv(WORKER_ENV_VAR, raising=False)
     else:
@@ -402,7 +402,7 @@ def test_delegated_workers_always_receive_recursion_guard_environment(
 
     child_env = run.calls[0]["kwargs"]["env"]
     assert child_env[WORKER_ENV_VAR] == "1"
-    assert child_env["ORCHESTRATOR_EXECUTOR_TEST_VALUE"] == "preserved"
+    assert child_env["MODELQUAD_EXECUTOR_TEST_VALUE"] == "preserved"
     assert child_env is not os.environ
 
 
@@ -468,7 +468,7 @@ def test_auto_routing_executes_router_recommendation_first_on_a_score_tie(tmp_pa
 
 
 def test_execution_manager_delegate_threads_expected_consumption_to_router(tmp_path):
-    from orchestrator.models import ConsumptionBucket, ConsumptionSource, ExpectedConsumption
+    from modelquad.models import ConsumptionBucket, ConsumptionSource, ExpectedConsumption
 
     config = Config()
     captured: dict[str, object] = {}
@@ -534,7 +534,7 @@ def test_execution_manager_unavailable_override_does_not_fall_back(tmp_path, *, 
 
 
 def test_an_uninstalled_default_worker_is_not_substituted(tmp_path, *, synthetic_worker_binary):
-    from orchestrator.registry import (
+    from modelquad.registry import (
         ProviderCapabilities, ProviderPlugin, UsageSourceKind,
         WORKSPACE_DEVELOPMENT_GRANT, default_registry,
     )
@@ -714,7 +714,7 @@ def test_codex_exit0_with_success_prose_and_no_envelope_is_unknown_not_completed
 
 
 def test_codex_exit0_with_marker_and_no_envelope_is_unknown_not_completed(tmp_path, *, synthetic_worker_binary):
-    run = _answer("DONE\nGLOBAL_ORCHESTRATOR_E2E_OK\n")
+    run = _answer("DONE\nGLOBAL_MODELQUAD_E2E_OK\n")
 
     result = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run).execute(_request(tmp_path))
 
@@ -1092,7 +1092,7 @@ def test_no_window_kwargs_branches():
 
 
 def test_no_window_kwargs_fallback_when_attribute_missing(monkeypatch):
-    import orchestrator.procutil as procutil_module
+    import modelquad.procutil as procutil_module
 
     monkeypatch.setattr(procutil_module, "subprocess", object())
     assert no_window_kwargs("nt") == {"stdin": subprocess.DEVNULL, "creationflags": 0x08000000}
@@ -1100,9 +1100,9 @@ def test_no_window_kwargs_fallback_when_attribute_missing(monkeypatch):
 
 def test_no_window_kwargs_reexports_canonical():
     """Assert execution.base and usage.base re-export the exact canonical object."""
-    import orchestrator.execution.base as exec_base
-    import orchestrator.procutil as procutil_module
-    import orchestrator.usage.base as usage_base
+    import modelquad.execution.base as exec_base
+    import modelquad.procutil as procutil_module
+    import modelquad.usage.base as usage_base
 
     assert exec_base.no_window_kwargs is procutil_module.no_window_kwargs
     assert usage_base.no_window_kwargs is procutil_module.no_window_kwargs
@@ -1126,7 +1126,7 @@ def test_codex_executor_omits_creationflags_on_non_windows(tmp_path, monkeypatch
     """A posix helper result must reach the executor as *no* kwarg at all --
     never ``creationflags=0``, which POSIX subprocess would reject."""
 
-    import orchestrator.execution.codex as codex_module
+    import modelquad.execution.codex as codex_module
 
     monkeypatch.setattr(
         codex_module, "no_window_kwargs", lambda *a, **k: no_window_kwargs("posix", **k)
@@ -1184,11 +1184,11 @@ def test_codex_stdin_writer_error_preserves_descendants_in_attempt(tmp_path, mon
     """The executor's error result reaches the real attempt/history writers."""
 
     import importlib
-    from orchestrator.execution.base import bound_descendant_facts
-    from orchestrator.service import db as service_db
-    from orchestrator.service import history as service_history
+    from modelquad.execution.base import bound_descendant_facts
+    from modelquad.service import db as service_db
+    from modelquad.service import history as service_history
 
-    mcp_server = importlib.import_module("orchestrator.mcp.server")
+    mcp_server = importlib.import_module("modelquad.mcp.server")
     failure = error_type("private writer output C:/private/project/file")
     failure.worker_descendants = _left(123, image="C:/private/tools/python.exe")
     expected = bound_descendant_facts(failure.worker_descendants)
@@ -1250,8 +1250,8 @@ def test_codex_stdin_writer_error_preserves_descendants_in_attempt(tmp_path, mon
 def test_private_result_preserves_closed_noshell_evidence(
     qualified, unified_exec, verified, violated, collaboration,
 ):
-    from orchestrator import project_notes
-    from orchestrator.execution import noshell
+    from modelquad import project_notes
+    from modelquad.execution import noshell
 
     metadata = {
         **noshell.Qualification(qualified, "private digest", "private version", unified_exec).metadata,
@@ -1294,7 +1294,7 @@ def test_private_result_preserves_closed_noshell_evidence(
     ],
 )
 def test_private_result_rejects_non_boolean_noshell_metadata(value):
-    from orchestrator import project_notes
+    from modelquad import project_notes
 
     metadata = dict.fromkeys((
         "noshell_qualified", "noshell_unified_exec_observed",
@@ -1583,8 +1583,8 @@ def test_a_single_worker_result_is_carried_as_is(tmp_path):
 
 
 def test_envelope_instruction_states_the_completion_contract():
-    from orchestrator.execution.base import _COMPLETION_ENVELOPE_INSTRUCTION as text
-    from orchestrator.execution.base import parse_completion_envelope, worker_limitations
+    from modelquad.execution.base import _COMPLETION_ENVELOPE_INSTRUCTION as text
+    from modelquad.execution.base import parse_completion_envelope, worker_limitations
 
     lowered = text.lower()
     assert "any tool call was denied" not in lowered, (
@@ -1610,7 +1610,7 @@ def test_envelope_instruction_states_the_completion_contract():
 
 
 def test_completed_with_limitations_is_completed_and_the_limitations_are_carried():
-    from orchestrator.execution.base import classify_worker_result, worker_limitations
+    from modelquad.execution.base import classify_worker_result, worker_limitations
 
     output = (
         "Fixed the bug and ran the focused tests.\n```json\n"
@@ -1630,7 +1630,7 @@ def test_completed_with_limitations_is_completed_and_the_limitations_are_carried
 
 
 def test_limitations_are_absent_not_fatal_when_missing_or_malformed():
-    from orchestrator.execution.base import classify_worker_result, worker_limitations
+    from modelquad.execution.base import classify_worker_result, worker_limitations
 
     plain = '```json\n{"task_status": "completed", "reason": null}\n```'
     assert worker_limitations(plain) == ()
@@ -1653,7 +1653,7 @@ def test_limitations_are_absent_not_fatal_when_missing_or_malformed():
 
 
 def test_limitations_are_bounded():
-    from orchestrator.execution.base import worker_limitations
+    from modelquad.execution.base import worker_limitations
     import json as _json
 
     text = "```json\n" + _json.dumps(
@@ -1668,7 +1668,7 @@ def test_a_blocked_envelope_with_limitations_stays_blocked_and_keeps_them():
     """`blocked` is the worker's judgement that a REQUIRED capability was
     missing; the contract keeps that judgement. Limitations ride beside it."""
 
-    from orchestrator.execution.base import classify_worker_result, worker_limitations
+    from modelquad.execution.base import classify_worker_result, worker_limitations
 
     text = (
         '```json\n{"task_status": "blocked", '
@@ -1683,7 +1683,7 @@ def test_a_blocked_envelope_with_limitations_stays_blocked_and_keeps_them():
 
 
 def test_execution_result_surfaces_limitations_beside_the_headline():
-    from orchestrator.execution.base import ExecutionResult
+    from modelquad.execution.base import ExecutionResult
 
     result = ExecutionResult(
         provider="codex",

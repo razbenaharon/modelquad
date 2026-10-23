@@ -28,10 +28,10 @@ from pathlib import Path
 
 import pytest
 
-import orchestrator.paths as paths_module
-from orchestrator import hostruntime, statediag
-from orchestrator.service import db as service_db
-from orchestrator.statecontext import (
+import modelquad.paths as paths_module
+from modelquad import hostruntime, statediag
+from modelquad.service import db as service_db
+from modelquad.statecontext import (
     STATE_MODE_ENV_VAR,
     STATE_ROOT_ENV_VAR,
     StateMode,
@@ -51,7 +51,7 @@ def force_installed(monkeypatch, local_appdata: Path) -> Path:
     monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: False)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
-    return local_appdata / "MultiAgentOrchestrator"
+    return local_appdata / "ModelQuad"
 
 
 def force_development(monkeypatch) -> None:
@@ -62,7 +62,7 @@ def make_store(root: Path, settings: dict[str, object]) -> Path:
     """Create a minimal ModelQuad store, the way a real one looks on disk."""
 
     root.mkdir(parents=True, exist_ok=True)
-    database = root / "orchestrator.db"
+    database = root / "modelquad.db"
     connection = sqlite3.connect(database)
     try:
         connection.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -93,7 +93,7 @@ def test_every_installed_surface_resolves_one_canonical_store(monkeypatch, tmp_p
 
     expected = force_installed(monkeypatch, tmp_path / "AppData" / "Local")
 
-    from orchestrator.service import lifecycle
+    from modelquad.service import lifecycle
 
     context = resolve_state_context()
     assert context.mode is StateMode.INSTALLED
@@ -101,8 +101,8 @@ def test_every_installed_surface_resolves_one_canonical_store(monkeypatch, tmp_p
 
     # service/db.py -- the MCP server, the CLI and the HTTP API all read state
     # through this resolver.
-    assert paths_module.db_path() == expected / "orchestrator.db"
-    assert context.database_path == expected / "orchestrator.db"
+    assert paths_module.db_path() == expected / "modelquad.db"
+    assert context.database_path == expected / "modelquad.db"
 
     # service/lifecycle.py -- the pidfile and logs clients of the local service
     # use to find the running service.
@@ -112,7 +112,7 @@ def test_every_installed_surface_resolves_one_canonical_store(monkeypatch, tmp_p
     # The HTTP API's identity handshake must claim the SAME kind it
     # actually serves. Reporting "development" while writing installed state
     # is precisely the contradiction that made the split invisible.
-    from orchestrator.service.api import get_health
+    from modelquad.service.api import get_health
 
     health = get_health()
     assert health["instance_kind"] == "installed"
@@ -139,7 +139,7 @@ def test_a_non_editable_install_no_longer_claims_to_be_a_development_instance(
     assert context.mode is StateMode.INSTALLED
     assert context.source is StateSource.INSTALLED_DEFAULT
 
-    from orchestrator.service.api import get_health
+    from modelquad.service.api import get_health
 
     assert get_health()["instance_kind"] == "installed"
     assert Path(get_health()["state_root"]) == context.state_root
@@ -169,7 +169,7 @@ def test_an_explicit_state_root_isolates_without_touching_installed_state(
     assert context.source is StateSource.ENV_OVERRIDE
     assert context.mode is StateMode.DEVELOPMENT
     assert context.state_root == sandbox
-    assert paths_module.db_path() == sandbox / "orchestrator.db"
+    assert paths_module.db_path() == sandbox / "modelquad.db"
 
     # The installed store is untouched -- isolation never migrates or writes
     # over the production store it is isolating from.
@@ -185,7 +185,7 @@ def test_an_explicit_mode_selects_that_modes_canonical_root(monkeypatch, tmp_pat
     context = resolve_state_context()
     assert context.mode is StateMode.INSTALLED
     assert context.source is StateSource.ENV_OVERRIDE
-    assert context.state_root == tmp_path / "AppData" / "Local" / "MultiAgentOrchestrator"
+    assert context.state_root == tmp_path / "AppData" / "Local" / "ModelQuad"
 
 
 def test_an_unparseable_mode_override_falls_through_instead_of_breaking_startup(
@@ -206,8 +206,8 @@ def test_dev_mode_state_root_is_unchanged_from_pre_fix_behaviour(monkeypatch):
 
     force_development(monkeypatch)
     context = resolve_state_context()
-    assert context.state_root == Path.home() / ".orchestrator"
-    assert context.database_path == Path.home() / ".orchestrator" / "orchestrator.db"
+    assert context.state_root == Path.home() / ".modelquad"
+    assert context.database_path == Path.home() / ".modelquad" / "modelquad.db"
 
 
 # --------------------------------------------------------------------------
@@ -249,7 +249,7 @@ def test_each_adapter_writes_the_resolved_runtime_into_the_host_config(
     shim.parent.mkdir(parents=True)
     shim.write_text("@echo off\n", encoding="utf-8")
 
-    from orchestrator.adapters.claude_adapter import ClaudeAdapter
+    from modelquad.adapters.claude_adapter import ClaudeAdapter
 
     target = tmp_path / "hosts" / ".claude"
     target.mkdir(parents=True)
@@ -270,7 +270,7 @@ def test_installing_twice_is_idempotent_and_writes_no_duplicate_registration(
     shim.parent.mkdir(parents=True)
     shim.write_text("@echo off\n", encoding="utf-8")
 
-    from orchestrator.adapters.claude_adapter import ClaudeAdapter
+    from modelquad.adapters.claude_adapter import ClaudeAdapter
 
     claude_target = tmp_path / ".claude"
     claude_target.mkdir()
@@ -292,7 +292,7 @@ def test_installing_preserves_unrelated_host_configuration(monkeypatch, tmp_path
     shim.parent.mkdir(parents=True)
     shim.write_text("@echo off\n", encoding="utf-8")
 
-    from orchestrator.adapters.claude_adapter import ClaudeAdapter
+    from modelquad.adapters.claude_adapter import ClaudeAdapter
 
     target = tmp_path / ".claude"
     target.mkdir()
@@ -369,11 +369,11 @@ def test_the_live_split_is_detected_as_mixed_state(monkeypatch, tmp_path):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     make_store(
-        local_appdata / "MultiAgentOrchestrator",
+        local_appdata / "ModelQuad",
         {"routing_mode": "automatic", "routing_paused": True, "telemetry_consent": False},
     )
     make_store(
-        tmp_path / ".orchestrator",
+        tmp_path / ".modelquad",
         {"routing_mode": "manual", "routing_paused": False, "telemetry_consent": False},
     )
 
@@ -393,7 +393,7 @@ def test_a_single_store_is_reported_consistent(monkeypatch, tmp_path):
     force_installed(monkeypatch, local_appdata)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    make_store(local_appdata / "MultiAgentOrchestrator", {"routing_mode": "automatic"})
+    make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
 
     survey = statediag.survey_state(which=lambda _name: None)
     assert survey.consistent is True
@@ -414,8 +414,8 @@ def test_a_lazily_unwritten_setting_is_not_a_divergence(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
-    make_store(local_appdata / "MultiAgentOrchestrator", {"routing_mode": "automatic"})
-    make_store(tmp_path / ".orchestrator", {"decision_mode": "deterministic"})
+    make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
+    make_store(tmp_path / ".modelquad", {"decision_mode": "deterministic"})
 
     survey = statediag.survey_state(which=lambda _name: None)
     # Two stores is still a finding; disagreeing settings is not.
@@ -431,15 +431,15 @@ def test_surveying_never_creates_or_modifies_a_store(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
-    database = make_store(local_appdata / "MultiAgentOrchestrator", {"routing_mode": "automatic"})
+    database = make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
     before_bytes = database.read_bytes()
-    dev_root = tmp_path / ".orchestrator"
+    dev_root = tmp_path / ".modelquad"
 
     statediag.survey_state(which=lambda _name: None)
 
     assert database.read_bytes() == before_bytes
     # The absent store stays absent: inspecting it must not bring it into being.
-    assert not (dev_root / "orchestrator.db").exists()
+    assert not (dev_root / "modelquad.db").exists()
 
 
 def test_doctor_reports_mixed_state_instead_of_passing_green(monkeypatch, tmp_path):
@@ -454,10 +454,10 @@ def test_doctor_reports_mixed_state_instead_of_passing_green(monkeypatch, tmp_pa
     force_installed(monkeypatch, local_appdata)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    make_store(local_appdata / "MultiAgentOrchestrator", {"routing_mode": "automatic"})
-    make_store(tmp_path / ".orchestrator", {"routing_mode": "manual"})
+    make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
+    make_store(tmp_path / ".modelquad", {"routing_mode": "manual"})
 
-    from orchestrator.doctor import CheckStatus, _state_consistency_check
+    from modelquad.doctor import CheckStatus, _state_consistency_check
 
     check = _state_consistency_check()
     assert check.status is CheckStatus.WARN
@@ -469,9 +469,9 @@ def test_doctor_state_check_is_ok_for_a_single_store(monkeypatch, tmp_path):
     force_installed(monkeypatch, local_appdata)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    make_store(local_appdata / "MultiAgentOrchestrator", {"routing_mode": "automatic"})
+    make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
 
-    from orchestrator.doctor import CheckStatus, _state_consistency_check
+    from modelquad.doctor import CheckStatus, _state_consistency_check
 
     check = _state_consistency_check()
     assert check.status is CheckStatus.OK
@@ -486,7 +486,7 @@ def test_a_non_canonical_registration_is_routed_to_repair(monkeypatch, tmp_path)
     offered for a problem it does not fix.
     """
 
-    from orchestrator.repair import _map_check_to_host
+    from modelquad.repair import _map_check_to_host
 
     assert _map_check_to_host("claude MCP runtime") == "claude"
     assert _map_check_to_host("codex MCP runtime") == "codex"
@@ -506,7 +506,7 @@ def test_doctor_mcp_runtime_check_flags_the_live_registration(monkeypatch, tmp_p
         encoding="utf-8",
     )
 
-    from orchestrator.doctor import CheckStatus, _mcp_runtime_check
+    from modelquad.doctor import CheckStatus, _mcp_runtime_check
 
     check = _mcp_runtime_check("claude", target, which=lambda _name: None)
     assert check is not None
@@ -518,7 +518,7 @@ def test_doctor_mcp_runtime_check_flags_the_live_registration(monkeypatch, tmp_p
 def test_doctor_mcp_runtime_check_is_silent_when_there_is_no_registration(tmp_path):
     """Absence is the neighbouring check's finding; do not report it twice."""
 
-    from orchestrator.doctor import _mcp_runtime_check
+    from modelquad.doctor import _mcp_runtime_check
 
     target = tmp_path / ".claude"
     target.mkdir()
@@ -551,7 +551,7 @@ def test_a_setting_written_by_one_surface_is_read_by_every_other(
     surface ever stops resolving through ``paths``, this fails.
     """
 
-    from orchestrator.service import history as service_history
+    from modelquad.service import history as service_history
 
     force_installed(monkeypatch, tmp_path / "AppData" / "Local")
     monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", paths_module.db_path())
@@ -576,9 +576,9 @@ def _survey_with(monkeypatch, tmp_path, *, installed=None, development=None):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     if installed is not None:
-        make_store(local_appdata / "MultiAgentOrchestrator", installed)
+        make_store(local_appdata / "ModelQuad", installed)
     if development is not None:
-        make_store(tmp_path / ".orchestrator", development)
+        make_store(tmp_path / ".modelquad", development)
     if installed is not None and development is not None:
         wire_foreign_host(tmp_path)
     return statediag.survey_state(which=lambda _name: None)
@@ -608,8 +608,8 @@ def test_only_a_foreign_store_is_reported_and_never_adopted(monkeypatch, tmp_pat
     assert survey.coexistence is statediag.Coexistence.FOREIGN_ONLY
     # One store is not a split, so it is not a finding -- but the survey still
     # says which store this runtime owns, and it is not that one.
-    assert survey.context.state_root == tmp_path / "AppData" / "Local" / "MultiAgentOrchestrator"
-    assert (tmp_path / ".orchestrator" / "orchestrator.db").is_file()
+    assert survey.context.state_root == tmp_path / "AppData" / "Local" / "ModelQuad"
+    assert (tmp_path / ".modelquad" / "modelquad.db").is_file()
 
 
 def test_two_agreeing_stores_are_still_reported(monkeypatch, tmp_path):
@@ -644,8 +644,8 @@ def test_two_conflicting_stores_are_classified_as_conflict(monkeypatch, tmp_path
 @pytest.mark.parametrize("foreign", [False, True])
 def test_preserved_stores_and_active_control_plane(monkeypatch, tmp_path, capsys, foreign):
     """Preserved history must go green without deletion; a foreign host must still expose the live split."""
-    from orchestrator.cli import render_state_survey
-    from orchestrator.doctor import CheckStatus, _state_consistency_check
+    from modelquad.cli import render_state_survey
+    from modelquad.doctor import CheckStatus, _state_consistency_check
 
     local = tmp_path / "Local"
     root = force_installed(monkeypatch, local)
@@ -653,7 +653,7 @@ def test_preserved_stores_and_active_control_plane(monkeypatch, tmp_path, capsys
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     databases = (
         make_store(root, {"routing_mode": "automatic"}),
-        make_store(tmp_path / ".orchestrator", {"routing_mode": "manual"}),
+        make_store(tmp_path / ".modelquad", {"routing_mode": "manual"}),
     )
     before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in databases}
     shim = root / "bin" / "modelquad-mcp.cmd"
@@ -729,7 +729,7 @@ def _two_stores_hosts_pinned(monkeypatch, tmp_path):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     databases = (
         make_store(root, {"routing_mode": "automatic"}),
-        make_store(tmp_path / ".orchestrator", {"routing_mode": "manual"}),
+        make_store(tmp_path / ".modelquad", {"routing_mode": "manual"}),
     )
     shim = root / "bin" / "modelquad-mcp.cmd"
     shim.parent.mkdir(parents=True)
@@ -737,7 +737,7 @@ def _two_stores_hosts_pinned(monkeypatch, tmp_path):
     (tmp_path / ".claude.json").write_text(
         json.dumps({"mcpServers": {"modelquad": {"command": "modelquad-mcp"}}}), encoding="utf-8"
     )
-    return root, tmp_path / ".orchestrator", databases
+    return root, tmp_path / ".modelquad", databases
 
 
 def _write_pidfile(store_root: Path, pid: int, argv: list[str], *, started_at: str | None = None) -> None:
@@ -768,13 +768,13 @@ def _on_path(name):
 
 
 def test_a_live_identity_matched_service_on_the_other_store_is_a_finding(monkeypatch, tmp_path, capsys):
-    from orchestrator.cli import render_state_survey
-    from orchestrator.doctor import CheckStatus, _state_consistency_check
+    from modelquad.cli import render_state_survey
+    from modelquad.doctor import CheckStatus, _state_consistency_check
 
     root, foreign_root, databases = _two_stores_hosts_pinned(monkeypatch, tmp_path)
     before = _snapshot(databases)
     # This very process is alive and its image is sys.executable's basename.
-    _write_pidfile(foreign_root, os.getpid(), [sys.executable, "-m", "orchestrator", "service", "run"])
+    _write_pidfile(foreign_root, os.getpid(), [sys.executable, "-m", "modelquad", "service", "run"])
 
     survey = statediag.survey_state(which=_on_path)
 
@@ -825,8 +825,8 @@ def test_a_live_identity_matched_service_on_the_other_store_is_a_finding(monkeyp
 def test_a_dead_pid_in_the_other_stores_pidfile_keeps_the_preserved_state_green(monkeypatch, tmp_path, capsys):
     """The preserved-store case: a crashed dev service left its pidfile; nothing runs."""
 
-    from orchestrator.cli import render_state_survey
-    from orchestrator.doctor import CheckStatus, _state_consistency_check
+    from modelquad.cli import render_state_survey
+    from modelquad.doctor import CheckStatus, _state_consistency_check
 
     root, foreign_root, databases = _two_stores_hosts_pinned(monkeypatch, tmp_path)
     before = _snapshot(databases)
@@ -836,7 +836,7 @@ def test_a_dead_pid_in_the_other_stores_pidfile_keeps_the_preserved_state_green(
                              **no_window_kwargs())
     child.wait(timeout=60)
     try:
-        _write_pidfile(foreign_root, child.pid, [sys.executable, "-m", "orchestrator", "service", "run"])
+        _write_pidfile(foreign_root, child.pid, [sys.executable, "-m", "modelquad", "service", "run"])
 
         survey = statediag.survey_state(which=_on_path)
 
@@ -877,18 +877,18 @@ def test_an_unestablished_service_pid_is_a_note_that_says_so_never_ok_by_omissio
 ):
     """Neither a finding nor silence: the product says what it could not establish."""
 
-    from orchestrator.cli import render_state_survey
-    from orchestrator.doctor import CheckStatus, _state_consistency_check
+    from modelquad.cli import render_state_survey
+    from modelquad.doctor import CheckStatus, _state_consistency_check
 
     root, foreign_root, databases = _two_stores_hosts_pinned(monkeypatch, tmp_path)
     before = _snapshot(databases)
-    _write_pidfile(foreign_root, os.getpid(), ["C:\\other\\orchestrator.exe", "service", "run"])
+    _write_pidfile(foreign_root, os.getpid(), ["C:\\other\\modelquad.exe", "service", "run"])
     monkeypatch.setattr(statediag, "pid_state", lambda pid: probe)
     if verified is None:
         monkeypatch.setattr(statediag, "process_image_name", lambda pid: None)
     elif verified == "creation-unknown":
         # The image matches but the creation time cannot be read: not established.
-        monkeypatch.setattr(statediag, "process_image_name", lambda pid: "orchestrator.exe")
+        monkeypatch.setattr(statediag, "process_image_name", lambda pid: "modelquad.exe")
         monkeypatch.setattr(statediag, "process_creation_epoch", lambda pid: None)
         verified = None
     else:
@@ -920,7 +920,7 @@ def test_a_live_service_on_the_owned_store_is_not_a_split(monkeypatch, tmp_path)
     """Our own service running against our own store is the healthy case."""
 
     root, foreign_root, databases = _two_stores_hosts_pinned(monkeypatch, tmp_path)
-    _write_pidfile(root, os.getpid(), [sys.executable, "-m", "orchestrator", "service", "run"])
+    _write_pidfile(root, os.getpid(), [sys.executable, "-m", "modelquad", "service", "run"])
 
     survey = statediag.survey_state(which=_on_path)
 
@@ -963,7 +963,7 @@ def test_a_recycled_pid_with_the_same_image_is_not_the_recorded_service(monkeypa
     root, foreign_root, databases = _two_stores_hosts_pinned(monkeypatch, tmp_path)
     # A record written an hour ago; this process (same image) was created later.
     earlier = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    _write_pidfile(foreign_root, os.getpid(), [sys.executable, "-m", "orchestrator", "service", "run"], started_at=earlier)
+    _write_pidfile(foreign_root, os.getpid(), [sys.executable, "-m", "modelquad", "service", "run"], started_at=earlier)
 
     survey = statediag.survey_state(which=_on_path)
 
@@ -980,7 +980,7 @@ def test_a_recycled_pid_with_the_same_image_is_not_the_recorded_service(monkeypa
 
 def test_an_unparseable_started_at_leaves_identity_unestablished(monkeypatch, tmp_path):
     root, foreign_root, databases = _two_stores_hosts_pinned(monkeypatch, tmp_path)
-    _write_pidfile(foreign_root, os.getpid(), [sys.executable, "-m", "orchestrator"], started_at="yesterday-ish")
+    _write_pidfile(foreign_root, os.getpid(), [sys.executable, "-m", "modelquad"], started_at="yesterday-ish")
 
     survey = statediag.survey_state(which=_on_path)
 
@@ -995,7 +995,7 @@ def test_an_alias_of_the_owned_root_is_never_foreign(monkeypatch, tmp_path):
     """`..`, case and junctions reach the owned store all the same."""
 
     root, foreign_root, databases = _two_stores_hosts_pinned(monkeypatch, tmp_path)
-    _write_pidfile(root, os.getpid(), [sys.executable, "-m", "orchestrator", "service", "run"])
+    _write_pidfile(root, os.getpid(), [sys.executable, "-m", "modelquad", "service", "run"])
     (root.parent / "detour").mkdir()
     spellings = [root.parent / "detour" / ".." / root.name]
     if os.name == "nt":

@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator import hostobs
-from orchestrator.hostobs import (
+from modelquad import hostobs
+from modelquad.hostobs import (
     CODEX_CONFIG_KEYS,
     CODEX_ENV_ALLOWLIST,
     ClaudeCodeHostObserver,
@@ -36,7 +36,7 @@ from orchestrator.hostobs import (
     default_observers,
     with_decision_context,
 )
-from orchestrator.models import ModelIdentitySource, RuntimeRole
+from modelquad.models import ModelIdentitySource, RuntimeRole
 
 # What codex-cli 0.147.0 actually sent in `initialize`, recorded live.
 REAL_CLIENT_INFO = {

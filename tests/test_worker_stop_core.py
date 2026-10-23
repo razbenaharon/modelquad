@@ -12,12 +12,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from orchestrator import procutil
-from orchestrator.config import Config
-from orchestrator.execution import CodexExecutor, ExecutionManager
-from orchestrator.execution.base import ExecutionRequest, ExecutionResult, WorkerTaskStatus, attempt_resolution, workspace_stability_note
-from orchestrator.models import TaskType
-from orchestrator.service import db, history
+from modelquad import procutil
+from modelquad.config import Config
+from modelquad.execution import CodexExecutor, ExecutionManager
+from modelquad.execution.base import ExecutionRequest, ExecutionResult, WorkerTaskStatus, attempt_resolution, workspace_stability_note
+from modelquad.models import TaskType
+from modelquad.service import db, history
 
 
 def opened(path):
@@ -343,7 +343,7 @@ def test_real_tree_stop_with_blocked_stdin_preserves_partial_output(tmp_path, ti
 def test_executor_maps_stop_and_forwards_callback(tmp_path, monkeypatch, executor, provider, confirmed,
                                                   synthetic_worker_binary):
     import tempfile
-    from orchestrator.execution import codex as codex_module, noshell
+    from modelquad.execution import codex as codex_module, noshell
 
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     monkeypatch.setattr(codex_module, "_probe", lambda executable: "0.160.0")
@@ -515,7 +515,7 @@ def test_auxiliary_attempt_stop_binding_and_terminal_detail(tmp_path, role, conf
 
 
 def test_database_less_manager_honours_request_stop(tmp_path):
-    from orchestrator.execution.manager import _AdmittedExecutor
+    from modelquad.execution.manager import _AdmittedExecutor
 
     class Worker:
         name = "codex"

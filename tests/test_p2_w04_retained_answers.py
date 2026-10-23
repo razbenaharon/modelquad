@@ -18,13 +18,13 @@ import zlib
 import pytest
 
 from conftest import no_window_kwargs
-from orchestrator.execution.base import DESCENDANTS_RECORDED, WorkerTaskStatus
-from orchestrator.jobs import handle
-from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus, RETENTION
-from orchestrator.jobs import store as storage
-from orchestrator.jobs.store import FileOutputStore, PendingOutputCapacityUnavailable
-from orchestrator.mcp import jobs_tools, server
-from orchestrator.service import db, history
+from modelquad.execution.base import DESCENDANTS_RECORDED, WorkerTaskStatus
+from modelquad.jobs import handle
+from modelquad.jobs.seam import JobOutput, JobRef, JobStatus, RETENTION
+from modelquad.jobs import store as storage
+from modelquad.jobs.store import FileOutputStore, PendingOutputCapacityUnavailable
+from modelquad.mcp import jobs_tools, server
+from modelquad.service import db, history
 
 
 NOW = datetime(2026, 10, 7, 10, tzinfo=timezone.utc)
@@ -333,7 +333,7 @@ def test_open_write_is_not_served_under_enospc(tmp_path, monkeypatch, operation)
 CRASH_CHILD = r'''
 import errno, os, sys
 from datetime import datetime, timezone
-from orchestrator.jobs.store import FileOutputStore
+from modelquad.jobs.store import FileOutputStore
 root, stage, operation = sys.argv[1:]
 store = FileOutputStore(root)
 def full(*args, **kwargs):
@@ -430,7 +430,7 @@ def test_native_removal_slot_is_allocated_and_removal_never_allocates(tmp_path, 
 
 
 def test_capacity_reservation_and_opaque_job_id_stay_inside_store_root(tmp_path, monkeypatch):
-    from orchestrator import paths
+    from modelquad import paths
 
     root = tmp_path / 'state $ \u05ea\u05e9\u05d5\u05d1\u05d4'
     monkeypatch.setattr(paths, 'state_root', lambda: root)

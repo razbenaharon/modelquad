@@ -6,17 +6,17 @@ import json
 from pathlib import Path
 import pytest
 
-from orchestrator.adapters import ActionKind, FileAction, InstallReport
-from orchestrator.cli import build_parser, main
-from orchestrator.doctor import CheckStatus, DoctorCheck, DoctorReport
-from orchestrator.registry import (
+from modelquad.adapters import ActionKind, FileAction, InstallReport
+from modelquad.cli import build_parser, main
+from modelquad.doctor import CheckStatus, DoctorCheck, DoctorReport
+from modelquad.registry import (
     HostAdapterDescriptor,
     ProviderCapabilities,
     ProviderPlugin,
     ProviderRegistry,
     UsageSourceKind,
 )
-from orchestrator.repair import _map_check_to_host, run_repair
+from modelquad.repair import _map_check_to_host, run_repair
 
 
 class StubAdapter:
@@ -120,14 +120,14 @@ def test_repair_warned_adapter_reinstalls_and_passes(monkeypatch, tmp_path):
 
     before_report = DoctorReport(
         checks=(
-            DoctorCheck("orchestrator package", CheckStatus.OK, "0.8.0"),
+            DoctorCheck("modelquad package", CheckStatus.OK, "0.8.0"),
             DoctorCheck("claude adapter installed", CheckStatus.WARN, "Not installed"),
             DoctorCheck("claude CLI", CheckStatus.OK, "Found"),
         )
     )
     after_report = DoctorReport(
         checks=(
-            DoctorCheck("orchestrator package", CheckStatus.OK, "0.8.0"),
+            DoctorCheck("modelquad package", CheckStatus.OK, "0.8.0"),
             DoctorCheck("claude adapter installed", CheckStatus.OK, "Installed"),
             DoctorCheck("claude CLI", CheckStatus.OK, "Found"),
         )
@@ -142,7 +142,7 @@ def test_repair_warned_adapter_reinstalls_and_passes(monkeypatch, tmp_path):
         doctor_calls.append("after")
         return after_report
 
-    monkeypatch.setattr("orchestrator.repair.run_doctor", fake_run_doctor)
+    monkeypatch.setattr("modelquad.repair.run_doctor", fake_run_doctor)
 
     result = run_repair(registry=registry)
 
@@ -163,7 +163,7 @@ def test_repair_reports_a_host_it_could_not_reconnect(monkeypatch, tmp_path):
     report = DoctorReport(checks=(
         DoctorCheck("claude adapter installed", CheckStatus.WARN, "Not installed"),
     ))
-    monkeypatch.setattr("orchestrator.repair.run_doctor", lambda *a, **k: report)
+    monkeypatch.setattr("modelquad.repair.run_doctor", lambda *a, **k: report)
     printed: list[str] = []
 
     result = run_repair(registry=registry, print_fn=printed.append)
@@ -179,12 +179,12 @@ def test_repair_unrelated_warn_is_skipped(monkeypatch, tmp_path):
 
     report = DoctorReport(
         checks=(
-            DoctorCheck("orchestrator package", CheckStatus.OK, "0.8.0"),
+            DoctorCheck("modelquad package", CheckStatus.OK, "0.8.0"),
             DoctorCheck("usage sources", CheckStatus.WARN, "Missing snapshots"),
             DoctorCheck("claude configured", CheckStatus.WARN, "No API key"),
         )
     )
-    monkeypatch.setattr("orchestrator.repair.run_doctor", lambda *a, **k: report)
+    monkeypatch.setattr("modelquad.repair.run_doctor", lambda *a, **k: report)
 
     result = run_repair(registry=registry)
 
@@ -200,7 +200,7 @@ def test_repair_dry_run_passes_flag_and_skips_second_doctor_run(monkeypatch, tmp
 
     before_report = DoctorReport(
         checks=(
-            DoctorCheck("orchestrator package", CheckStatus.OK, "0.8.0"),
+            DoctorCheck("modelquad package", CheckStatus.OK, "0.8.0"),
             DoctorCheck("claude adapter installed", CheckStatus.WARN, "Not installed"),
         )
     )
@@ -210,7 +210,7 @@ def test_repair_dry_run_passes_flag_and_skips_second_doctor_run(monkeypatch, tmp
         doctor_calls.append("call")
         return before_report
 
-    monkeypatch.setattr("orchestrator.repair.run_doctor", fake_run_doctor)
+    monkeypatch.setattr("modelquad.repair.run_doctor", fake_run_doctor)
 
     result = run_repair(dry_run=True, registry=registry)
 
@@ -228,11 +228,11 @@ def test_repair_missing_cli_reported_not_repairable(monkeypatch, tmp_path):
 
     report = DoctorReport(
         checks=(
-            DoctorCheck("orchestrator package", CheckStatus.OK, "0.8.0"),
+            DoctorCheck("modelquad package", CheckStatus.OK, "0.8.0"),
             DoctorCheck("codex CLI", CheckStatus.MISSING, "Install Codex CLI"),
         )
     )
-    monkeypatch.setattr("orchestrator.repair.run_doctor", lambda *a, **k: report)
+    monkeypatch.setattr("modelquad.repair.run_doctor", lambda *a, **k: report)
 
     result = run_repair(registry=registry)
 
@@ -246,11 +246,11 @@ def test_repair_undetected_host_is_skipped(monkeypatch, tmp_path):
 
     report = DoctorReport(
         checks=(
-            DoctorCheck("orchestrator package", CheckStatus.OK, "0.8.0"),
+            DoctorCheck("modelquad package", CheckStatus.OK, "0.8.0"),
             DoctorCheck("claude-desktop adapter installed", CheckStatus.WARN, "Not installed"),
         )
     )
-    monkeypatch.setattr("orchestrator.repair.run_doctor", lambda *a, **k: report)
+    monkeypatch.setattr("modelquad.repair.run_doctor", lambda *a, **k: report)
 
     result = run_repair(registry=registry)
 
@@ -283,7 +283,7 @@ def test_repair_claude_hook_and_mcp_checks(monkeypatch, tmp_path):
             return before_report
         return after_report
 
-    monkeypatch.setattr("orchestrator.repair.run_doctor", fake_doctor)
+    monkeypatch.setattr("modelquad.repair.run_doctor", fake_doctor)
 
     result = run_repair(registry=registry)
     assert set(result["repaired_hosts"]) == {"claude", "codex"}
@@ -311,7 +311,7 @@ def test_cli_repair_execution(monkeypatch, capsys):
         "after_warn_count": 0,
         "ok": True,
     }
-    monkeypatch.setattr("orchestrator.repair.run_repair", lambda **k: fake_result)
+    monkeypatch.setattr("modelquad.repair.run_repair", lambda **k: fake_result)
 
     exit_code = main(["repair", "--json"])
     assert exit_code == 0

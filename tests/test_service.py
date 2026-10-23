@@ -13,20 +13,20 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
-from orchestrator.cli import build_parser, main
-from orchestrator.execution.base import ExecutionResult, OutcomeEvidence, WorkerTaskStatus
-from orchestrator.models import Freshness, ProviderStatus, RouteTarget, RoutingResult, TaskType
-from orchestrator.procutil import no_window_kwargs
-from orchestrator.registry import (
+from modelquad.cli import build_parser, main
+from modelquad.execution.base import ExecutionResult, OutcomeEvidence, WorkerTaskStatus
+from modelquad.models import Freshness, ProviderStatus, RouteTarget, RoutingResult, TaskType
+from modelquad.procutil import no_window_kwargs
+from modelquad.registry import (
     ProviderCapabilities,
     ProviderPlugin,
     ProviderRegistry,
     UsageSourceKind,
     default_registry,
 )
-from orchestrator.service import db as service_db
-from orchestrator.service import history
-from orchestrator.service.app import create_app
+from modelquad.service import db as service_db
+from modelquad.service import history
+from modelquad.service.app import create_app
 
 
 SECRET_MARKERS = ("bearer", "api_key", "token", "secret", "password")
@@ -49,7 +49,7 @@ def _client(tmp_path, **kwargs):
     """
     usage_dir = kwargs.pop("usage_directory", tmp_path / "usage")
     usage_dir.mkdir(exist_ok=True)
-    db_path = kwargs.pop("db_path", tmp_path / "orchestrator.db")
+    db_path = kwargs.pop("db_path", tmp_path / "modelquad.db")
     kwargs.setdefault("poll_providers", False)
     kwargs.setdefault("write_secret", SERVICE_SECRET)
     app = create_app(db_path=db_path, usage_directory=usage_dir, poll_interval=3600.0, **kwargs)
@@ -63,7 +63,7 @@ def _assert_no_secrets(response) -> None:
 
 
 def test_job_runner_settings_require_authenticated_write_and_cli_consent(tmp_path, monkeypatch):
-    from orchestrator.jobs import handle
+    from modelquad.jobs import handle
     monkeypatch.setattr(handle, 'service_runner_verdict', lambda: (False, 'job_kill_on_close'))
     client, path = _client(tmp_path)
     with client:
@@ -113,7 +113,7 @@ def test_unchanged_usage_snapshot_is_not_rewritten_every_tick(tmp_path):
     import sqlite3 as _sqlite3
     from dataclasses import replace as _replace
 
-    db_path = tmp_path / "orchestrator.db"
+    db_path = tmp_path / "modelquad.db"
     status = ProviderStatus(name="codex", remaining_percentage=50.0, freshness=Freshness.FRESH)
 
     history.record_provider_usage(db_path, (status,))
@@ -137,7 +137,7 @@ def test_unchanged_usage_snapshot_is_not_rewritten_every_tick(tmp_path):
 
 
 def test_unchanged_usage_snapshot_still_heartbeats(tmp_path, monkeypatch):
-    db_path = tmp_path / "orchestrator.db"
+    db_path = tmp_path / "modelquad.db"
     status = ProviderStatus(name="codex", remaining_percentage=50.0, freshness=Freshness.FRESH)
     history.record_provider_usage(db_path, (status,))
 
@@ -155,9 +155,9 @@ def test_unchanged_usage_snapshot_still_heartbeats(tmp_path, monkeypatch):
 
 
 def test_unchanged_health_row_is_not_rewritten_every_tick(tmp_path):
-    from orchestrator.doctor import DoctorReport
+    from modelquad.doctor import DoctorReport
 
-    db_path = tmp_path / "orchestrator.db"
+    db_path = tmp_path / "modelquad.db"
     report = DoctorReport(checks=())
     history.record_provider_health(db_path, report, provider_names=("codex",))
     history.record_provider_health(db_path, report, provider_names=("codex",))
@@ -281,7 +281,7 @@ def test_db_v24_fresh_install_has_repository_tables_and_nullable_attempt_columns
 
 
 def test_record_routing_decision_persists_expected_consumption_and_surfaces_in_activity_detail(tmp_path):
-    from orchestrator.models import ConsumptionBucket, ConsumptionSource, ExpectedConsumption
+    from modelquad.models import ConsumptionBucket, ConsumptionSource, ExpectedConsumption
 
     db_path = tmp_path / "history_consumption.db"
     evidence = ExpectedConsumption(
@@ -602,8 +602,8 @@ def test_fetch_reliability_reports_blocked_and_partial_buckets(tmp_path):
         lambda db_path: history.record_routing_decision(
             db_path,
             "implementation",
-            __import__("orchestrator.models", fromlist=["RoutingResult"]).RoutingResult(
-                task_type=__import__("orchestrator.models", fromlist=["TaskType"]).TaskType.IMPLEMENTATION,
+            __import__("modelquad.models", fromlist=["RoutingResult"]).RoutingResult(
+                task_type=__import__("modelquad.models", fromlist=["TaskType"]).TaskType.IMPLEMENTATION,
                 providers=(),
                 recommendation=None,
             ),
@@ -618,7 +618,7 @@ def test_fetch_reliability_reports_blocked_and_partial_buckets(tmp_path):
 def test_history_helpers_never_raise_on_unwritable_db_path(tmp_path, record_call):
     blocking_file = tmp_path / "not-a-directory"
     blocking_file.write_text("x", encoding="utf-8")
-    bad_db_path = blocking_file / "orchestrator.db"
+    bad_db_path = blocking_file / "modelquad.db"
 
     record_call(bad_db_path)  # must not raise
 
@@ -653,13 +653,13 @@ def test_cli_route_and_delegate_history_hooks_never_break_core_behavior(tmp_path
 
 
 def test_cli_core_commands_do_not_hard_depend_on_fastapi(tmp_path):
-    """`orchestrator route` must work even when the `service` extra is absent."""
+    """`modelquad route` must work even when the `service` extra is absent."""
 
     usage_dir = tmp_path / "usage"
     usage_dir.mkdir()
     # This subprocess does not inherit pytest's isolate_home_directory
     # monkeypatch (HOME/USERPROFILE), so it must pass --history-db explicitly
-    # to avoid touching the real ~/.orchestrator, matching the convention
+    # to avoid touching the real ~/.modelquad, matching the convention
     # already used for DEFAULT_SESSIONS_PATH/DEFAULT_USAGE_DIRECTORY elsewhere
     # in this test suite.
     history_db = tmp_path / "history.db"
@@ -671,7 +671,7 @@ def test_cli_core_commands_do_not_hard_depend_on_fastapi(tmp_path):
         "        raise ImportError(f'blocked for test: {name}')\n"
         "    return _real_import(name, *a, **k)\n"
         "builtins.__import__ = _blocked\n"
-        "from orchestrator.cli import main\n"
+        "from modelquad.cli import main\n"
         "raise SystemExit(main(['--usage-directory', sys.argv[1], '--history-db', sys.argv[2], "
         "'route', 'implementation']))\n"
     )
@@ -698,8 +698,8 @@ def test_serve_always_binds_loopback_and_takes_no_host_option(capsys):
 def test_serve_prefers_explicit_db_then_global_history_db_then_default(tmp_path, monkeypatch, managed_service_child):
     import uvicorn
 
-    import orchestrator.cli as cli_module
-    import orchestrator.service.app as service_app_module
+    import modelquad.cli as cli_module
+    import modelquad.service.app as service_app_module
 
     captured: dict = {}
 
@@ -742,7 +742,7 @@ def test_serve_reports_a_clear_error_when_service_extra_missing(tmp_path, capsys
         "        raise ImportError('blocked for test')\n"
         "    return _real_import(name, *a, **k)\n"
         "builtins.__import__ = _blocked\n"
-        "from orchestrator.cli import main\n"
+        "from modelquad.cli import main\n"
         "raise SystemExit(main(['--usage-directory', sys.argv[1], 'serve']))\n"
     )
     result = subprocess.run(
@@ -865,8 +865,8 @@ def test_fetch_offload_summary_metrics(tmp_path):
 def _counting_doctor(monkeypatch):
     """Replace run_doctor with a counter over a real (empty) report."""
 
-    from orchestrator.doctor import DoctorReport
-    from orchestrator.service import api as service_api
+    from modelquad.doctor import DoctorReport
+    from modelquad.service import api as service_api
 
     calls = {"n": 0}
 
@@ -879,7 +879,7 @@ def _counting_doctor(monkeypatch):
 
 
 def _wait_for_doctor(client):
-    from orchestrator.service import api as service_api
+    from modelquad.service import api as service_api
 
     refresh = service_api._doctor_refresh_state(client.app)
     with refresh.lock:
@@ -894,15 +894,15 @@ def _wait_for_doctor(client):
 
 
 def _survey_with_live_foreign_service(tmp_path):
-    from orchestrator import statediag
-    from orchestrator.statecontext import StateMode, resolve_state_context
+    from modelquad import statediag
+    from modelquad.statecontext import StateMode, resolve_state_context
 
     foreign = statediag.StateStore(
-        root=tmp_path / "other" / ".orchestrator",
+        root=tmp_path / "other" / ".modelquad",
         mode=StateMode.DEVELOPMENT,
         exists=True,
         database_exists=True,
-        service_argv=["python.exe", "-m", "orchestrator", "service", "run"],
+        service_argv=["python.exe", "-m", "modelquad", "service", "run"],
         service_pid=4242,
         service_started_at="2026-09-13T10:00:00+00:00",
         service_process="alive",

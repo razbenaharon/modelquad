@@ -20,13 +20,13 @@ import pytest
 
 from conftest import tool_payload
 from process_diagnostics import non_killing_runner_spawn, runner_driver_command
-from orchestrator import paths, procutil, registry
-from orchestrator.execution import bound_launch
-from orchestrator.jobs import handle, runner, service_client
-from orchestrator.jobs.handle import PreparedDelegation
-from orchestrator.jobs.store import FileOutputStore
-from orchestrator.mcp import jobs_tools, server as mcp
-from orchestrator.service import db, history
+from modelquad import paths, procutil, registry
+from modelquad.execution import bound_launch
+from modelquad.jobs import handle, runner, service_client
+from modelquad.jobs.handle import PreparedDelegation
+from modelquad.jobs.store import FileOutputStore
+from modelquad.mcp import jobs_tools, server as mcp
+from modelquad.service import db, history
 from fixtures.fake_executor_plugin import CHILD, SLOW_PROMPT, TREE_PROMPT
 from test_adapter_file_security import acl_tree, native, user
 
@@ -221,8 +221,8 @@ def test_quick_collect_ack_and_restart(synthetic, tmp_path, monkeypatch):
 @pytest.mark.parametrize('task_type', ['implementation', 'review'])
 @pytest.mark.parametrize('state', ['pending', 'acknowledged', 'expired', 'not_found', 'refused'])
 def test_ordinary_collection_equals_pre_overlay_contract(pending_listing, monkeypatch, task_type, state):
-    from orchestrator.execution.base import WorkerTaskStatus
-    from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus
+    from modelquad.execution.base import WorkerTaskStatus
+    from modelquad.jobs.seam import JobOutput, JobRef, JobStatus
 
     database, store, _ = pending_listing
     now = datetime(2030, 1, 2, tzinfo=timezone.utc)
@@ -321,8 +321,8 @@ def test_delegate_inline_wait_budget():
     ('finished', True), ('failed', False), ('unknown', False), ('running', True),
 ])
 def test_wait_terminal_returns_exact_collect_contract(pending_listing, wait_clock, status, ended):
-    from orchestrator.execution.base import WorkerTaskStatus
-    from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus
+    from modelquad.execution.base import WorkerTaskStatus
+    from modelquad.jobs.seam import JobOutput, JobRef, JobStatus
 
     database, store, scheduled = pending_listing
     attempt = record_attempt(database, task_type='review')
@@ -402,7 +402,7 @@ def test_wait_missing_job_returns_without_sleep(pending_listing, wait_clock):
 def test_wait_direct_worker_guard_precedes_read(monkeypatch):
     from mcp.server.mcpserver.exceptions import ToolError
 
-    monkeypatch.setenv('ORCHESTRATOR_WORKER', '1')
+    monkeypatch.setenv('MODELQUAD_WORKER', '1')
     monkeypatch.setattr(jobs_tools, 'job_status', lambda *a, **kw: pytest.fail('worker read a job'))
     with pytest.raises(ToolError, match='ModelQuad refuses worker MCP calls'):
         jobs_tools.modelquad_job_wait('guarded', str(Path.cwd()))
@@ -489,8 +489,8 @@ def test_reopened_host_lists_open_jobs_without_content_or_writes(pending_listing
 
 
 def test_finished_job_moves_from_running_to_retained_jobs(pending_listing):
-    from orchestrator.execution.base import WorkerTaskStatus
-    from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus
+    from modelquad.execution.base import WorkerTaskStatus
+    from modelquad.jobs.seam import JobOutput, JobRef, JobStatus
 
     database, store, _ = pending_listing
     attempt = record_attempt(database, task_type='review')
@@ -544,8 +544,8 @@ def test_active_job_reader_does_not_create_missing_database(tmp_path):
 
 
 def test_unreadable_state_database_still_returns_retained_outputs(pending_listing, monkeypatch):
-    from orchestrator.execution.base import WorkerTaskStatus
-    from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus
+    from modelquad.execution.base import WorkerTaskStatus
+    from modelquad.jobs.seam import JobOutput, JobRef, JobStatus
 
     database, store, _ = pending_listing
     now = datetime.now(timezone.utc)
@@ -609,7 +609,7 @@ def test_front_door_refusals_start_no_job(synthetic, tmp_path, monkeypatch, cont
         history.set_host_disconnected(synthetic, 'codex', True)
     else:
         from types import SimpleNamespace
-        from orchestrator.models import ProviderStatus
+        from modelquad.models import ProviderStatus
         monkeypatch.setattr(mcp, 'build_providers', lambda *a: [
             SimpleNamespace(get_status=lambda: ProviderStatus('codex', available=False))])
     kwargs = {'host': 'codex'} if control == 'disconnect' else {}
@@ -668,18 +668,18 @@ def test_registry_hook_requires_checkout_or_explicit_opt_in(monkeypatch, opt_in,
 
 
 def test_synthetic_registry_importable_in_child_without_changing_product_root(synthetic):
-    import orchestrator
+    import modelquad
 
     probe = (
-        "import json, orchestrator; from orchestrator import registry; "
-        "print(json.dumps([orchestrator.__file__, "
+        "import json, modelquad; from modelquad import registry; "
+        "print(json.dumps([modelquad.__file__, "
         "registry.default_registry().all()[0].display_name]))"
     )
     child = subprocess.run([sys.executable, '-c', probe], capture_output=True,
                            text=True, timeout=10, **procutil.no_window_kwargs())
     assert child.returncode == 0, child.stderr
     root, provider = json.loads(child.stdout)
-    assert Path(root).resolve() == Path(orchestrator.__file__).resolve()
+    assert Path(root).resolve() == Path(modelquad.__file__).resolve()
     assert provider == 'Synthetic Codex'
 
 
@@ -698,7 +698,7 @@ def test_new_tool_schemas_and_worker_guard(synthetic, monkeypatch):
             assert 'project_directory' in tool.input_schema.get('required', []), tool.name
             project_schema = tool.input_schema['properties']['project_directory']
             assert project_schema.get('type') == 'string', tool.name
-    monkeypatch.setenv('ORCHESTRATOR_WORKER', '1')
+    monkeypatch.setenv('MODELQUAD_WORKER', '1')
     for name in TOOLS:
         result = asyncio.run(mcp.server.call_tool(name, {}))
         assert result.is_error and tool_payload(result)['refused']
@@ -713,7 +713,7 @@ def test_legacy_reconciliation_skips_job_attempt(synthetic):
 
 
 def test_spec_permission_failure_and_abandoned_cleanup(synthetic, tmp_path, monkeypatch):
-    from orchestrator.adapters import file_security
+    from modelquad.adapters import file_security
 
     attempt_id = history.record_delegation_attempt(synthetic, task_type='review')
     spec = handle.JobSpec((sys.executable, '-c', 'pass'), str(tmp_path), str(synthetic), attempt_id, 3)
@@ -961,15 +961,15 @@ import faulthandler, json, os, runpy, sys
 faulthandler.enable()
 faulthandler.dump_traceback_later(58, repeat=False)
 try:
-    import orchestrator
+    import modelquad
     print(json.dumps({
         'event': 'synthetic_runner_bootstrap',
         'python': sys.executable,
-        'source': orchestrator.__file__,
+        'source': modelquad.__file__,
         'plugin': os.environ.get('MODELQUAD_TEST_EXECUTOR_PLUGIN'),
         'plugin_opt_in': os.environ.get('MODELQUAD_TEST_EXECUTOR_OK'),
     }), flush=True)
-    runpy.run_module('orchestrator.jobs.runner', run_name='__main__')
+    runpy.run_module('modelquad.jobs.runner', run_name='__main__')
 finally:
     faulthandler.cancel_dump_traceback_later()
 '''
@@ -1076,8 +1076,8 @@ finally:
 
 def test_prepared_full_inputs_survive_runner_rebuild(synthetic, tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from orchestrator.execution.manager import ExecutionManager
-    from orchestrator.models import CapacityState, Freshness, ProviderStatus, ResourcePool
+    from modelquad.execution.manager import ExecutionManager
+    from modelquad.models import CapacityState, Freshness, ProviderStatus, ResourcePool
 
     now = datetime.now(timezone.utc)
     status = ProviderStatus('codex', True, 90, now, Freshness.FRESH,
@@ -1120,7 +1120,7 @@ def test_prepared_full_inputs_survive_runner_rebuild(synthetic, tmp_path, monkey
 
 def test_unserializable_status_fails_before_reservation(synthetic, tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from orchestrator.models import ProviderStatus
+    from modelquad.models import ProviderStatus
     monkeypatch.setattr(mcp, 'build_providers', lambda *a: [SimpleNamespace(
         get_status=lambda: ProviderStatus('codex', metadata={'unsupported': object()}))])
     with pytest.raises(TypeError):
@@ -1151,7 +1151,7 @@ def test_module_entry_registers_job_tools_before_start(monkeypatch):
         captured.append({tool.name for tool in asyncio.run(server.list_tools())})
     monkeypatch.setattr(MCPServer, 'run', start)
     with pytest.warns(RuntimeWarning, match='found in sys.modules'):
-        runpy.run_module('orchestrator.mcp.server', run_name='__main__')
+        runpy.run_module('modelquad.mcp.server', run_name='__main__')
     assert len(captured) == 1 and TOOLS <= captured[0]
 
 
@@ -1164,7 +1164,7 @@ def test_collect_unknown_id_matches_status(synthetic):
 
 
 def test_setting_off_stop_before_executor_keeps_base_resolution(synthetic, tmp_path, monkeypatch):
-    from orchestrator.execution.manager import ExecutionManager
+    from modelquad.execution.manager import ExecutionManager
     from fixtures.fake_executor_plugin import FakeExecutor
 
     history.put_job_runner_enabled(synthetic, False)
@@ -1220,7 +1220,7 @@ def test_capsule_action_authority_is_refused_before_any_job(synthetic, tmp_path,
     # The worker is read-only: a capsule cannot grant it action authority, and
     # the refusal comes before any attempt, job or worker exists.
     from mcp.server.mcpserver.exceptions import ToolError
-    from orchestrator.action_authority import TaskAuthority
+    from modelquad.action_authority import TaskAuthority
 
     authority = TaskAuthority.from_dict({'mode': 'read_only', 'actions': ['read']})
     capsule = {'goal': 'synthetic authority test', 'task_type': 'review',
@@ -1314,7 +1314,7 @@ def test_undeletable_stale_spec_does_not_block_launch(synthetic, tmp_path, monke
 
 @pytest.mark.parametrize('after_resolution', [False, True], ids=['open', 'resolved'])
 def test_late_delegation_interrupt_keeps_known_fate(synthetic, tmp_path, monkeypatch, after_resolution):
-    from orchestrator.execution.base import ExecutionResult, describe_worker_termination
+    from modelquad.execution.base import ExecutionResult, describe_worker_termination
     captured = []
     reserve_only(monkeypatch, captured)
     delegate(tmp_path)

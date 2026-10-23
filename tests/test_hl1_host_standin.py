@@ -17,10 +17,10 @@ import time
 
 import pytest
 
-from orchestrator import procutil
-from orchestrator.jobs import handle
-from orchestrator.jobs.store import default_store
-from orchestrator.service import history
+from modelquad import procutil
+from modelquad.jobs import handle
+from modelquad.jobs.store import default_store
+from modelquad.service import history
 from test_jobs_runner import product_import_paths
 
 native = pytest.mark.skipif(os.name != 'nt', reason='Windows Job Object Host stand-in')
@@ -136,7 +136,7 @@ def child_env(root, monkeypatch):
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.delenv('ORCHESTRATOR_WORKER', raising=False)
+    monkeypatch.delenv('MODELQUAD_WORKER', raising=False)
     return dict(os.environ)
 
 

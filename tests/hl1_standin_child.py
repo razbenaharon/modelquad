@@ -10,11 +10,11 @@ import sys
 import subprocess
 
 from fixtures import fake_executor_plugin as fake
-from orchestrator.registry import (
+from modelquad.registry import (
     ProviderCapabilities, ProviderPlugin, ProviderRegistry, UsageSourceKind,
     WORKSPACE_DEVELOPMENT_GRANT,
 )
-from orchestrator import executable_resolution, workerevidence
+from modelquad import executable_resolution, workerevidence
 
 # Unlike the in-process fixtures, a standalone child does not inherit
 # conftest's probe isolation. Never run a real CLI, even for its version.
@@ -76,17 +76,17 @@ def main():
     if os.name == 'nt':
         import ctypes
         ctypes.WinDLL('kernel32').SetErrorMode(0x0001 | 0x0002 | 0x8000)
-    os.environ.pop('ORCHESTRATOR_WORKER', None)
+    os.environ.pop('MODELQUAD_WORKER', None)
     role, root_text = sys.argv[1:3]
     root = Path(root_text)
-    from orchestrator.service import db
+    from modelquad.service import db
     db.DEFAULT_DB_PATH = root / 'history.db'
     if role == 'service':
         import uvicorn
-        from orchestrator import paths
-        from orchestrator.jobs import handle
-        from orchestrator.service import auth
-        from orchestrator.service.app import create_app
+        from modelquad import paths
+        from modelquad.jobs import handle
+        from modelquad.service import auth
+        from modelquad.service.app import create_app
         ok, reason = handle.detached_launch_verdict()
         patched = not ok and os.environ.get('HL1_TEST_PATCH_SERVICE_VERDICT') == '1'
         observation = {'verdict_patched': patched, 'original_verdict': {'ok': ok, 'reason': reason},
@@ -102,7 +102,7 @@ def main():
                          poll_providers=False, write_secret=secret)
         uvicorn.run(app, host='127.0.0.1', port=int(sys.argv[3]), log_level='warning')
     elif role in ('host', 'fallback'):
-        from orchestrator.mcp import server
+        from modelquad.mcp import server
         server.CONFIG_PATH = str(root / 'config.yaml')
         server.USAGE_DIRECTORY = str(root / 'usage')
         # Return a handle while eight-second fake work is running. The product's
@@ -133,7 +133,7 @@ def main():
                 await asyncio.sleep(1)
         asyncio.run(host())
     elif role == 'collect':
-        from orchestrator.mcp import jobs_tools
+        from modelquad.mcp import jobs_tools
         job_id = sys.argv[3]
         collected = jobs_tools.modelquad_job_collect(job_id)
         assert collected['output'] == ANSWER, collected

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.models import Freshness
-from orchestrator.providers import ClaudeProvider
-from orchestrator.usage import parse_claude_statusline_payload, write_usage_snapshot
+from modelquad.models import Freshness
+from modelquad.providers import ClaudeProvider
+from modelquad.usage import parse_claude_statusline_payload, write_usage_snapshot
 
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
@@ -75,7 +75,7 @@ def test_claude_parser_handles_missing_or_malformed_payloads(payload):
 
 
 def test_usage_modules_contain_no_hardcoded_home_path():
-    usage_directory = Path(__file__).parents[1] / "src" / "orchestrator" / "usage"
+    usage_directory = Path(__file__).parents[1] / "src" / "modelquad" / "usage"
     source = "\n".join(path.read_text(encoding="utf-8") for path in usage_directory.glob("*.py"))
 
     assert "C:\\Users\\" not in source

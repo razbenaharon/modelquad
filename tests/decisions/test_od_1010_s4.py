@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import registry
-from orchestrator.config import load_config
-from orchestrator.execution.manager import ExecutionManager
-from orchestrator.service import db
+from modelquad import registry
+from modelquad.config import load_config
+from modelquad.execution.manager import ExecutionManager
+from modelquad.service import db
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "orchestrator"
+SRC = Path(__file__).resolve().parents[2] / "src" / "modelquad"
 
 
 @pytest.fixture

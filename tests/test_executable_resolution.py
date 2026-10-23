@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import executable_resolution as resolver
+from modelquad import executable_resolution as resolver
 
 
 win_only = pytest.mark.skipif(os.name != "nt", reason="Windows path/extension/API semantics only")

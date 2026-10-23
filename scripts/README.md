@@ -1,7 +1,7 @@
 # Scripts
 
 Development tooling for this repository. None of it ships: the product is
-`src/orchestrator/`.
+`src/modelquad/`.
 
 ## `check.py`: pre-flight validation
 
@@ -16,7 +16,7 @@ fresh clone with nothing installed.
     python scripts/check.py python      # the whole suite, import root pinned here
     python scripts/check.py all
 
-It sets `PYTHONPATH` itself and prints the `orchestrator.__file__` it resolved,
+It sets `PYTHONPATH` itself and prints the `modelquad.__file__` it resolved,
 which removes two traps: a POSIX-only command on a Windows-first project, and a
 worktree suite importing another checkout's source. It echoes every command,
 so you can run them by hand instead.

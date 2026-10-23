@@ -11,8 +11,8 @@ import pytest
 
 from conftest import codex_event_stream, tool_payload
 
-from orchestrator.execution import CodexExecutor, ExecutionManager
-from orchestrator.mcp.server import server
+from modelquad.execution import CodexExecutor, ExecutionManager
+from modelquad.mcp.server import server
 from routing_mode_fixtures import save_legacy_mode
 
 
@@ -21,12 +21,12 @@ def _tool_usage_directory(tmp_path, monkeypatch):
     """The MCP tools read quota snapshots from `server.USAGE_DIRECTORY`, never
     from a tool argument. This module's snapshots live in the
     test's tmp_path, which every call here used to pass as `usage_directory`."""
-    from orchestrator.mcp import server as mcp_server_module
+    from modelquad.mcp import server as mcp_server_module
 
     monkeypatch.setattr(mcp_server_module, "USAGE_DIRECTORY", str(tmp_path))
 
 
-mcp_server = importlib.import_module("orchestrator.mcp.server")
+mcp_server = importlib.import_module("modelquad.mcp.server")
 
 
 class RecordingRun:
@@ -70,6 +70,7 @@ def test_modelquad_status_tool(tmp_path):
         "claude",
         "codex",
     }
+    assert payload["summary"]
 
 
 def test_modelquad_delegate_tool_uses_mocked_execution(tmp_path, monkeypatch, *, synthetic_worker_binary, qualified_codex_inventory):
@@ -111,7 +112,7 @@ def test_modelquad_delegate_tool_records_history_and_returns_structured_status(t
     point of view either.
     """
 
-    from orchestrator.service import db as service_db
+    from modelquad.service import db as service_db
 
     write_usage_fixtures(tmp_path)
     db_path = tmp_path / "mcp-history.db"
@@ -191,8 +192,8 @@ def test_current_mcp_tools_share_canonical_status_and_delegation(tmp_path, monke
 
 
 def test_mcp_activity_and_doctor_tools_return_expected_shapes(tmp_path):
-    from orchestrator.execution import ExecutionResult
-    from orchestrator.service import db, history
+    from modelquad.execution import ExecutionResult
+    from modelquad.service import db, history
 
     write_usage_fixtures(tmp_path)
     db_path = tmp_path / "activity.db"
@@ -219,8 +220,8 @@ def test_mcp_activity_and_doctor_tools_return_expected_shapes(tmp_path):
 
 @pytest.mark.parametrize("mode", ["ask", "manual"])
 def test_retired_saved_routing_modes_use_automatic_policy(tmp_path, monkeypatch, mode):
-    from orchestrator.service import db as service_db
-    from orchestrator.service import history
+    from modelquad.service import db as service_db
+    from modelquad.service import history
     path = tmp_path / "legacy.db"
     save_legacy_mode(path, mode)
     monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", path)
@@ -231,15 +232,15 @@ def test_retired_saved_routing_modes_use_automatic_policy(tmp_path, monkeypatch,
 
 
 def test_retired_modes_cannot_be_saved(tmp_path):
-    from orchestrator.service import history
+    from modelquad.service import history
     for mode in ("ask", "manual"):
         with pytest.raises(ValueError, match="Routing mode must be automatic"):
             history.put_routing_mode(tmp_path / "mode.db", mode)
 
 
 def test_routing_paused_enforcement(tmp_path, monkeypatch):
-    from orchestrator.service import db as service_db
-    from orchestrator.service import history as service_history
+    from modelquad.service import db as service_db
+    from modelquad.service import history as service_history
 
     write_usage_fixtures(tmp_path)
     db_path = tmp_path / "paused_mcp.db"
@@ -285,9 +286,9 @@ def test_routing_paused_enforcement(tmp_path, monkeypatch):
 
 def test_delegate_expected_consumption_resolution_and_persistence(tmp_path, monkeypatch):
     import sqlite3
-    from orchestrator.models import ConsumptionBucket, ConsumptionSource
-    from orchestrator.service import db as service_db
-    from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
+    from modelquad.models import ConsumptionBucket, ConsumptionSource
+    from modelquad.service import db as service_db
+    from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
 
     write_usage_fixtures(tmp_path)
     db_path = tmp_path / "consumption-test.db"
@@ -430,7 +431,7 @@ def test_delegate_expected_consumption_resolution_and_persistence(tmp_path, monk
 
 
 def _routing_rows(db_path):
-    from orchestrator.service import history as service_history
+    from modelquad.service import history as service_history
 
     return [
         entry
@@ -449,16 +450,16 @@ def _delegate_under_policy(tmp_path, monkeypatch, *, policy_refused, refused=("t
     network-policy gate whenever policy_refused is true. The `refused` parameter
     only controls whether Codex is also refused.
     """
-    from orchestrator import netpolicy
-    from orchestrator import registry as registry_module
-    from orchestrator.service import db as service_db
-    from orchestrator.service import history as service_history
+    from modelquad import netpolicy
+    from modelquad import registry as registry_module
+    from modelquad.service import db as service_db
+    from modelquad.service import history as service_history
     from dataclasses import replace
     from types import SimpleNamespace
-    from orchestrator.execution import ExecutionResult, WorkerTaskStatus
-    from orchestrator.models import Freshness, ProviderStatus
-    from orchestrator.providers import build_providers
-    from orchestrator.registry import ProviderCapabilities, ProviderPlugin, UsageSourceKind, WORKSPACE_DEVELOPMENT_GRANT
+    from modelquad.execution import ExecutionResult, WorkerTaskStatus
+    from modelquad.models import Freshness, ProviderStatus
+    from modelquad.providers import build_providers
+    from modelquad.registry import ProviderCapabilities, ProviderPlugin, UsageSourceKind, WORKSPACE_DEVELOPMENT_GRANT
 
     import tempfile
 
@@ -568,7 +569,7 @@ def test_an_auto_routed_delegation_selects_a_provider_it_could_have_delegated_to
     delegation could ever have carried it out. This covers the
     case where a provider DID run; the fully refused case is the test below.
     """
-    from orchestrator.registry import is_host_only_runtime
+    from modelquad.registry import is_host_only_runtime
 
     payload, rows = _delegate_under_policy(tmp_path, monkeypatch, policy_refused=True, synthetic_worker_binary=synthetic_worker_binary,
         qualified_codex_inventory=qualified_codex_inventory)
@@ -596,7 +597,7 @@ def test_a_delegation_that_reached_no_executor_records_that_nothing_was_selected
     nothing was selected, keeps the router's advisory recommendation, and
     reads as `not_routed`.
     """
-    from orchestrator.mcp import presentation
+    from modelquad.mcp import presentation
 
     payload, rows = _delegate_under_policy(
         tmp_path, monkeypatch, policy_refused=True, refused=("test_api", "codex")
@@ -621,8 +622,8 @@ def test_only_an_explicit_nothing_selected_records_no_selection(tmp_path):
     still records the recommendation as it always has, a named provider is
     recorded as given, and only `NOTHING_SELECTED` leaves the selection empty.
     """
-    from orchestrator.models import RoutingResult, TaskType
-    from orchestrator.service import history as service_history
+    from modelquad.models import RoutingResult, TaskType
+    from modelquad.service import history as service_history
 
     db_path = tmp_path / "history.db"
     result = RoutingResult(
@@ -666,8 +667,8 @@ def test_the_same_delegation_records_the_restricted_provider_when_the_policy_all
 
 @pytest.mark.parametrize("entered", [False, True])
 def test_explicit_history_distinguishes_refusal_from_executor_failure(tmp_path, monkeypatch, entered):
-    from orchestrator.service import db, history
-    from orchestrator.execution import ExecutionResult, WorkerTaskStatus
+    from modelquad.service import db, history
+    from modelquad.execution import ExecutionResult, WorkerTaskStatus
 
     write_usage_fixtures(tmp_path)
     path = tmp_path / "history.db"

@@ -1,7 +1,7 @@
 # Claude Code adapter
 
 `modelquad install claude` writes the packaged templates from
-`src/orchestrator/adapters/templates/claude/`; this directory intentionally
+`src/modelquad/adapters/templates/claude/`; this directory intentionally
 does not duplicate them.
 
 - `skills/modelquad/SKILL.md` becomes `~/.claude/skills/modelquad/SKILL.md`.
@@ -10,7 +10,7 @@ does not duplicate them.
   `timeout`, without removing other servers.
 
 The model guidance is the MCP server's `instructions`
-(`src/orchestrator/adapters/server_instructions.py`), so install writes nothing
+(`src/modelquad/adapters/server_instructions.py`), so install writes nothing
 into `~/.claude/CLAUDE.md`. Install also adds the `SessionStart` reminder hook
 and a status line (unless you already have your own) to
 `~/.claude/settings.json`, and takes back what earlier versions added: the

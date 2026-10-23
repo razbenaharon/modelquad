@@ -9,10 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator.adapters import pending_reminder as reminder
-from orchestrator.jobs import service_client
-from orchestrator.service import listener
-from orchestrator.service.socket_identity import ListenerError
+from modelquad.adapters import pending_reminder as reminder
+from modelquad.jobs import service_client
+from modelquad.service import listener
+from modelquad.service.socket_identity import ListenerError
 
 
 KEY = 'a' * 32
@@ -99,7 +99,7 @@ def test_worker_returns_before_input_or_service(monkeypatch, host):
         pytest.fail('worker touched stdin, clock or service')
     out = io.StringIO()
     assert reminder.run_hook(host, SimpleNamespace(read=forbidden), out,
-        environ={'ORCHESTRATOR_WORKER': '1'}, clock=forbidden, fetch=forbidden) == 0
+        environ={'MODELQUAD_WORKER': '1'}, clock=forbidden, fetch=forbidden) == 0
     assert out.getvalue() == ''
 
 
@@ -159,8 +159,8 @@ def test_failed_reply_is_not_retried(monkeypatch, status):
 
 def test_cli_quiet_worker_dispatch(monkeypatch, capsys):
     """PR-WORKER-01-cli: no hook payload read after the worker guard."""
-    from orchestrator import cli
-    monkeypatch.setenv('ORCHESTRATOR_WORKER', '1')
+    from modelquad import cli
+    monkeypatch.setenv('MODELQUAD_WORKER', '1')
     monkeypatch.setattr(cli.sys, 'stdin', SimpleNamespace(read=lambda *a: pytest.fail('stdin')))
     assert cli.main(['hook-pending', 'claude']) == 0
     assert capsys.readouterr() == ('', '')
@@ -169,7 +169,7 @@ def test_cli_quiet_worker_dispatch(monkeypatch, capsys):
 def test_scoped_mcp_and_local_fallback(monkeypatch):
     """The scope is required; without the service, only this workspace's rows."""
     import inspect
-    from orchestrator.mcp import jobs_tools
+    from modelquad.mcp import jobs_tools
     assert inspect.signature(jobs_tools.modelquad_job_list_pending).parameters[
         'project_directory'].default is inspect.Parameter.empty
     monkeypatch.setattr(jobs_tools, '_guard', lambda: None)
@@ -201,9 +201,9 @@ def transport(monkeypatch, tmp_path):
     scheduled shutdown, whichever comes first. No sleeps, sockets, processes,
     settings or accounts are real; parser, deadlines and auth are production.
     """
-    from orchestrator import paths
-    from orchestrator.service import auth, db, listener_proof as proof
-    from orchestrator.service.api import state_identity_tag
+    from modelquad import paths
+    from modelquad.service import auth, db, listener_proof as proof
+    from modelquad.service.api import state_identity_tag
 
     state = SimpleNamespace(now=10.0, timers=[], paths=[], headers=[], connections=[],
         secret_reads=[], owner_checks=0, owner_closed=False, owned=False,

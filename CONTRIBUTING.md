@@ -69,7 +69,7 @@ extract or proxy provider credentials, installed hooks are advisory only, and
 every call that starts Codex asks the user. A change must not weaken them. If
 you think one is wrong, open an issue.
 
-Privacy rules live in `src/orchestrator/privacy.py`. Do not add tool output
+Privacy rules live in `src/modelquad/privacy.py`. Do not add tool output
 or absolute paths to history or metadata; a stored worker command names only
 the executable and its flags. ModelQuad has no telemetry.
 

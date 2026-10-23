@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.mcp.livelifecycle import (
+from modelquad.mcp.livelifecycle import (
     LIVE_STATES,
     LiveFacts,
     LiveState,
@@ -271,8 +271,8 @@ def test_legacy_start_stamp_preserves_other_recorded_facts(row, worker_alive, ex
 
 
 def test_obsolete_state_is_absent_from_live_vocabulary() -> None:
-    from orchestrator.mcp.presentation import ACTIVITY_STATES, execution_lifecycle
-    from orchestrator.mcp.server import modelquad_delegation_status
+    from modelquad.mcp.presentation import ACTIVITY_STATES, execution_lifecycle
+    from modelquad.mcp.server import modelquad_delegation_status
 
     assert "verifying" not in LIVE_STATES
     assert "verifying" not in ACTIVITY_STATES
@@ -383,7 +383,7 @@ def test_an_unconfirmed_stop_is_unknown_not_stopped_and_not_failed() -> None:
 
 
 def test_facts_from_attempt_reads_the_two_new_columns() -> None:
-    from orchestrator.mcp.livelifecycle import facts_from_attempt
+    from modelquad.mcp.livelifecycle import facts_from_attempt
 
     facts = facts_from_attempt(
         {
@@ -403,7 +403,7 @@ def test_facts_from_attempt_reads_the_two_new_columns() -> None:
 def test_a_row_without_the_new_columns_still_derives(tmp_path=None) -> None:
     """Older rows carry neither column; absent must read as absent."""
 
-    from orchestrator.mcp.livelifecycle import facts_from_attempt
+    from modelquad.mcp.livelifecycle import facts_from_attempt
 
     facts = facts_from_attempt({"status": "started", "resolved_at": None})
     assert facts.caller_abandoned is False

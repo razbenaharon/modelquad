@@ -13,12 +13,12 @@ import subprocess
 
 import pytest
 
-from orchestrator import (
+from modelquad import (
     codexcli, doctor, hostruntime, onboarding, paths,
     provider_connection, registry, repair, statediag,
 )
-from orchestrator.config import Config
-from orchestrator.statecontext import STATE_MODE_ENV_VAR, STATE_ROOT_ENV_VAR, StateMode
+from modelquad.config import Config
+from modelquad.statecontext import STATE_MODE_ENV_VAR, STATE_ROOT_ENV_VAR, StateMode
 
 
 win_only = pytest.mark.skipif(os.name != "nt", reason="Windows PATH/PATHEXT and batch-shim semantics")
@@ -63,7 +63,7 @@ def isolated(
     # is explicit, rather than inherited from the runner's packaging shape.
     monkeypatch.setattr(paths, "is_dev_checkout", lambda: False)
     monkeypatch.setattr(sys, "platform", "win32")
-    from orchestrator.statecontext import resolve_state_identity
+    from modelquad.statecontext import resolve_state_identity
 
     assert resolve_state_identity()[0] is StateMode.INSTALLED
     assert all(not (Path.home() / name).exists() for name in (".claude", ".codex"))

@@ -13,9 +13,9 @@ import uuid
 
 import pytest
 
-from orchestrator import procutil
-from orchestrator.execution.base import bound_descendant_facts
-from orchestrator.service import db, fate_history as fh, history
+from modelquad import procutil
+from modelquad.execution.base import bound_descendant_facts
+from modelquad.service import db, fate_history as fh, history
 
 NOW = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)
 START = NOW - timedelta(minutes=1)

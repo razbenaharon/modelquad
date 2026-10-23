@@ -19,14 +19,14 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import cli, cli_entry, hostruntime, usage_hook
-from orchestrator.adapters import gate
-from orchestrator.adapters import staging
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.adapters.registration import RegistrationStatus
-from orchestrator.adapters.report import ActionKind
-from orchestrator.disclosure import DATA_FLOW
-from orchestrator.onboarding import install_detected_hosts
+from modelquad import cli, cli_entry, hostruntime, usage_hook
+from modelquad.adapters import gate
+from modelquad.adapters import staging
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.adapters.registration import RegistrationStatus
+from modelquad.adapters.report import ActionKind
+from modelquad.disclosure import DATA_FLOW
+from modelquad.onboarding import install_detected_hosts
 
 from test_host_registration_transaction import (  # noqa: F401 -- fixtures + helpers
     HOST_ID,
@@ -113,8 +113,8 @@ def test_the_users_key_order_and_characters_are_kept(state_root, claude_home):
 
 def test_install_and_onboard_never_write_permissions(state_root, claude_home, monkeypatch, tmp_path):
     """ModelQuad never allows its own tools on the user's behalf."""
-    from orchestrator.doctor import DoctorReport
-    from orchestrator.onboarding import run_onboarding
+    from modelquad.doctor import DoctorReport
+    from modelquad.onboarding import run_onboarding
 
     settings = claude_home / "settings.json"
     ClaudeAdapter().install(claude_home)
@@ -122,7 +122,7 @@ def test_install_and_onboard_never_write_permissions(state_root, claude_home, mo
     assert "mcp__modelquad" not in settings.read_text(encoding="utf-8")
 
     ClaudeAdapter().uninstall(claude_home)
-    monkeypatch.setattr("orchestrator.onboarding.run_doctor", lambda *a, **k: DoctorReport(()))
+    monkeypatch.setattr("modelquad.onboarding.run_doctor", lambda *a, **k: DoctorReport(()))
     run_onboarding(
         selected_providers=["claude"], assume_yes=True, print_fn=lambda *a, **k: None,
         which=lambda _: None, registry=_registry(claude_home), db_path=tmp_path / "h.db",
@@ -225,8 +225,8 @@ def test_a_real_symlinked_claude_md_stays_a_link(state_root, claude_home, tmp_pa
 
 
 def test_the_data_flow_notice_comes_before_any_write(state_root, claude_home, monkeypatch):
-    from orchestrator import disclosure
-    from orchestrator.adapters import registration
+    from modelquad import disclosure
+    from modelquad.adapters import registration
 
     events: list[str] = []
     real_print = disclosure.print_lines
@@ -247,9 +247,9 @@ def test_the_json_install_carries_the_notice_as_a_field(state_root, claude_home,
 
 
 def test_claude_config_dir_is_warned_about(state_root, claude_home, monkeypatch, capsys, tmp_path):
-    from orchestrator.config import Config
-    from orchestrator.doctor import CheckStatus, run_doctor
-    from orchestrator.service import control_plane as shell
+    from modelquad.config import Config
+    from modelquad.doctor import CheckStatus, run_doctor
+    from modelquad.service import control_plane as shell
 
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "elsewhere"))
     assert cli.main(["install", "claude", "--target-dir", str(claude_home), "--json"]) == 0
@@ -385,7 +385,7 @@ class _Backend:
 
 
 def test_path_entries_are_compared_after_expanding_variables(monkeypatch, tmp_path):
-    from orchestrator.pathenv import add_to_user_path
+    from modelquad.pathenv import add_to_user_path
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
     backend = _Backend(r"C:\Windows;%LOCALAPPDATA%\Programs\tool")
@@ -394,8 +394,8 @@ def test_path_entries_are_compared_after_expanding_variables(monkeypatch, tmp_pa
 
 
 def test_fix_path_dry_run_writes_nothing(tmp_path):
-    from orchestrator.onboarding import ProviderDetection
-    from orchestrator.provider_setup import fix_provider_path
+    from modelquad.onboarding import ProviderDetection
+    from modelquad.provider_setup import fix_provider_path
 
     executable = tmp_path / "tool" / "claude.exe"
     executable.parent.mkdir()

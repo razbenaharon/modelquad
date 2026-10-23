@@ -7,7 +7,7 @@ from threading import Barrier, Thread
 
 import pytest
 
-from orchestrator.execution.base import (
+from modelquad.execution.base import (
     CallerWaitHandle,
     ExecutionResult,
     WorkerTaskStatus,

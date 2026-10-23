@@ -27,7 +27,7 @@ the machine.
 
 **It cannot reach the product.** This file lives at the repository root, and
 `pyproject.toml` builds from `src/` (`[tool.setuptools.packages.find] where =
-["src"]`), so it is in no wheel, no sdist and no frozen bundle. `orchestrator`'s
+["src"]`), so it is in no wheel, no sdist and no frozen bundle. `modelquad`'s
 own validation runner -- which runs pytest inside a *user's* project, with that
 project as rootdir -- never collects this file and is unaffected by design.
 

@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-import orchestrator.mcp.server as mcp_server
-from orchestrator.config import Config
-from orchestrator.doctor import CheckStatus, run_doctor
-from orchestrator.execution import (
+import modelquad.mcp.server as mcp_server
+from modelquad.config import Config
+from modelquad.doctor import CheckStatus, run_doctor
+from modelquad.execution import (
     CodexExecutor,
     ExecutionManager,
     ExecutionRequest,
@@ -28,9 +28,9 @@ from orchestrator.execution import (
     Executor,
     WorkerTaskStatus,
 )
-from orchestrator.execution.base import WORKER_ENV_VAR
-from orchestrator.models import TaskType
-from orchestrator.service import history
+from modelquad.execution.base import WORKER_ENV_VAR
+from modelquad.models import TaskType
+from modelquad.service import history
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +38,7 @@ FAKE_PROVIDER = "cross-project-fake"
 
 
 # This recorder is the only execution mechanism, so its exact cwd assertions
-# structurally prove no delegated worker can touch the orchestrator repository.
+# structurally prove no delegated worker can touch the modelquad repository.
 class RecordingExecutor(Executor):
     """A provider-free executor that records the validated request it receives."""
 
@@ -190,7 +190,7 @@ def test_subprocess_workers_receive_recursion_guard(
     synthetic_worker_binary,
 ) -> None:
     import tempfile
-    from orchestrator.execution import codex as codex_module, noshell
+    from modelquad.execution import codex as codex_module, noshell
 
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     monkeypatch.setattr(codex_module, "_probe", lambda executable: "0.160.0")

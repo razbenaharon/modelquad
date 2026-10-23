@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.routing_policy import DelegationPolicyDecision, check_delegation_policy
+from modelquad.routing_policy import DelegationPolicyDecision, check_delegation_policy
 
 
 def test_delegation_policy_decision_to_dict():

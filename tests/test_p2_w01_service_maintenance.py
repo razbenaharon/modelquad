@@ -11,14 +11,14 @@ import threading
 import httpx
 import pytest
 
-from orchestrator.config import Config
-from orchestrator.execution.base import WorkerTaskStatus
-from orchestrator.jobs import handle, recovery
-from orchestrator.jobs.seam import JobOutput, JobRef, JobStatus
-from orchestrator.jobs.store import FileOutputStore
-from orchestrator.service import collector, db
-from orchestrator.service.app import create_app
-from orchestrator.service.job_maintenance import JobMaintenance
+from modelquad.config import Config
+from modelquad.execution.base import WorkerTaskStatus
+from modelquad.jobs import handle, recovery
+from modelquad.jobs.seam import JobOutput, JobRef, JobStatus
+from modelquad.jobs.store import FileOutputStore
+from modelquad.service import collector, db
+from modelquad.service.app import create_app
+from modelquad.service.job_maintenance import JobMaintenance
 
 NOW = datetime(2026, 10, 6, 12, tzinfo=timezone.utc)
 JOB_ID = "00000000-0000-4000-8000-000000000101"

@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.execution.base import (
+from modelquad.execution.base import (
     EvidenceItem,
     ExecutionResult,
     OutcomeEvidence,
     WorkerTaskStatus,
 )
-from orchestrator.outcome import (
+from modelquad.outcome import (
     ASSESSOR_VERSION,
     VerificationSpec,
     _classify_pytest_exit,
@@ -85,7 +85,7 @@ def test_baseline_exit_code_only_is_process_level():
     evidence = build_baseline_evidence(res)
     assert evidence.verification_level == "process"
     assert evidence.process_success is False
-    # A non-zero exit the orchestrator itself observed: objective failure fact.
+    # A non-zero exit the modelquad itself observed: objective failure fact.
     assert evidence.verification_confidence == "medium"
     kinds = [item.kind for item in evidence.evidence_items]
     assert kinds == ["process_exit"]
@@ -227,7 +227,7 @@ def test_every_pytest_exit_code_maps_to_its_documented_bucket(
     passed, item = _classify_pytest_exit(returncode, "", ("test_x.py",))
     assert passed is expected_passed
     assert item.kind == expected_kind
-    # Only a verdict the orchestrator actually observed is "objective".
+    # Only a verdict the modelquad actually observed is "objective".
     assert item.source == ("objective" if returncode in (0, 1) else "inferred")
 
 
@@ -248,7 +248,7 @@ def test_finalize_survives_an_assessment_that_explodes(tmp_path, monkeypatch):
     def _explode(*args, **kwargs):
         raise RuntimeError("assessor is on fire")
 
-    monkeypatch.setattr("orchestrator.outcome.attach_outcome_evidence", _explode)
+    monkeypatch.setattr("modelquad.outcome.attach_outcome_evidence", _explode)
     finalized = finalize_execution_result(
         _result(),
         working_directory=tmp_path,

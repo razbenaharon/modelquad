@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from orchestrator.usage.codex_appserver import parse_rate_limits_result
+from modelquad.usage.codex_appserver import parse_rate_limits_result
 
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)

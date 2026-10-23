@@ -12,8 +12,8 @@ import time
 
 import pytest
 
-from orchestrator.usage import background, refresh
-from orchestrator.usage.codex_appserver import _unobserved, parse_rate_limits_result
+from modelquad.usage import background, refresh
+from modelquad.usage.codex_appserver import _unobserved, parse_rate_limits_result
 
 
 def _rate_limits(used_five=30.0, used_week=55.0):
@@ -110,8 +110,8 @@ def test_refreshes_are_debounced_across_sessions(tmp_path):
 
 def test_the_refresh_is_display_only(tmp_path, monkeypatch):
     """It writes the Codex usage snapshot and nothing else, and starts no work."""
-    from orchestrator.execution.manager import ExecutionManager
-    from orchestrator.jobs import handle
+    from modelquad.execution.manager import ExecutionManager
+    from modelquad.jobs import handle
 
     def tripwire(*args, **kwargs):
         raise AssertionError("a background quota refresh started work")
@@ -130,7 +130,7 @@ def test_the_refresh_is_display_only(tmp_path, monkeypatch):
 
 
 def test_an_unreachable_app_server_shows_unknown_never_zero(tmp_path):
-    from orchestrator.cli import _status_line_text
+    from modelquad.cli import _status_line_text
 
     unreachable = functools.partial(refresh.refresh_provider, refreshers={
         "codex": lambda directory, *, now=None: _unobserved(reason="app_server_unreachable",
@@ -144,7 +144,7 @@ def test_an_unreachable_app_server_shows_unknown_never_zero(tmp_path):
 
 
 def test_a_fresh_reading_reaches_the_status_line(tmp_path):
-    from orchestrator.cli import _status_line_text
+    from modelquad.cli import _status_line_text
 
     real = functools.partial(refresh.refresh_provider,
                              refreshers={"codex": lambda directory, *, now=None: _rate_limits(30, 55)})
@@ -157,7 +157,7 @@ def test_a_fresh_reading_reaches_the_status_line(tmp_path):
 
 @pytest.mark.parametrize("worker", [False, True], ids=["host", "worker"])
 def test_the_mcp_server_starts_the_refresh_only_outside_a_worker(monkeypatch, worker):
-    from orchestrator.mcp import server
+    from modelquad.mcp import server
 
     started = []
     monkeypatch.setattr(server, "is_worker", lambda db_path: worker)
@@ -168,7 +168,7 @@ def test_the_mcp_server_starts_the_refresh_only_outside_a_worker(monkeypatch, wo
 
 
 def test_a_failing_start_never_stops_the_server(monkeypatch):
-    from orchestrator.mcp import server
+    from modelquad.mcp import server
 
     def explode(directory):
         raise RuntimeError("thread could not start")

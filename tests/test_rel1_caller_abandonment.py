@@ -41,12 +41,12 @@ from mcp_types import REQUEST_TIMEOUT
 
 from conftest import tool_payload
 
-from orchestrator import procutil
-from orchestrator.execution import ExecutionManager
-from orchestrator.execution import base as execution_base
-from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
-from orchestrator.service import db as service_db
-from orchestrator.service import history as service_history
+from modelquad import procutil
+from modelquad.execution import ExecutionManager
+from modelquad.execution import base as execution_base
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+from modelquad.service import db as service_db
+from modelquad.service import history as service_history
 
 def write_usage_fixtures(path):
     (path / "usage-claude.json").write_text('{"five_hour_used_percentage": 10}', encoding="utf-8")
@@ -58,12 +58,12 @@ def _tool_usage_directory(tmp_path, monkeypatch):
     """The MCP tools read quota snapshots from `server.USAGE_DIRECTORY`, never
     from a tool argument. This module's snapshots live in the
     test's tmp_path, which every call here used to pass as `usage_directory`."""
-    from orchestrator.mcp import server as mcp_server_module
+    from modelquad.mcp import server as mcp_server_module
 
     monkeypatch.setattr(mcp_server_module, "USAGE_DIRECTORY", str(tmp_path))
 
 
-mcp_server = importlib.import_module("orchestrator.mcp.server")
+mcp_server = importlib.import_module("modelquad.mcp.server")
 
 #: The client's patience in the acceptance test. Short on purpose: the whole
 #: point is a real deadline elapsing, and one that takes minutes to elapse
@@ -133,7 +133,7 @@ def delegation(tmp_path, monkeypatch):
     """The MCP server on an isolated database, with the holding worker as `codex`."""
 
     write_usage_fixtures(tmp_path)
-    db_path = tmp_path / "orchestrator.db"
+    db_path = tmp_path / "modelquad.db"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     original = service_db.DEFAULT_DB_PATH

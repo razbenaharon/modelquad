@@ -21,13 +21,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from orchestrator.config import Config
-from orchestrator.execution import ExecutionManager, ExecutionResult, WorkerTaskStatus
-from orchestrator.execution.base import quota_refusal_evidence
-from orchestrator.models import Freshness, ProviderStatus
-from orchestrator.router import Router
-from orchestrator.service import health as service_health
-from orchestrator.service import history as service_history
+from modelquad.config import Config
+from modelquad.execution import ExecutionManager, ExecutionResult, WorkerTaskStatus
+from modelquad.execution.base import quota_refusal_evidence
+from modelquad.models import Freshness, ProviderStatus
+from modelquad.router import Router
+from modelquad.service import health as service_health
+from modelquad.service import history as service_history
 
 
 class _FakeExecutor:
@@ -110,7 +110,7 @@ def _status(provider: str, remaining: int, *, observed_at: datetime) -> Provider
 
 def _quota_rows(db_path) -> int:
     """Every quota-marked row, refusals and recoveries alike."""
-    from orchestrator.service import db as service_db
+    from modelquad.service import db as service_db
 
     if not db_path.exists():
         return 0
@@ -307,7 +307,7 @@ def test_a_served_run_with_nothing_on_record_writes_nothing(tmp_path):
 
 
 def test_a_recovery_only_clears_the_provider_that_served(tmp_path):
-    from orchestrator.registry import (
+    from modelquad.registry import (
         ProviderCapabilities, ProviderPlugin, UsageSourceKind, WORKSPACE_DEVELOPMENT_GRANT,
         default_registry,
     )

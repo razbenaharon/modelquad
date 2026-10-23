@@ -24,11 +24,11 @@ from pathlib import Path
 
 import pytest
 
-import orchestrator.procutil as procutil
-from orchestrator.config import Config
-from orchestrator.execution import ExecutionManager
-from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
-from orchestrator.outcome import (
+import modelquad.procutil as procutil
+from modelquad.config import Config
+from modelquad.execution import ExecutionManager
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+from modelquad.outcome import (
     ASSESSOR_VERSION,
     VerificationSpec,
     assess_host_outcome,
@@ -37,7 +37,7 @@ from orchestrator.outcome import (
     build_host_outcome_result,
 )
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "orchestrator"
+SRC = Path(__file__).resolve().parents[1] / "src" / "modelquad"
 
 NOT_VERIFIED = "requested_tests_not_verified"
 
@@ -399,7 +399,7 @@ def test_outcome_module_names_no_process_launcher():
             found.add(node.attr)
     assert found == set()
 
-    import orchestrator.outcome as outcome
+    import modelquad.outcome as outcome
 
     assert not hasattr(outcome, "_run_requested_tests")
 

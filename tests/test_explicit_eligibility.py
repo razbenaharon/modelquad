@@ -6,15 +6,15 @@ from dataclasses import replace
 
 import pytest
 
-from orchestrator import netpolicy
-from orchestrator.capability import CapabilityFact, CapabilityProfile, RestrictionReason, VerificationState
-from orchestrator.config import Config, ProviderConfig
-from orchestrator.execution import ExecutionManager, ExecutionResult, WorkerTaskStatus
-from orchestrator.execution.base import attempt_resolution
-from orchestrator.models import NETWORK_POLICY_REFUSED, ProviderStatus
-from orchestrator.router import Router
-from orchestrator.routing_policy import LaunchRefused
-from orchestrator.service import history
+from modelquad import netpolicy
+from modelquad.capability import CapabilityFact, CapabilityProfile, RestrictionReason, VerificationState
+from modelquad.config import Config, ProviderConfig
+from modelquad.execution import ExecutionManager, ExecutionResult, WorkerTaskStatus
+from modelquad.execution.base import attempt_resolution
+from modelquad.models import NETWORK_POLICY_REFUSED, ProviderStatus
+from modelquad.router import Router
+from modelquad.routing_policy import LaunchRefused
+from modelquad.service import history
 
 
 class RecordingExecutor:
@@ -91,7 +91,7 @@ def test_explicit_and_routed_hard_gates_agree(tmp_path, monkeypatch, case):
             }
         for reason in routed.ineligibility_reasons:
             assert reason in result.error
-        from orchestrator.execution.bound_launch import _executed_provider_for_row
+        from modelquad.execution.bound_launch import _executed_provider_for_row
         assert _executed_provider_for_row(result) is history.NOTHING_SELECTED
 
 

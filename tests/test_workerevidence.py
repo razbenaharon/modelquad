@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 
-from orchestrator.workerevidence import (
+from modelquad.workerevidence import (
     WorkerMetrics,
     clear_version_cache,
     normalize_codex_json_events,
@@ -22,11 +22,11 @@ from orchestrator.workerevidence import (
 # shells out to a real CLI. These tests are ABOUT the probe, so they restore
 # the genuine implementation (captured at import, before the fixture runs)
 # and stub `subprocess.run` beneath it instead -- still spawning nothing.
-from orchestrator.workerevidence import _probe_version as _real_probe_version
+from modelquad.workerevidence import _probe_version as _real_probe_version
 
 
 def _use_real_probe(monkeypatch):
-    monkeypatch.setattr("orchestrator.workerevidence._probe_version", _real_probe_version)
+    monkeypatch.setattr("modelquad.workerevidence._probe_version", _real_probe_version)
 
 SECRET_COMMAND = "aws s3 cp s3://prod/secrets.env . --profile prod-admin"
 SECRET_PATH = "C:\\Users\\SecretUser\\PrivateRepo\\src\\credentials.py"
@@ -206,14 +206,14 @@ def test_runtime_version_of_an_unknown_runtime_is_unknown():
 
 def test_runtime_version_probe_is_cached(monkeypatch):
     clear_version_cache()
-    monkeypatch.setattr("orchestrator.codexcli.probe_which", lambda _: "C:/fake/codex")
+    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
     calls = []
 
     def _fake_probe(executable):
         calls.append(executable)
         return "codex-cli 0.147.0"
 
-    monkeypatch.setattr("orchestrator.workerevidence._probe_version", _fake_probe)
+    monkeypatch.setattr("modelquad.workerevidence._probe_version", _fake_probe)
     assert runtime_version("codex") == "codex-cli 0.147.0"
     assert runtime_version("codex") == "codex-cli 0.147.0"
     assert len(calls) == 1  # probed once per process, not per delegation
@@ -222,14 +222,14 @@ def test_runtime_version_probe_is_cached(monkeypatch):
 
 def test_codex_probes_follow_the_resolved_official_executable(tmp_path, monkeypatch):
     import subprocess
-    from orchestrator import codexcli, workerevidence
+    from modelquad import codexcli, workerevidence
 
     _use_real_probe(monkeypatch)
     old = tmp_path / "old" / "codex.exe"
     new = tmp_path / "new" / "codex.exe"
     candidates = [old]
     monkeypatch.setattr(codexcli, "official_candidates", lambda: candidates)
-    monkeypatch.setattr("orchestrator.codexcli.probe_which", lambda _: None)
+    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: None)
     versions = {str(old): "0.155.0", str(new): "0.160.0"}
     monkeypatch.setattr(codexcli, "_probe", versions.get)
     calls = []
@@ -249,13 +249,13 @@ def test_codex_probes_follow_the_resolved_official_executable(tmp_path, monkeypa
 
 def test_codex_probes_recover_after_missing_executable(monkeypatch):
     import subprocess
-    from orchestrator import codexcli, workerevidence
+    from modelquad import codexcli, workerevidence
 
     _use_real_probe(monkeypatch)
     monkeypatch.setattr(codexcli, "official_candidates", lambda: [])
-    monkeypatch.setattr("orchestrator.codexcli.probe_which", lambda _: None)
+    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: None)
     assert runtime_version("codex") is None
-    monkeypatch.setattr("orchestrator.codexcli.probe_which", lambda _: "C:/fake/codex")
+    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
     monkeypatch.setattr(workerevidence.subprocess, "run", lambda argv, **kwargs:
                         subprocess.CompletedProcess(argv, 0, "codex-cli 0.160.0 --json", ""))
     assert runtime_version("codex") == "codex-cli 0.160.0 --json"
@@ -267,14 +267,14 @@ def test_runtime_version_is_unknown_when_the_probe_fails(monkeypatch):
     """A CLI that cannot be probed yields UNKNOWN, never a guessed version."""
     clear_version_cache()
     _use_real_probe(monkeypatch)
-    monkeypatch.setattr("orchestrator.codexcli.probe_which", lambda _: "C:/fake/codex")
+    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
     calls = []
 
     def _boom(*args, **kwargs):
         calls.append(args)
         raise OSError("binary is not executable")
 
-    monkeypatch.setattr("orchestrator.workerevidence.subprocess.run", _boom)
+    monkeypatch.setattr("modelquad.workerevidence.subprocess.run", _boom)
     assert runtime_version("codex") is None
     assert len(calls) == 1
     clear_version_cache()
@@ -285,7 +285,7 @@ def test_runtime_version_rejects_a_nonzero_or_empty_probe(monkeypatch):
 
     clear_version_cache()
     _use_real_probe(monkeypatch)
-    monkeypatch.setattr("orchestrator.codexcli.probe_which", lambda _: "C:/fake/codex")
+    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
     calls = []
 
     def run(completed):
@@ -295,7 +295,7 @@ def test_runtime_version_rejects_a_nonzero_or_empty_probe(monkeypatch):
         return fake
 
     monkeypatch.setattr(
-        "orchestrator.workerevidence.subprocess.run",
+        "modelquad.workerevidence.subprocess.run",
         run(_sp.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")),
     )
     assert runtime_version("codex") is None
@@ -303,7 +303,7 @@ def test_runtime_version_rejects_a_nonzero_or_empty_probe(monkeypatch):
     clear_version_cache()
 
     monkeypatch.setattr(
-        "orchestrator.workerevidence.subprocess.run",
+        "modelquad.workerevidence.subprocess.run",
         run(_sp.CompletedProcess(args=[], returncode=0, stdout="   ", stderr="")),
     )
     assert runtime_version("codex") is None
@@ -316,9 +316,9 @@ def test_runtime_version_takes_the_banner_line(monkeypatch):
 
     clear_version_cache()
     _use_real_probe(monkeypatch)
-    monkeypatch.setattr("orchestrator.codexcli.probe_which", lambda _: "C:/fake/codex")
+    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
     monkeypatch.setattr(
-        "orchestrator.workerevidence.subprocess.run",
+        "modelquad.workerevidence.subprocess.run",
         lambda *a, **k: _sp.CompletedProcess(
             args=[], returncode=0, stdout="codex-cli 0.147.0\nextra noise\n", stderr=""
         ),

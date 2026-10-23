@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.adapters.registration import (
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.adapters.registration import (
     HostRegistrationOutcome,
     RegistrationStatus,
     RestoreStatus,
@@ -36,8 +36,8 @@ from orchestrator.adapters.registration import (
     recorded_replacement,
     restore_previous_registration,
 )
-from orchestrator.onboarding import install_detected_hosts
-from orchestrator.registry import (
+from modelquad.onboarding import install_detected_hosts
+from modelquad.registry import (
     HostAdapterDescriptor,
     ProviderCapabilities,
     ProviderPlugin,
@@ -180,7 +180,7 @@ def test_a_replacement_is_worded_differently_from_a_fresh_connection(
 ):
     """The three outcomes must not collapse back into one sentence."""
 
-    from orchestrator.onboarding import _host_step_wording
+    from modelquad.onboarding import _host_step_wording
 
     host = _registry(claude_home).all()[0].host_adapters[0]
     fresh = _install(claude_home)
@@ -201,7 +201,7 @@ def test_a_supported_host_may_promise_the_restore(state_root, claude_home):
     """Claude Code's entry is a JSON value this product can rewrite verbatim,
     so saying the previous one was saved is true."""
 
-    from orchestrator.onboarding import _host_step_wording
+    from modelquad.onboarding import _host_step_wording
 
     _write_registration(claude_home, {"command": "modelquad-mcp"})
     host = _registry(claude_home).all()[0].host_adapters[0]
@@ -217,7 +217,7 @@ def test_a_supported_host_may_promise_the_restore(state_root, claude_home):
 def test_the_user_sentence_never_names_a_path(state_root, claude_home):
     """``user_detail`` is plain language; launch commands are absolute paths."""
 
-    from orchestrator.onboarding import _host_step_wording
+    from modelquad.onboarding import _host_step_wording
 
     _write_registration(claude_home, {"command": "modelquad-mcp"})
     host = _registry(claude_home).all()[0].host_adapters[0]

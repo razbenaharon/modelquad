@@ -24,7 +24,7 @@ def test_no_onboarding_step_grades_a_check_by_is_not_missing():
     source = (
         Path(__file__).resolve().parents[1]
         / "src"
-        / "orchestrator"
+        / "modelquad"
         / "onboarding.py"
     ).read_text(encoding="utf-8")
 

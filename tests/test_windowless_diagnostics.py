@@ -12,8 +12,8 @@ import sys
 
 import pytest
 
-import orchestrator
-from orchestrator import windowless_diagnostics as diagnostics
+import modelquad
+from modelquad import windowless_diagnostics as diagnostics
 from conftest import no_window_kwargs
 
 CANARY = 'secret-canary C:\\private\\task https://private.invalid/?token=secret argv hook-payload'
@@ -57,7 +57,7 @@ class BadStream:
 def test_null_bootstrap_never_opens_state_and_discards_arbitrary_writes(monkeypatch, stream):
     monkeypatch.setattr(sys, "stdout", stream)
     monkeypatch.setattr(sys, "stderr", stream)
-    from orchestrator import paths
+    from modelquad import paths
     monkeypatch.setattr(paths, "logs_dir", lambda: pytest.fail("bootstrap selected state"))
     assert diagnostics.bootstrap(force=True)
     assert sys.stdout.write(CANARY) == len(CANARY)
@@ -129,7 +129,7 @@ def test_broken_protocol_writes_flushes_and_isatty_fail_silent(monkeypatch, stre
 
 
 def test_selected_state_is_bound_after_explicit_flags_and_never_to_default(monkeypatch, tmp_path):
-    from orchestrator import paths
+    from modelquad import paths
     default = tmp_path / "default"
     chosen = tmp_path / "chosen"
     monkeypatch.setenv("MODELQUAD_STATE_ROOT", str(default))
@@ -367,11 +367,11 @@ def test_windows_log_scan_queries_link_counts_instead_of_cached_zero(monkeypatch
 
 def test_same_role_processes_serialize_runtime_rotation(tmp_path):
     # Real kernel locks across Python processes, not just two Lock instances.
-    import_root = str(Path(orchestrator.__file__).resolve().parent.parent)
+    import_root = str(Path(modelquad.__file__).resolve().parent.parent)
     code = """
 import sys
 from pathlib import Path
-from orchestrator import windowless_diagnostics as d
+from modelquad import windowless_diagnostics as d
 d.MAX_LOG_BYTES = 512
 sink = d.EventSink(Path(sys.argv[1]), 'service')
 assert sink.prepare()

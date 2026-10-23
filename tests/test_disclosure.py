@@ -10,8 +10,8 @@ import io
 
 import pytest
 
-from orchestrator import cli
-from orchestrator.disclosure import (
+from modelquad import cli
+from modelquad.disclosure import (
     BACKGROUND_WORK,
     CHATGPT_DATA_CONTROLS,
     CLAUDE_PRIVACY_SETTINGS,
@@ -86,7 +86,7 @@ def test_turning_the_runner_on_without_consent_never_reaches_the_service(monkeyp
     def refuse(*args, **kwargs):
         raise AssertionError("the setting was sent without consent")
 
-    monkeypatch.setattr("orchestrator.jobs.service_client.connect_management", refuse)
+    monkeypatch.setattr("modelquad.jobs.service_client.connect_management", refuse)
     assert cli.main(["settings", "job-runner", "on"]) == 2
 
 
@@ -98,13 +98,13 @@ def test_turning_the_runner_off_needs_no_consent(monkeypatch, capsys):
             assert enabled is False
             return {"job_runner_readiness": "off"}
 
-    monkeypatch.setattr("orchestrator.jobs.service_client.connect_management", lambda db: Client())
+    monkeypatch.setattr("modelquad.jobs.service_client.connect_management", lambda db: Client())
     assert cli.main(["settings", "job-runner", "off"]) == 0
     assert BACKGROUND_WORK[0] not in capsys.readouterr().out
 
 
 def test_accepted_consent_is_recorded_before_the_service_is_asked(monkeypatch, capsys, tmp_path):
-    from orchestrator.service import history
+    from modelquad.service import history
 
     db_path = tmp_path / "consent.db"
     seen = []
@@ -115,14 +115,14 @@ def test_accepted_consent_is_recorded_before_the_service_is_asked(monkeypatch, c
             seen.append(history.get_job_runner_consent_at(db_path))
             return {"job_runner_readiness": "ready"}
 
-    monkeypatch.setattr("orchestrator.jobs.service_client.connect_management", lambda db: Client())
+    monkeypatch.setattr("modelquad.jobs.service_client.connect_management", lambda db: Client())
     assert cli.main(["--history-db", str(db_path), "settings", "job-runner", "on", "--yes"]) == 0
     assert seen and seen[0] is not None
     assert history.get_job_runner_consent_at(db_path) == seen[0]
 
 
 def test_refused_consent_records_nothing(monkeypatch, capsys, tmp_path):
-    from orchestrator.service import history
+    from modelquad.service import history
 
     db_path = tmp_path / "no-consent.db"
     monkeypatch.setattr("sys.stdin", _Stdin(False))

@@ -76,11 +76,11 @@ INSTALLED_EXE = chr(92).join(
         "example",
         "AppData",
         "Local",
-        "MultiAgentOrchestrator",
+        "ModelQuad",
         "app",
         "versions",
         "0.2.0+ad87cea",
-        "orchestrator.exe",
+        "modelquad.exe",
     )
 )
 

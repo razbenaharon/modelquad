@@ -30,15 +30,15 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.adapters import registration as reg
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.adapters.registration import (
+from modelquad.adapters import registration as reg
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.adapters.registration import (
     RegistrationStatus,
     RestoreStatus,
     recorded_replacement,
     restore_previous_registration,
 )
-from orchestrator.onboarding import install_detected_hosts
+from modelquad.onboarding import install_detected_hosts
 
 from test_host_registration_transaction import (  # noqa: F401 -- fixtures + helpers
     HOST_ID,
@@ -68,7 +68,7 @@ def _fail_after_the_registration_write(monkeypatch) -> None:
         raise OSError("CLAUDE.md is not writable")
 
     monkeypatch.setattr(
-        "orchestrator.adapters.claude_adapter.pending_action", explode
+        "modelquad.adapters.claude_adapter.pending_action", explode
     )
 
 
@@ -78,7 +78,7 @@ def _fail_before_the_registration_write(monkeypatch) -> None:
     def explode(*a, **k):
         raise OSError("skills directory is not writable")
 
-    monkeypatch.setattr("orchestrator.adapters.claude_adapter._plan_owned_copy", explode)
+    monkeypatch.setattr("modelquad.adapters.claude_adapter._plan_owned_copy", explode)
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ def test_an_unreadable_registration_after_failure_keeps_the_record(
     # on the adapter having failed rather than on a call count, which is
     # brittle: ``read_registered_command`` calls ``read_registered_entry``
     # internally, so the pre-install phase already makes two of them.
-    from orchestrator import hostruntime
+    from modelquad import hostruntime
 
     real = hostruntime.read_registered_entry
     state = {"install_failed": False}
@@ -218,7 +218,7 @@ def test_an_unreadable_registration_after_failure_keeps_the_record(
         raise OSError("CLAUDE.md is not writable")
 
     monkeypatch.setattr(
-        "orchestrator.adapters.claude_adapter.pending_action", explode
+        "modelquad.adapters.claude_adapter.pending_action", explode
     )
 
     def unreadable_after_the_failure(*a, **k):

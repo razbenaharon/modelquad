@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import procutil
-from orchestrator.service import lifecycle
+from modelquad import procutil
+from modelquad.service import lifecycle
 
 
 PID = 2468
@@ -30,8 +30,8 @@ REPLACEMENT_SUFFIX = " A newer service record was left in place."
 @pytest.fixture
 def windows_platform(monkeypatch):
     monkeypatch.setattr(lifecycle.sys, "platform", "win32")
-    monkeypatch.setattr("orchestrator.jobs.handle._launch_policy", lambda: (0, False, None))
-    monkeypatch.setattr("orchestrator.jobs.handle._process_in_any_job", lambda handle: False)
+    monkeypatch.setattr("modelquad.jobs.handle._launch_policy", lambda: (0, False, None))
+    monkeypatch.setattr("modelquad.jobs.handle._process_in_any_job", lambda handle: False)
 
 
 def _write_record(path, *, pid=PID, started_at=STARTED_AT):
@@ -217,7 +217,7 @@ def test_pid_publish_failure_cleans_exact_child(tmp_path, windows_platform, monk
 
     def authenticate(port, **kwargs):
         from types import SimpleNamespace
-        from orchestrator.service.socket_identity import ListenerError
+        from modelquad.service.socket_identity import ListenerError
         proofs.append(kwargs)
         assert port == 8765 and kwargs["require_runner"] is False
         if "expected_pid" not in kwargs:

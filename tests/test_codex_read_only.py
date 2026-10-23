@@ -15,9 +15,9 @@ import subprocess
 
 import pytest
 
-from orchestrator import procutil
-from orchestrator.execution import base as base_module
-from orchestrator.execution.base import (
+from modelquad import procutil
+from modelquad.execution import base as base_module
+from modelquad.execution.base import (
     POLICY_REFUSAL_REASONS,
     READ_ONLY_TASK_TYPES,
     ExecutionRequest,
@@ -25,9 +25,9 @@ from orchestrator.execution.base import (
     attempt_resolution,
     workspace_stability_note,
 )
-from orchestrator.execution.codex import CodexExecutor
-from orchestrator.execution import codex as codex_module, noshell
-from orchestrator.models import TaskType
+from modelquad.execution.codex import CodexExecutor
+from modelquad.execution import codex as codex_module, noshell
+from modelquad.models import TaskType
 
 READ_ONLY = [TaskType.REVIEW, TaskType.EXPLORATION, TaskType.ARCHITECTURE]
 WRITE = [TaskType.IMPLEMENTATION, TaskType.DEBUGGING, TaskType.TESTING, TaskType.TRIVIAL]
@@ -190,7 +190,7 @@ def test_the_worker_environment_drops_other_services_secrets(tmp_path, monkeypat
     env = {key.upper(): value for key, value in run.calls[0]["kwargs"]["env"].items()}
     assert not set(removed) & set(env)
     assert all(env[name] == "inert-" + name.lower() for name in kept)
-    assert env["ORCHESTRATOR_WORKER"] == "1"
+    assert env["MODELQUAD_WORKER"] == "1"
     environment = codex_module.worker_environment({"github_token": "x", "Path": "y"})
     assert environment == {"Path": "y"}  # Windows names are case-insensitive.
 

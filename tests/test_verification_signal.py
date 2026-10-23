@@ -14,11 +14,11 @@ import sqlite3
 
 import pytest
 
-from orchestrator.execution.base import ExecutionResult, WorkerTaskStatus
-from orchestrator.mcp.livelifecycle import derive_live_state, facts_from_attempt
-from orchestrator.outcome import VerificationSpec, attach_outcome_evidence
-from orchestrator.service import db as service_db
-from orchestrator.service import history as service_history
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+from modelquad.mcp.livelifecycle import derive_live_state, facts_from_attempt
+from modelquad.outcome import VerificationSpec, attach_outcome_evidence
+from modelquad.service import db as service_db
+from modelquad.service import history as service_history
 
 
 def _attempt_row(db_path, attempt_id):

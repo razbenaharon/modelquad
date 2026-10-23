@@ -4,7 +4,7 @@
 
 import json
 
-from orchestrator.identity import (
+from modelquad.identity import (
     IDENTITY_FILE_NAME,
     installation_id,
     peek_installation_id,
@@ -102,7 +102,7 @@ def test_a_lost_first_run_race_adopts_the_winners_identity(tmp_path, monkeypatch
     the winner wrote, so every later read agrees with the file.
     """
 
-    from orchestrator import identity as identity_mod
+    from modelquad import identity as identity_mod
 
     target = tmp_path / IDENTITY_FILE_NAME
     winner = {"identity_version": 1, "installation_id": "a" * 32, "created_at": "2026-09-13T00:00:00+00:00"}
@@ -120,7 +120,7 @@ def test_a_lost_first_run_race_adopts_the_winners_identity(tmp_path, monkeypatch
 
 
 def test_a_persistent_refusal_with_nothing_on_disk_still_raises(tmp_path, monkeypatch):
-    from orchestrator import identity as identity_mod
+    from modelquad import identity as identity_mod
 
     attempts: list[int] = []
 
@@ -140,7 +140,7 @@ def test_a_persistent_refusal_with_nothing_on_disk_still_raises(tmp_path, monkey
 
 
 def test_reset_never_adopts_a_concurrent_writers_identity(tmp_path, monkeypatch):
-    from orchestrator import identity as identity_mod
+    from modelquad import identity as identity_mod
 
     target = tmp_path / IDENTITY_FILE_NAME
     other = {"identity_version": 1, "installation_id": "b" * 32, "created_at": "2026-09-13T00:00:00+00:00"}

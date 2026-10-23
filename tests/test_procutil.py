@@ -14,12 +14,12 @@ from typing import Any
 
 import pytest
 
-import orchestrator.catalog as catalog_mod
-import orchestrator.execution as exec_mod
-import orchestrator.execution.base as exec_base
-import orchestrator.procutil as procutil
-import orchestrator.usage.base as usage_base
-from orchestrator.procutil import no_window_kwargs, run_with_tree_kill
+import modelquad.catalog as catalog_mod
+import modelquad.execution as exec_mod
+import modelquad.execution.base as exec_base
+import modelquad.procutil as procutil
+import modelquad.usage.base as usage_base
+from modelquad.procutil import no_window_kwargs, run_with_tree_kill
 
 
 class RecordingRun:
@@ -574,7 +574,7 @@ def test_process_image_name_reads_this_process_for_real():
 
 
 def test_process_image_name_spawns_its_lookup_without_a_console(tmp_path, monkeypatch):
-    from orchestrator.executable_resolution import Resolution
+    from modelquad.executable_resolution import Resolution
 
     executable = tmp_path / 'synthetic system' / 'tasklist.exe'
     executable.parent.mkdir()
@@ -622,7 +622,7 @@ def test_process_image_name_is_unknown_when_the_lookup_fails(monkeypatch):
 
 
 def test_process_image_name_uses_ps_on_posix(monkeypatch):
-    from orchestrator.executable_resolution import Resolution
+    from modelquad.executable_resolution import Resolution
 
     resolved = "/usr/bin/ps"
     monkeypatch.setattr(procutil, "resolve_executable", lambda name: Resolution(resolved, "path", "binary", None))
@@ -663,7 +663,7 @@ def test_process_creation_epoch_uses_elapsed_time_on_posix(monkeypatch):
     """Elapsed time needs no zone, locale or DST reading."""
 
     import time
-    from orchestrator.executable_resolution import Resolution
+    from modelquad.executable_resolution import Resolution
 
     resolved = "/usr/bin/ps"
     monkeypatch.setattr(procutil, "resolve_executable", lambda name: Resolution(resolved, "path", "binary", None))
@@ -817,7 +817,7 @@ def test_the_workers_own_console_host_is_never_a_left_behind_process():
 
 
 def test_descendant_facts_are_absent_for_a_runner_that_did_not_look():
-    from orchestrator.execution.base import descendant_facts
+    from modelquad.execution.base import descendant_facts
 
     plain = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     assert descendant_facts(plain) == {}
@@ -840,7 +840,7 @@ def test_list_descendants_on_posix_needs_a_process_group():
 
 
 def test_list_descendants_on_posix_reads_the_process_group(monkeypatch):
-    from orchestrator.executable_resolution import Resolution
+    from modelquad.executable_resolution import Resolution
 
     resolved = "/usr/bin/ps"
     monkeypatch.setattr(procutil, "resolve_executable", lambda name: Resolution(resolved, "path", "binary", None))

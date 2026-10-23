@@ -22,16 +22,16 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.adapters import registration as reg
-from orchestrator.adapters.claude_adapter import ClaudeAdapter
-from orchestrator.adapters.registration import (
+from modelquad.adapters import registration as reg
+from modelquad.adapters.claude_adapter import ClaudeAdapter
+from modelquad.adapters.registration import (
     RegistrationStatus,
     RestoreStatus,
     backup_path,
     recorded_replacement,
     restore_previous_registration,
 )
-from orchestrator.onboarding import install_detected_hosts
+from modelquad.onboarding import install_detected_hosts
 
 from test_host_registration_transaction import (  # noqa: F401 -- fixtures + helpers
     HOST_ID,
@@ -56,7 +56,7 @@ def _relabel_installed_command(monkeypatch, command: str) -> None:
     """
 
     monkeypatch.setattr(
-        "orchestrator.hostruntime.mcp_launch_command", lambda: command, raising=False
+        "modelquad.hostruntime.mcp_launch_command", lambda: command, raising=False
     )
 
 
@@ -240,10 +240,10 @@ def test_a_restore_write_failure_is_reported_and_keeps_the_record(
     installed = _install(claude_home)
     before_entry = _read_registration(claude_home)
 
-    from orchestrator.adapters.report import ActionKind, FileAction
+    from modelquad.adapters.report import ActionKind, FileAction
 
     monkeypatch.setattr(
-        "orchestrator.adapters.jsonmerge.upsert_json_key",
+        "modelquad.adapters.jsonmerge.upsert_json_key",
         lambda path, key, value, *, dry_run, backup=True: FileAction(
             path, ActionKind.SKIPPED, detail="unwritable"
         ),
@@ -307,7 +307,7 @@ def test_the_secret_never_reaches_the_outcome_object(state_root, claude_home):
 
 
 def test_the_secret_never_reaches_the_onboarding_wording(state_root, claude_home):
-    from orchestrator.onboarding import _host_step_wording
+    from modelquad.onboarding import _host_step_wording
 
     host = _registry(claude_home).all()[0].host_adapters[0]
     outcome = _install_with_secret(claude_home)
@@ -334,9 +334,9 @@ def test_the_secret_never_reaches_a_restore_result(state_root, claude_home):
 def test_the_secret_never_reaches_doctor(state_root, claude_home):
     """A support artefact is exactly where a leaked key would end up."""
 
-    from orchestrator.config import Config
-    from orchestrator.service import control_plane as shell
-    from orchestrator.doctor import run_doctor
+    from modelquad.config import Config
+    from modelquad.service import control_plane as shell
+    from modelquad.doctor import run_doctor
 
     _install_with_secret(claude_home)
     report = run_doctor(

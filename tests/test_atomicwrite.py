@@ -11,7 +11,7 @@ import threading
 
 import pytest
 
-from orchestrator.adapters import atomicwrite
+from modelquad.adapters import atomicwrite
 
 
 def _shared_temp_write(path, content):
