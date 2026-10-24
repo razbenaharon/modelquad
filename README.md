@@ -317,6 +317,10 @@ ModelQuad is an independent project. It is not affiliated with, endorsed by
 or sponsored by Anthropic or OpenAI. "Claude" and "Claude Code" are
 trademarks of Anthropic. "OpenAI" and "Codex" are trademarks of OpenAI.
 
+The code is open source; the ModelQuad name and logo are not part of the
+licence. A changed version needs a name of its own. See
+[TRADEMARK.md](TRADEMARK.md).
+
 <!-- disclaimer: pending legal review -->
 You are responsible for following the terms of each provider whose tools you
 use, including Anthropic's and OpenAI's terms and usage policies. ModelQuad
@@ -346,4 +350,5 @@ ModelQuad was developed with substantial help from AI coding agents.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): community standards.
 - [AGENTS.md](AGENTS.md): build, test and safety rules for contributors.
 - [THIRD_PARTY.md](THIRD_PARTY.md): the packages pip installs with ModelQuad.
+- [TRADEMARK.md](TRADEMARK.md): how you may use the ModelQuad name and logo.
 - [LICENSE](LICENSE): Apache License 2.0.
