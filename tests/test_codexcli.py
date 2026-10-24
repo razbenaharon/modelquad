@@ -305,3 +305,20 @@ def test_a_working_folder_at_or_above_home_does_not_hide_the_users_own_install(t
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(home if where == "home" else tmp_path)
     assert codexcli.project_roots() == ()
+
+
+def test_the_quota_refresh_never_finds_a_codex_planted_under_the_project(tmp_path, monkeypatch):
+    """The app-server quota read runs without a prompt, so its own lookup
+    must refuse a project-local codex.exe too."""
+    from modelquad.usage import codex_appserver
+
+    home = tmp_path / "home"
+    project = home / "projects" / "app"
+    planted = project / ".venv" / "Scripts"
+    planted.mkdir(parents=True)
+    (planted / "codex.exe").write_bytes(b"MZ planted - never run\n")
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(planted))
+    monkeypatch.chdir(project)
+    assert codex_appserver.probe_which("codex") is None

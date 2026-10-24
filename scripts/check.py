@@ -403,6 +403,7 @@ REPO_WIDE_SCANS = (
     "tests/test_devenv.py::test_every_repo_wide_scan_names_a_test_that_exists",
     "tests/test_devenv.py::test_every_test_that_walks_the_repository_is_a_repo_wide_scan",
     "tests/test_devenv.py::test_the_root_conftest_cannot_reach_the_product_runtime",
+    "tests/test_docs_policy.py::test_no_document_carries_a_control_byte",
     "tests/test_executable_resolution_boundary.py::test_src_launches_use_central_resolution",
     "tests/test_procutil.py::test_no_subprocess_spawn_in_src_omits_window_suppression",
     "tests/test_procutil.py::test_no_subprocess_spawn_in_tests_omits_window_suppression",

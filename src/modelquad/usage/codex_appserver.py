@@ -253,10 +253,14 @@ def probe_which(name: str) -> str | None:
     # app-server receives fixed arguments and protocol stdin, never a prompt.
     # A batch launcher is admitted only as a fallback when no native codex.exe exists.
     from .. import executable_resolution
+    from ..codexcli import project_roots
 
+    # Never a Codex planted under the project folder (codexcli.project_roots):
+    # this runs without a prompt, on every quota refresh.
+    roots = project_roots()
     if any(char in name for char in ("/", "\\", ":", "\x00")) or not name:
-        return executable_resolution.admit_executable(name, allow_batch=True).path
-    return executable_resolution.safe_which(name, allow_batch=True)
+        return executable_resolution.admit_executable(name, allow_batch=True, exclude_roots=roots).path
+    return executable_resolution.safe_which(name, allow_batch=True, exclude_roots=roots)
 
 
 def collect_codex_appserver_usage(
