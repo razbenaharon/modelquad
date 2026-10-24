@@ -28,7 +28,7 @@ here; the tool under development is not the instrument for developing it.
 
 | Path | What it is |
 |---|---|
-| `src/modelquad/` | The product (the Python package keeps its original name) |
+| `src/modelquad/` | The product |
 | `src/modelquad/mcp/` | The MCP server Claude Code talks to (`server.py`, job tools in `jobs_tools.py`) |
 | `src/modelquad/cli_entry.py`, `src/modelquad/cli.py` | The `modelquad` command; `cli_entry.py` is the installed entry point and runs the hooks without loading the full CLI |
 | `src/modelquad/execution/` | The Codex worker; `noshell.py` packs the files sent to Codex and checks its event stream |

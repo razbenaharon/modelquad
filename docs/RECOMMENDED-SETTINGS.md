@@ -98,9 +98,24 @@ Codex's quota then updates only when you run `modelquad usage-refresh`.
 Claude Code's managed settings, which users cannot override, can keep
 ModelQuad off a whole fleet:
 
-- deny its tools with `"permissions": {"deny": ["mcp__modelquad"]}`, or
-- block the server itself with a `deniedMcpServers` entry for the server name
-  `modelquad`.
+- block the server by the command that starts it, with a `deniedMcpServers`
+  entry: `"deniedMcpServers": [{"serverCommand": ["modelquad-mcp"]}]`. This
+  is the command `modelquad install claude` registers. Claude Code compares
+  the command and its arguments exactly, so a server started another way (a
+  full path, or `python -m`) needs its own entry, or
+- deny its tools with `"permissions": {"deny": ["mcp__modelquad"]}`.
 
-See Claude Code's documentation on managed settings and managed MCP
-configuration for where the managed settings file lives on each system.
+Both of these also match by a name, which a user can choose. Claude Code's
+documentation warns that a `serverName` entry is a label, not a security
+control; use `serverCommand` when the block must hold. To decide exactly
+which servers may run at all, use an allowlist with
+`allowManagedMcpServersOnly`, or a fixed `managed-mcp.json`.
+
+The guarantee that a person approves each Codex call is Claude Code's own
+approval prompt: both tools that start Codex are marked as requiring user
+interaction, which no allow rule or mode skips. The extra confirmation form
+the handoff tool shows is a second check, not the guarantee.
+
+See Claude Code's documentation on managed settings and on controlling MCP
+server access (`managed-mcp`) for where the managed settings file lives on
+each system.

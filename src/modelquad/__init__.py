@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Read-only, provider-agnostic routing for multi-agent workflows."""
+"""ModelQuad: read-only Codex second opinions and quota display for Claude Code."""
 
 __all__ = ["Config", "Freshness", "ProviderStatus", "Router", "TaskType", "load_config"]
 __version__ = "0.3.0"

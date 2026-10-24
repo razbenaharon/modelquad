@@ -82,6 +82,11 @@ Status: early, source-only release. Windows only.
   your ChatGPT account. Codex's quota is read through that sign-in. An npm
   install works: ModelQuad runs the native `codex.exe` that the npm package
   ships, not its `codex.cmd` launcher.
+- If `OPENAI_API_KEY` or `CODEX_API_KEY` is set in your environment, Codex may
+  use that key instead of your ChatGPT sign-in, and OpenAI then bills the
+  key's API account per use. ModelQuad passes both variables on to Codex,
+  because they are a way to sign Codex in; unset them if you want only your
+  ChatGPT plan used.
 
 ## Install
 

@@ -22,7 +22,7 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from .. import netpolicy
 from ..branding import MCP_SERVER_NAME
@@ -116,6 +116,14 @@ class WorkerGuardMCPServer(MCPServer):
 # The model guidance lives here, not in the user's global CLAUDE.md: Claude
 # Code reads a server's instructions at session start (adapters/server_instructions.py).
 from ..adapters.server_instructions import server_instructions as _server_instructions
+
+#: Tools that only read local state. Claude Code may run these in parallel and
+#: retry them after a dropped connection. Never give this to a tool that starts
+#: Codex: a retry would send the code again and spend the user's Codex usage.
+READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
+#: The two tools that start Codex: they send the listed files to OpenAI.
+STARTS_CODEX = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+                               open_world_hint=True)
 
 server = WorkerGuardMCPServer(MCP_SERVER_NAME, version=current_build_info().identity,
                               instructions=_server_instructions())
@@ -1249,7 +1257,7 @@ def _start_prepared_job_closed(prepared, client, in_session):
         time.sleep(min(0.1, max(0, deadline - time.monotonic())))
 
 
-@server.tool()
+@server.tool(title="Quota and provider status", annotations=READ_ONLY)
 def modelquad_status() -> dict:
     """Show local provider availability and display-only quota readings."""
     return _provider_status_payload(USAGE_DIRECTORY, CONFIG_PATH)
@@ -1383,7 +1391,7 @@ def _report_files(payload: dict[str, Any], prompt: str, working_directory: str, 
                 "again and pass them in files.")
 
 
-@server.tool(meta={"anthropic/requiresUserInteraction": True})
+@server.tool(title="Ask Codex for a second opinion", annotations=STARTS_CODEX, meta={"anthropic/requiresUserInteraction": True})
 async def modelquad_delegate(
     task_type: str,
     prompt: str,
@@ -1463,7 +1471,8 @@ async def modelquad_delegate(
                                                  "suggested_files")
                if key in payload}
     if isinstance(visible.get("output"), str):
-        visible["output"] = visible["output"][:20_000]
+        from .jobs_tools import MAX_SHOWN_OUTPUT_CHARS
+        visible["output"] = visible["output"][:MAX_SHOWN_OUTPUT_CHARS]
     result.content.append(TextContent(type="text", text=json.dumps(visible)))
     return result
 
@@ -1513,7 +1522,7 @@ def _handoff_message(task_type: str, working_directory: str) -> tuple[str, dict 
             "Nothing starts unless you tick the box and accept."), suggestion
 
 
-@server.tool(meta={"anthropic/requiresUserInteraction": True})
+@server.tool(title="Hand a task to Codex", annotations=STARTS_CODEX, meta={"anthropic/requiresUserInteraction": True})
 async def modelquad_handoff(
     task_type: str,
     prompt: str,
@@ -1615,7 +1624,7 @@ def _activity_display(entry: dict[str, Any]) -> dict[str, Any]:
             if key not in _UNDISPLAYED_ACTIVITY_FIELDS}
 
 
-@server.tool()
+@server.tool(title="Recent ModelQuad activity", annotations=READ_ONLY)
 def modelquad_activity(
     limit: int = 50,
     provider: str | None = None,
@@ -1671,7 +1680,7 @@ def modelquad_activity(
     return payload
 
 
-@server.tool()
+@server.tool(title="One activity record", annotations=READ_ONLY)
 def modelquad_activity_detail(kind: str, id: int, project_directory: str | None = None) -> dict:
     """Return the full record for one routing or execution entry.
 
@@ -1779,7 +1788,7 @@ def _recovery_view(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@server.tool()
+@server.tool(title="What became of a Codex request", annotations=READ_ONLY)
 def modelquad_delegation_status(
     task_type: str | None = None,
     working_directory: str | None = None,
@@ -1916,7 +1925,7 @@ def modelquad_delegation_status(
     }
 
 
-@server.tool()
+@server.tool(title="ModelQuad health check", annotations=READ_ONLY)
 def modelquad_doctor() -> dict:
     """Return the same diagnostic report as the CLI doctor command."""
     config = load_config(CONFIG_PATH)
@@ -1926,7 +1935,7 @@ def modelquad_doctor() -> dict:
     ).to_dict()
 
 
-@server.tool()
+@server.tool(title="Refresh quota readings")
 def modelquad_usage_refresh(
     force: bool = False,
 ) -> dict:

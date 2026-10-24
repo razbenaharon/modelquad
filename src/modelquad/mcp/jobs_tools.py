@@ -87,6 +87,12 @@ def _worker_fate(output, record, *, history_readable=True):
     return {'tree_confirmed_dead': fate, 'descendant_uncertainty': summary}
 
 
+#: The most answer text a direct delegate reply carries inline. Collected
+#: background answers keep their own retained bound (jobs.store), and Claude
+#: Code saves a very long tool result to a file instead of showing it whole.
+MAX_SHOWN_OUTPUT_CHARS = 20_000
+
+
 def collect_job_response(job_id, *, record=None):
     """Terminal shortcut shares precisely the collect contract, without ack."""
     now = datetime.now(timezone.utc)
@@ -324,7 +330,25 @@ def output_state(job_id, now=None):
     return default_store().state(job_id, now or datetime.now(timezone.utc))
 
 
+#: Display titles; collect and list only read the store. Status and wait also
+#: schedule crash recovery, so they are not marked read-only.
+_TITLES = {
+    "modelquad_job_status": "Background job status",
+    "modelquad_job_collect": "Read a background answer",
+    "modelquad_job_wait": "Wait for a background answer",
+    "modelquad_job_acknowledge": "Remove a used background answer",
+    "modelquad_job_stop": "Stop a background job",
+    "modelquad_job_list_pending": "List waiting background answers",
+}
+_READ_ONLY = {"modelquad_job_collect", "modelquad_job_list_pending"}
+
+
 def register(server):
+    from mcp.types import ToolAnnotations
+
     for tool in (modelquad_job_status, modelquad_job_collect, modelquad_job_wait,
                  modelquad_job_acknowledge, modelquad_job_stop, modelquad_job_list_pending):
-        server.tool()(tool)
+        name = tool.__name__
+        annotations = (ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
+                       if name in _READ_ONLY else None)
+        server.tool(title=_TITLES[name], annotations=annotations)(tool)
