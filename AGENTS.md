@@ -54,6 +54,10 @@ here; the tool under development is not the instrument for developing it.
     python scripts/check.py review    # fast + the tests your diff touches
     python scripts/check.py python    # the whole suite
 
+    # Tests marked ci_only (wheel build, real venv, repository-wide scans of
+    # the tests) are skipped locally; CI runs them. Locally, set
+    # MODELQUAD_FULL_SUITE=1 to include them.
+
     # The suite directly
     python -m pytest -q
 

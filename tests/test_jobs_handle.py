@@ -678,6 +678,7 @@ def test_nested_venv_launcher_job_fails_closed(tmp_path):
         cleanup(spec, ref)
 
 
+@pytest.mark.ci_only
 @native
 def test_real_venv_runner_starts_and_finishes_offline(tmp_path):
     venv = tmp_path / 'venv'

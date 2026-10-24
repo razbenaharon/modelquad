@@ -252,6 +252,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TESTS = Path(__file__).resolve().parent
 
@@ -784,6 +786,7 @@ def _scanned_files() -> list[Path]:
     return sorted(found)
 
 
+@pytest.mark.ci_only
 def test_no_test_module_calls_platform_in_process():
     """The guard. Fails the moment the in-process call returns to test support.
 

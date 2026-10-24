@@ -90,4 +90,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 tmp_path_retention_count = 3
 tmp_path_retention_policy = "failed"
-markers = ["serial_timing: live process timing tests run after the parallel suite, with xdist disabled"]
+markers = [
+    "serial_timing: live process timing tests run after the parallel suite, with xdist disabled",
+    "ci_only: slow repository and packaging checks; run in CI, or locally with MODELQUAD_FULL_SUITE=1",
+]

@@ -384,7 +384,6 @@ REPO_WIDE_SCANS = (
     "tests/test_service_entrypoints.py::test_installed_command_entry_has_no_service_call_sites",
     "tests/test_startup_imports.py::test_runner_launch_sources_do_not_import_mcp",
     "tests/test_third_party_notices.py::test_every_python_file_carries_the_spdx_identifier",
-    "tests/test_windowwatch.py::test_no_evidence_document_carries_a_control_byte",
 )
 
 

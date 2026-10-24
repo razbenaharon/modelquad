@@ -24,6 +24,24 @@ if sys.platform == "win32":
 from modelquad.execution.base import WORKER_ENV_VAR
 from modelquad.service import db as service_db
 
+#: Set to run the ``ci_only`` tests locally; CI (``CI=true``) always runs them.
+FULL_SUITE_ENV_VAR = "MODELQUAD_FULL_SUITE"
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip ``ci_only`` tests in a local run.
+
+    They check the repository and its packaging (a wheel built and installed,
+    a real virtual environment, scans of every test file) rather than product
+    behaviour, and take minutes. CI runs them on every push.
+    """
+    if os.environ.get("CI", "").casefold() == "true" or os.environ.get(FULL_SUITE_ENV_VAR) == "1":
+        return
+    skip = pytest.mark.skip(reason=f"ci_only: runs in CI, or locally with {FULL_SUITE_ENV_VAR}=1")
+    for item in items:
+        if item.get_closest_marker("ci_only") is not None:
+            item.add_marker(skip)
+
 
 @pytest.fixture
 def synthetic_worker_binary(tmp_path_factory):

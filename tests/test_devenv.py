@@ -474,6 +474,7 @@ def test_bare_pytest_probe_never_writes_a_shared_repository_probe(tmp_path, monk
         ),
     ],
 )
+@pytest.mark.ci_only
 def test_a_bare_pytest_run_puts_every_temporary_file_under_the_root(
     tmp_path, extra_args, from_tests_dir, console_script
 ):
@@ -597,6 +598,7 @@ def _module_tests(path: Path) -> dict[str, str]:
     }
 
 
+@pytest.mark.ci_only
 def test_the_review_gate_selects_every_repo_wide_scan_for_a_one_file_change(check):
     """An unflagged spawn in a test file passed the review gate, because
     the diff named only that file, and was found by `check.py all` and a paid
@@ -616,6 +618,7 @@ def test_the_review_gate_selects_every_repo_wide_scan_for_a_one_file_change(chec
         assert "tests/test_devenv.py::" + keeper in check.REPO_WIDE_SCANS
 
 
+@pytest.mark.ci_only
 def test_a_scan_whose_file_is_selected_whole_is_not_named_again(check):
     selected = check.focused_tests(["tests/test_procutil.py"])
     assert "tests/test_procutil.py" in selected
@@ -637,6 +640,7 @@ def _focused_fixture(check, tmp_path, monkeypatch, sources):
         path.write_text(source, encoding="utf-8", newline="\n")
 
 
+@pytest.mark.ci_only
 def test_the_review_gate_selects_check_py_path_guards(check):
     selected = check.focused_tests(["scripts/check.py"])
     assert "tests/test_development_policy.py" in selected
@@ -850,6 +854,7 @@ def test_the_review_gate_reports_broad_selection_without_trimming(
     assert "all files retained" in capsys.readouterr().out
 
 
+@pytest.mark.ci_only
 def test_every_repo_wide_scan_names_a_test_that_exists(check):
     assert list(check.REPO_WIDE_SCANS) == sorted(set(check.REPO_WIDE_SCANS))
     for entry in check.REPO_WIDE_SCANS:
@@ -879,6 +884,7 @@ def _repository_walkers(path: Path) -> set[str]:
     return walkers
 
 
+@pytest.mark.ci_only
 def test_every_test_that_walks_the_repository_is_a_repo_wide_scan(check):
     """A new whole-tree invariant joins the review gate, or this fails.
 

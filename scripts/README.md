@@ -30,6 +30,7 @@ Its own tests: `tests/test_development_policy.py` and `tests/test_devenv.py`.
 - `prune_temp.py`: removes known test leftovers, or explicitly selected
   per-run temporary roots. Dry-run by default.
 - `windowwatch.py`: records console windows opened while something runs; the
-  observation tool behind the no-window tests.
+  manual observation tool behind the no-window tests. It has no test of its
+  own: run it by hand when a console window needs to be measured again.
 - `third_party_inventory.py`: generates the third-party dependency and licence
   inventory in `THIRD_PARTY.md`.

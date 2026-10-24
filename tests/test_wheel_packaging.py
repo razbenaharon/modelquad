@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 
+import pytest
+
 from modelquad.procutil import no_window_kwargs
 
 
@@ -117,6 +119,7 @@ def ensure_egg_info(build_root: Path) -> Path:
     return egg_info
 
 
+@pytest.mark.ci_only
 def test_the_source_tree_really_does_look_installed_to_pip(tmp_path):
     """The hazard env_without_the_source_tree() exists to remove, proven real.
 
@@ -163,6 +166,7 @@ def test_the_source_tree_really_does_look_installed_to_pip(tmp_path):
     )
 
 
+@pytest.mark.ci_only
 def test_wheel_install_exposes_package_data_without_the_source_checkout(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     build_root = private_build_root(repo_root, tmp_path)

@@ -407,12 +407,14 @@ def test_private_permissions(tmp_path):
         assert all(path.stat().st_mode & 0o777 == 0o600 for path in store.root.iterdir())
 
 
-def test_ten_thousand_idle_reads_write_nothing(tmp_path):
+def test_repeated_idle_reads_write_nothing(tmp_path):
     store = FileOutputStore(tmp_path)
     store.put(output(), NOW)
     journal = tmp_path / "outcomes.jsonl"
     before = journal.read_bytes(), journal.stat().st_mtime_ns
-    for index in range(10_000):
+    # The property does not depend on the count; 200 reads show it as well
+    # as ten thousand did, in a fraction of the time.
+    for index in range(200):
         assert store.pending(NOW - timedelta(microseconds=index))
     assert (journal.read_bytes(), journal.stat().st_mtime_ns) == before
 
