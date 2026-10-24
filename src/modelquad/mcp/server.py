@@ -22,6 +22,8 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.elicitation import ElicitationResult
+from mcp.server.mcpserver.resolve import Elicit, Resolve
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from .. import netpolicy
@@ -1638,6 +1640,72 @@ def _handoff_message(task_type: str, working_directory: str) -> tuple[str, dict 
             "Nothing starts unless you tick the box and accept."), suggestion
 
 
+def _handoff_refusal(task_type: str, capsule: dict | None, ctx: Context | None) -> dict | None:
+    """Why a handoff must stop before the user is asked, or None to ask."""
+    if _worker_refused():
+        return {"refused": True, "started": False,
+                "reason": f"{_worker_refusal_prefix()} a delegated worker must never hand off work"}
+    if isinstance(capsule, dict) and "action_authority" in capsule:
+        return {"started": False, "approved": False, "reason": "capsule_action_authority_rejected"}
+    from ..project_notes import require_read_only
+    try:
+        require_read_only(task_type)
+    except (LaunchRefused, ValueError):
+        return {"started": False, "approved": False, "reason": "task_type_not_read_only"}
+    # Check pause and host-disconnect policy before asking, so the form never
+    # implies that a launch is possible.
+    policy = _launch_policy(service_db.DEFAULT_DB_PATH, invocation_mode="explicit_user_request",
+                            user_approved=True, caller_host=host_from_context(ctx))
+    if not policy.allowed:
+        return {"started": False, "approved": False, "reason": policy.reason}
+    return None
+
+
+def _handoff_form_text(task_type: str, prompt: str, working_directory: str, files: list[str]) -> str:
+    """The handoff form's text. It must read the same on every round of a
+    2026-07-28 call (a changed question is asked again), so it carries no
+    live quota numbers: the task, the files with sizes, and the account kind."""
+    folder = Path(working_directory).name or working_directory
+    preview = " ".join(prompt.split())[:300]
+    return "\n".join((
+        "Hand this task to Codex?",
+        f"Task: {task_type} in {folder}. Codex runs it under your own login. "
+        "Nothing starts unless you tick the box and accept.",
+        f"Task preview: {preview}",
+        _files_preview(working_directory, files),
+        _codex_account_line(),
+    ))
+
+
+def _handoff_question(task_type: str, prompt: str, working_directory: str, files: list[str] | None,
+                      capsule: dict | None, ctx: Context) -> Any:
+    """Resolver: ask with the handoff form through whichever channel the
+    connection allows (a 2026-07-28 input-required round, or a request on an
+    older protocol). A handoff that must stop is not asked at all; the tool
+    body sees that and refuses."""
+    if _handoff_refusal(task_type, capsule, ctx) is not None:
+        return "not_asked"
+    try:
+        checked = _checked_files(files)
+    except ToolError:
+        return "not_asked"
+    # A client that declared no forms cannot answer one; asking would end the
+    # call in a protocol error. The body then reports the form as unavailable.
+    capabilities = getattr(ctx, "client_capabilities", None)
+    if getattr(capabilities, "elicitation", None) is None:
+        return "not_asked"
+    return Elicit(_handoff_form_text(task_type, prompt, working_directory, checked), HandoffApproval)
+
+
+def _approval_answer(outcome: Any) -> str:
+    """accept / decline / cancel from the framework's form outcome."""
+    action = getattr(outcome, "action", None)
+    if action == "accept":
+        data = getattr(outcome, "data", None)
+        return "accept" if getattr(data, "hand_off", False) is True else "decline"
+    return "decline" if action == "decline" else "cancel"
+
+
 @server.tool(title="Hand a task to Codex", annotations=STARTS_CODEX, meta={"anthropic/requiresUserInteraction": True})
 async def modelquad_handoff(
     task_type: str,
@@ -1649,32 +1717,25 @@ async def modelquad_handoff(
     capsule: dict | None = None,
     ctx: Context | None = None,
     files: FilesArgument = None,
+    approval: Annotated[ElicitationResult[HandoffApproval], Resolve(_handoff_question)] = None,
 ) -> CallToolResult:
     """Ask the user, in a form listing the files and their total size, before handing a
     read-only task to Codex. Only the files in `files` (paths relative to working_directory,
     at most 32) are sent; a path named only in the task text is not."""
-    if _worker_refused():
-        return _plain_result({"refused": True, "started": False,
-                              "reason": f"{_worker_refusal_prefix()} a delegated worker must never hand off work"})
-    if isinstance(capsule, dict) and "action_authority" in capsule:
-        return _plain_result({"started": False, "approved": False, "reason": "capsule_action_authority_rejected"})
-    from ..project_notes import require_read_only
-    try:
-        require_read_only(task_type)
-    except (LaunchRefused, ValueError):
-        return _plain_result({"started": False, "approved": False, "reason": "task_type_not_read_only"})
-    # Check pause and host-disconnect policy before eliciting so a prompt
-    # never implies that a launch is possible.
-    policy = _launch_policy(service_db.DEFAULT_DB_PATH, invocation_mode="explicit_user_request",
-                            user_approved=True, caller_host=host_from_context(ctx))
-    if not policy.allowed:
-        return _plain_result({"started": False, "approved": False, "reason": policy.reason})
+    # The checks run again here, after the user answered: an answer never
+    # outlives a pause, a disconnect or a refusal that arrived meanwhile.
+    refusal = _handoff_refusal(task_type, capsule, ctx)
+    if refusal is not None:
+        return _plain_result(refusal)
     files = _checked_files(files)
-    message, suggestion = _handoff_message(task_type, working_directory)
-    preview = " ".join(prompt.split())[:300]
-    message = (f"{message}\nTask preview: {preview}\n{_files_preview(working_directory, files)}\n"
-               f"{_codex_account_line()}")
-    answer, why = await _elicit_handoff(ctx, message)
+    _message, suggestion = _handoff_message(task_type, working_directory)
+    if approval is not None and not isinstance(getattr(approval, "data", None), str):
+        # Asked by the framework before this body ran (an MCP client on any protocol).
+        answer, why = _approval_answer(approval), None
+    else:
+        # Called directly, without the framework's resolver: ask here.
+        answer, why = await _elicit_handoff(
+            ctx, _handoff_form_text(task_type, prompt, working_directory, files))
     if answer != "accept":
         refusal = {
             "started": False,

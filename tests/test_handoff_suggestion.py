@@ -433,7 +433,9 @@ def test_handoff_starts_nothing_without_an_accepted_prompt(low_claude_world, mon
     assert result.structured_content["message"].startswith("Claude is at 95% of its 5-hour window")
     if ctx is not None:
         message, schema = ctx.asked[0]
-        assert message.startswith("Claude is at 95% of its 5-hour window")
+        # The form reads the same on every round of a 2026-07-28 call, so it
+        # carries no live quota numbers; the reply's message still does.
+        assert message.startswith("Hand this task to Codex?")
         assert "Nothing starts unless you tick the box and accept." in message
         assert schema is mcp.HandoffApproval
 
@@ -496,3 +498,65 @@ def test_a_client_without_forms_gets_a_reason_files_and_a_safe_next_step(low_cla
     assert content["files_preview"] == "Files to send: none (only the task text)."
     assert "could not show ModelQuad's handoff form" in content["next_step"]
     assert "Only if they say yes, call modelquad_delegate" in content["next_step"]
+
+
+@pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize(("reply", "started"), [
+    ({"action": "decline"}, False),
+    ({"action": "accept", "content": {"hand_off": False}}, False),
+    ({"action": "accept", "content": {"hand_off": True}}, True),
+])
+def test_the_handoff_form_reaches_a_real_client_on_both_protocols(low_claude_world, monkeypatch, tmp_path,
+                                                                   protocol, reply, started):
+    """Claude Code speaks MCP 2026-07-28, where a server may not send requests of its
+    own; the form must still reach the user (as an input-required round there)."""
+    from mcp import types
+    from mcp.client import Client
+
+    (tmp_path / "notes.md").write_bytes(b"hello\n")
+    delegated, asked = [], []
+
+    async def fake_delegate(**kwargs):
+        delegated.append(kwargs)
+        return mcp._plain_result({"started": True})
+
+    async def answer(context, params):
+        asked.append(params.message)
+        return types.ElicitResult(**reply)
+
+    monkeypatch.setattr(mcp, "modelquad_delegate", fake_delegate)
+
+    async def run():
+        async with Client(mcp.server, mode=protocol, elicitation_callback=answer) as client:
+            return await client.call_tool("modelquad_handoff", {
+                "task_type": "review", "prompt": "check it", "working_directory": str(tmp_path),
+                "files": ["notes.md"]})
+
+    result = asyncio.run(run())
+    assert len(asked) == 1
+    assert "Files to send (1, 6 bytes):" in asked[0] and "- notes.md (6 bytes)" in asked[0]
+    assert low_claude_world == []
+    if started:
+        (call,) = delegated
+        assert call["files"] == ["notes.md"] and call["prompt"] == "check it"
+    else:
+        assert delegated == []
+        assert result.structured_content["started"] is False
+
+
+@pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
+def test_a_client_that_declares_no_forms_gets_the_plain_fallback(low_claude_world, monkeypatch, tmp_path, protocol):
+    from mcp.client import Client
+
+    monkeypatch.setattr(mcp, "modelquad_delegate", lambda **kwargs: pytest.fail("started"))
+
+    async def run():
+        async with Client(mcp.server, mode=protocol) as client:  # no elicitation callback
+            return await client.call_tool("modelquad_handoff", {
+                "task_type": "review", "prompt": "check it", "working_directory": str(tmp_path)})
+
+    result = asyncio.run(run())
+    content = result.structured_content
+    assert result.is_error is False
+    assert content["started"] is False and content["approval"] == "unavailable"
+    assert "could not show ModelQuad's handoff form" in content["next_step"]
