@@ -123,6 +123,12 @@ Claude Code starts `modelquad` and `modelquad-mcp` by name, so the folder pip
 put them in must be on the PATH that Claude Code sees. `modelquad doctor`
 checks this.
 
+To upgrade, close every Claude Code window first (in a terminal session, type
+`/exit`), then run the same `pip install` again. A running Claude Code keeps
+`modelquad-mcp.exe` open, and Windows does not let pip replace a running
+program: the upgrade then fails halfway and leaves ModelQuad uninstalled until
+you run it again with Claude Code closed.
+
 A plain install keeps its state in `%LOCALAPPDATA%\ModelQuad`.
 An editable install (`pip install -e`) is treated as a development checkout
 and keeps its state in `%USERPROFILE%\.modelquad` instead. `modelquad state`
