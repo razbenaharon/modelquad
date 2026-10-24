@@ -89,13 +89,38 @@ def is_desktop_version_path(path: str | Path) -> bool:
     return Path(path).parent.parent == desktop
 
 
+def project_roots() -> tuple[str, ...]:
+    """The working folder, when its subfolders must not supply a Codex.
+
+    Claude Code starts ModelQuad in the project folder. A project can carry a
+    planted ``codex.exe`` in a folder an editor puts on PATH (an activated
+    ``.venv\\Scripts``, say), and ModelQuad runs a found Codex for its version
+    and its quota without a prompt. So everything under the working folder is
+    refused for that lookup. The exception is a working folder that is the
+    home folder or above it: excluding it would exclude the user's own install
+    under AppData, and a project is never that high.
+    """
+    try:
+        cwd = os.path.normcase(os.path.realpath(os.getcwd()))
+        home = os.path.normcase(os.path.realpath(os.path.expanduser("~")))
+    except OSError:
+        return ()
+    try:
+        if os.path.commonpath((cwd, home)) == cwd:
+            return ()
+    except ValueError:
+        pass  # different drives: the working folder is not above home
+    return (cwd,)
+
+
 def probe_which(name: str) -> str | None:
     # Codex/Claude npm shims are admitted for selection and fixed probes only.
     # Prompt-carrying launchers must apply their own batch policy.
     allow_batch = Path(name).stem.lower() in {"codex", "claude"}
+    roots = project_roots()
     if any(char in name for char in ("/", "\\", ":", "\x00")) or not name:
-        return executable_resolution.admit_executable(name, allow_batch=allow_batch).path
-    return executable_resolution.safe_which(name, allow_batch=allow_batch)
+        return executable_resolution.admit_executable(name, allow_batch=allow_batch, exclude_roots=roots).path
+    return executable_resolution.safe_which(name, allow_batch=allow_batch, exclude_roots=roots)
 
 
 #: The npm package's Windows targets: ``platform.machine()`` -> (package

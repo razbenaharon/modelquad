@@ -278,3 +278,30 @@ def test_doctor_is_quiet_without_a_stale_copy(monkeypatch):
 
     monkeypatch.setattr(doctor, "resolve_codex_cli", lambda which: codexcli.CodexCli(PATH_CLI, "path", "0.160.0"))
     assert doctor._codex_stale_path_check(lambda name: PATH_CLI) is None
+
+
+def test_a_codex_planted_under_the_project_is_never_found(tmp_path, monkeypatch):
+    """A project folder can carry codex.exe in a folder an editor puts on PATH
+    (an activated .venv). ModelQuad runs a found Codex for its version and its
+    quota without a prompt, so nothing under the working folder is found."""
+    home = tmp_path / "home"
+    project = home / "projects" / "app"
+    planted = project / ".venv" / "Scripts"
+    planted.mkdir(parents=True)
+    (planted / "codex.exe").write_bytes(b"MZ planted - never run\n")
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(planted))
+    monkeypatch.chdir(project)
+    assert codexcli.project_roots() == (os.path.normcase(os.path.realpath(project)),)
+    assert codexcli.probe_which("codex") is None
+
+
+@pytest.mark.parametrize("where", ["home", "above-home"])
+def test_a_working_folder_at_or_above_home_does_not_hide_the_users_own_install(tmp_path, monkeypatch, where):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(home if where == "home" else tmp_path)
+    assert codexcli.project_roots() == ()

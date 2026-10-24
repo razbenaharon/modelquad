@@ -176,6 +176,20 @@ atomically, after a full copy of its original bytes is saved beside it. The
 copy is created with an exclusive open, so a planted link cannot redirect it.
 A file that another program changed during the run is left as it is.
 
+**Which Codex runs.** ModelQuad runs the Codex it finds for its version and
+its quota without a prompt, so a `codex.exe` anywhere under the working
+folder, which is the project Claude Code was opened in, is never used, even
+when a folder there is on PATH (an activated `.venv`, for example). A working
+folder that is your home folder or above it is the exception, so that your
+own install under AppData is still found.
+
+**PYTHONPATH.** Python reads `PYTHONPATH` before the installed packages. A
+relative entry (`.`, `src`, or an empty one) is read against the folder a
+process starts in, which for ModelQuad is your project, so a project that
+carries a `modelquad` folder could replace ModelQuad's own code. Keep
+`PYTHONPATH` absolute or unset; `modelquad doctor` warns about a relative
+entry.
+
 **Local data.** History, retained answers and logs stay on the machine. See
 [PRIVACY.md](PRIVACY.md).
 

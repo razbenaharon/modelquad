@@ -574,3 +574,16 @@ def test_a_live_service_pidfile_is_not_reported(tmp_path):
     _write_pidfile(paths.state_root(), os.getpid())
     report = run_doctor(Config(), usage_directory=tmp_path, registry=ProviderRegistry(()))
     assert "service pidfile" not in _checks_by_name(report)
+
+
+@pytest.mark.parametrize(("value", "warned"), [
+    (None, False), (r"C:\tools\lib", False), (".", True), ("src", True), (r"C:\tools\lib;", True),
+])
+def test_a_relative_pythonpath_entry_is_flagged(value, warned):
+    from modelquad import doctor
+
+    environ = {} if value is None else {"PYTHONPATH": value}
+    check = doctor._python_path_check(environ)
+    assert (check is not None) is warned
+    if warned:
+        assert check.status is CheckStatus.WARN and "relative or empty" in check.detail

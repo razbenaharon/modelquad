@@ -664,6 +664,28 @@ def _service_pid_note() -> str:
     return ""
 
 
+def _python_path_check(environ=None) -> DoctorCheck | None:
+    """Warn about a relative PYTHONPATH entry; None when there is nothing to say.
+
+    Python puts PYTHONPATH ahead of the installed packages. A relative entry
+    (``.`` or ``src``, or an empty one, which means the current folder) is read
+    against whichever folder a process starts in. Claude Code starts ModelQuad
+    in your project, so a project that carries its own ``modelquad`` folder
+    would be imported in place of the installed ModelQuad.
+    """
+    raw = (os.environ if environ is None else environ).get("PYTHONPATH")
+    if raw is None:
+        return None
+    relative = [entry for entry in raw.split(os.pathsep) if not entry or not os.path.isabs(entry)]
+    if not relative:
+        return None
+    return DoctorCheck(
+        "PYTHONPATH", CheckStatus.WARN,
+        "PYTHONPATH has a relative or empty entry, so a project folder could replace ModelQuad's own "
+        "code. Use absolute folders only, or remove PYTHONPATH from your user environment.",
+    )
+
+
 def _state_consistency_check() -> DoctorCheck:
     """Is there exactly one ModelQuad product state on this machine?
 
@@ -821,6 +843,9 @@ def run_doctor(
     version = installed_version("n/a")
     checks.append(DoctorCheck(f"{PRODUCT_NAME} package", CheckStatus.OK, version))
     checks.append(_state_consistency_check())
+    python_path = _python_path_check()
+    if python_path is not None:
+        checks.append(python_path)
     checks.append(_control_plane_check(probe=control_plane_probe))
     effective_windows_path = windows_path if windows_path is not None else os.environ.get("PATH")
     # None when there is no stale service record to report.
