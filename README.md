@@ -147,6 +147,12 @@ valid JSON is skipped with a reason; the other files still change.
     local service runs, it tells Claude which answers are waiting for the
     current project.
 - `%USERPROFILE%\.claude\skills\modelquad\SKILL.md`: the `/modelquad` skill.
+- `%USERPROFILE%\.claude\skills\modelquad-review`, `modelquad-handoff`,
+  `modelquad-quota` and `modelquad-setup`: commands only you start
+  (`/modelquad-review` asks Codex about files you name, `/modelquad-handoff`
+  hands the current read-only task to Codex, `/modelquad-quota` shows both
+  quotas, `/modelquad-setup` explains any setup problem). Claude Code still
+  asks before every Codex call.
 - Backups: before it changes an existing file, ModelQuad saves a full copy of
   the original bytes beside it, named `<file>.modelquad-backup-<time>`. JSON
   files are written back with your key order.

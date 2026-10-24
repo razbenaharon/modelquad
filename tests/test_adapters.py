@@ -724,3 +724,47 @@ def test_no_adapter_wraps_atomic_write_in_a_dead_value_error_handler():
             if writes and catches_value_error:
                 offenders.append(f"{module.__name__}:{node.lineno}")
     assert offenders == []
+
+
+_COMMAND_SKILLS = ("modelquad-review", "modelquad-handoff", "modelquad-quota", "modelquad-setup")
+
+
+def test_claude_install_and_uninstall_cover_the_command_skills(tmp_path):
+    target = tmp_path / "claude"
+    target.mkdir()
+    user_skill = target / "skills" / "my-own" / "SKILL.md"
+    user_skill.parent.mkdir(parents=True)
+    user_skill.write_text("mine\n", encoding="utf-8")
+
+    report = ClaudeAdapter().install(target)
+    created = {action.path.parent.name for action in report.actions
+               if action.kind is ActionKind.CREATED and action.path.name == "SKILL.md"}
+    assert created == {"modelquad", *_COMMAND_SKILLS}
+    for name in _COMMAND_SKILLS:
+        assert (target / "skills" / name / "SKILL.md").is_file()
+    # A second install changes nothing.
+    again = ClaudeAdapter().install(target)
+    assert not any(action.kind is ActionKind.CREATED for action in again.actions
+                   if action.path.name == "SKILL.md")
+
+    removal = ClaudeAdapter().uninstall(target)
+    removed = {action.path.parent.name for action in removal.actions
+               if action.kind is ActionKind.REMOVED and action.path.name == "SKILL.md"}
+    assert removed == {"modelquad", *_COMMAND_SKILLS}
+    for name in ("modelquad", *_COMMAND_SKILLS):
+        assert not (target / "skills" / name / "SKILL.md").exists()
+    assert user_skill.read_text(encoding="utf-8") == "mine\n"
+
+
+def test_claude_command_skills_are_user_only_and_never_guess_files(tmp_path):
+    from modelquad.adapters.paths import adapters_template_dir
+
+    with adapters_template_dir("claude") as templates:
+        for name in _COMMAND_SKILLS:
+            text = (templates / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+            front, body = text.split("---\n", 2)[1:]
+            assert f"name: {name}\n" in front
+            assert "disable-model-invocation: true\n" in front
+            # No pre-run shell lines, no on-its-own wording.
+            assert not any(line.lstrip().startswith("!") for line in body.splitlines())
+            assert "proactive" not in text.casefold()

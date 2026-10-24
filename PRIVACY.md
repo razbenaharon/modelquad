@@ -286,7 +286,7 @@ Paths are relative to `%USERPROFILE%`.
 | `.claude\usage-claude.json` | Claude's 5-hour and weekly used percentages, reset times, and when they were observed | The status line command |
 | `.claude\usage-codex.json` | Codex's 5-hour and weekly used percentages, reset times, plan type, when they were read, and why a read failed | The MCP server's background read, `modelquad usage-refresh` |
 | `.claude\usage-*.json.lock`, `.claude\usage-refresh-*.lock` | Empty lock files | The same writers |
-| `.claude.json`, `.claude\settings.json`, `.claude\skills\modelquad\SKILL.md` | The Claude Code integration listed in [README.md](README.md) | `modelquad install claude` |
+| `.claude.json`, `.claude\settings.json`, `.claude\skills\modelquad*\SKILL.md` (five skills) | The Claude Code integration listed in [README.md](README.md) | `modelquad install claude` |
 | `<file>.modelquad-backup-<UTC time>` beside a changed file | A full copy of the file before ModelQuad changed or removed it. It holds whatever the file held, including secrets you put there, such as `env` values of MCP servers in `.claude.json` | Install and uninstall (`adapters/backup.py`) |
 | Windows Task Scheduler, task `ModelQuad_Service` | Starts the local service when you sign in | `modelquad service install` |
 | Your user `Path` variable (`HKCU\Environment`) | The folder of an installed but unreachable tool | `modelquad tools --fix-path` |

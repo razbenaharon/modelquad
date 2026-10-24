@@ -10,5 +10,7 @@ def test_packaged_adapter_templates_exist_without_project_duplicates():
     templates = root / "src" / "modelquad" / "adapters" / "templates" / "claude"
     # The guidance moved to the MCP server's instructions; no CLAUDE.md block ships.
     assert not (templates / "CLAUDE.md.block").exists()
-    assert (templates / "skills" / "modelquad" / "SKILL.md").is_file()
+    for name in ("modelquad", "modelquad-review", "modelquad-handoff", "modelquad-quota",
+                 "modelquad-setup"):
+        assert (templates / "skills" / name / "SKILL.md").is_file()
     assert not any((root / "adapters" / "claude").rglob("SKILL.md"))

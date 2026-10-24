@@ -8,7 +8,9 @@ each changed file once, backing up its original bytes immediately before that
 write (see :mod:`staging`). A file that cannot be read safely is skipped with a
 plain reason; the others still proceed.
 
-The global footprint is deliberately small: the ``/modelquad`` skill, the MCP
+The global footprint is deliberately small: the ``/modelquad`` skill and four
+user-only command skills (``/modelquad-review``, ``/modelquad-handoff``,
+``/modelquad-quota``, ``/modelquad-setup``), the MCP
 server entry (which carries its own tool ``timeout``), the status line when the
 user has none, and the SessionStart reminder. The model guidance comes from the
 MCP server's ``instructions`` (``server_instructions.py``), so nothing is
@@ -45,6 +47,10 @@ from .textblock import remove_block
 _MCP_KEY_PATH = ("mcpServers", MCP_SERVER_NAME)
 # The skill directory name is what the user types (`/modelquad`).
 _SKILL_DIR = PRODUCT_SLUG
+# Commands only the user starts (``disable-model-invocation: true``). Each
+# still reaches Codex only through a tool Claude Code asks about.
+_COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("review", "handoff", "quota", "setup"))
+_SKILL_DIRS = (_SKILL_DIR, *_COMMAND_SKILL_DIRS)
 _STATUS_LINE_ARGUMENTS = ("usage-hook", "claude")
 #: The compact part a user adds to a status line of their own.
 SEGMENT_ARGUMENTS = ("usage-hook", "claude", "--segment")
@@ -341,16 +347,19 @@ class ClaudeAdapter:
         # Resolve the shell command before the first filesystem write.
         status_line_command = _status_line_command()
         with adapters_template_dir(self.name) as templates:
-            skill_content = (templates / "skills" / _SKILL_DIR / "SKILL.md").read_bytes()
+            skill_contents = {name: (templates / "skills" / name / "SKILL.md").read_bytes()
+                              for name in _SKILL_DIRS}
             mcp_value = _mcp_template_value(templates)
 
         # Preflight: every target is read, and refused if unsafe, before any write.
-        skill = _OwnedFile.load(destination / "skills" / _SKILL_DIR / "SKILL.md")
+        skills = {name: _OwnedFile.load(destination / "skills" / name / "SKILL.md")
+                  for name in _SKILL_DIRS}
         mcp = StagedJson.load(mcp_config_path(destination))
         policy = StagedText.load(destination / "CLAUDE.md")
         settings = StagedJson.load(destination / "settings.json")
 
-        skill_change = _plan_owned_copy(skill, skill_content)
+        skill_changes = {name: _plan_owned_copy(skills[name], skill_contents[name])
+                         for name in _SKILL_DIRS}
         mcp_change = set_key(mcp.payload, _MCP_KEY_PATH, mcp_value) if mcp.refusal is None else UNCHANGED
         policy_change = _plan_remove_policy_block(policy)
         status_change = timeout_change = pending_change = UNCHANGED
@@ -365,16 +374,19 @@ class ClaudeAdapter:
             timeout_change, retire = _plan_remove_tool_timeout(settings)
             pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run)
 
-        for staged in (skill, mcp, policy, settings):
+        for staged in (*skills.values(), mcp, policy, settings):
             staged.commit(dry_run=dry_run)
         actions = [
-            skill.action(skill_change, dry_run=dry_run),
+            skills[_SKILL_DIR].action(skill_changes[_SKILL_DIR], dry_run=dry_run),
             mcp.action(mcp_change, dry_run=dry_run),
             *_policy_action(policy, policy_change, dry_run=dry_run),
             settings.action(status_change, dry_run=dry_run),
             *_timeout_action(settings, timeout_change, retire, dry_run=dry_run),
             pending_action(settings, pending_change, dry_run=dry_run),
             *(settings.action(change, dry_run=dry_run) for change in gates),
+            # The command skills come last so earlier report positions stay put.
+            *(skills[name].action(skill_changes[name], dry_run=dry_run)
+              for name in _COMMAND_SKILL_DIRS),
         ]
         return InstallReport(self.name, dry_run, tuple(actions))
 
@@ -398,20 +410,21 @@ class ClaudeAdapter:
             timeout_change, retire = _plan_remove_tool_timeout(settings)
             pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run, remove=True)
 
-        skill = _remove_owned_file(
-            destination / "skills" / _SKILL_DIR / "SKILL.md",
-            dry_run=dry_run,
-        )
+        skills = {
+            name: _remove_owned_file(destination / "skills" / name / "SKILL.md", dry_run=dry_run)
+            for name in _SKILL_DIRS
+        }
         for staged in (mcp, policy, settings):
             staged.commit(dry_run=dry_run)
         actions = [
-            skill,
+            skills[_SKILL_DIR],
             mcp.action(mcp_change, dry_run=dry_run),
             *_policy_action(policy, policy_change, dry_run=dry_run),
             settings.action(status_change, dry_run=dry_run),
             *_timeout_action(settings, timeout_change, retire, dry_run=dry_run),
             pending_action(settings, pending_change, dry_run=dry_run),
             *(settings.action(change, dry_run=dry_run) for change in gates),
+            *(skills[name] for name in _COMMAND_SKILL_DIRS),
         ]
         return InstallReport(self.name, dry_run, tuple(actions))
 
