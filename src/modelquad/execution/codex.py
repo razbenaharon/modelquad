@@ -406,6 +406,11 @@ class CodexExecutor(Executor):
                 # Metadata-only record of what this launch hands the worker:
                 # relative paths, sizes and digest prefixes, never contents.
                 metadata["file_audit"] = noshell.file_audit(report, request.metadata.get("approval"))
+                if request.on_packed is not None:
+                    try:
+                        request.on_packed(metadata["file_audit"])
+                    except Exception:
+                        pass  # An observation hook cannot affect the worker.
                 kwargs = {"on_spawn": spawned}
                 if request.stop_requested is not None:
                     kwargs["stop_requested"] = request.stop_requested

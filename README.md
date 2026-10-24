@@ -19,6 +19,8 @@ Status: early, source-only release. Windows only.
   review, exploration or architecture question. ModelQuad reads the files the
   request names and passes their text to Codex with the task. Codex runs in an
   empty temporary folder, read-only, without file, command, web or MCP tools.
+- **Progress phases while Codex works.** Claude Code shows packing, start,
+  periodic working-time and answer/withheld phases without task or file content.
 - **Both quotas in the status line.** Claude's and Codex's 5-hour and weekly
   usage, in Claude Code's status line and in ModelQuad's replies, with the
   5-hour reset in your local time ("resets 15:00") and, once there are two

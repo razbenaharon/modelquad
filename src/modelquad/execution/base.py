@@ -302,6 +302,9 @@ class ExecutionRequest:
     # work (a caller timeout must never leave that unknowable). Optional and
     # appended last; executors pass it through to the runner only when set.
     on_spawn: Any = None
+    # Called after the approved files have been packed, with the closed audit
+    # record only. It is an in-process observation hook, never worker input.
+    on_packed: Any = None
     stop_requested: Any = None
     # None is explicitly legacy/unmigrated; it is not implicit Host authority.
     action_authority: TaskAuthority | None = None

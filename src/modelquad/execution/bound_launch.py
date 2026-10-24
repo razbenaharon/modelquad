@@ -50,7 +50,7 @@ def run_bound_delegation(
     db_path, attempt_id, usage_directory, lineage, resolved_mode, mode_source,
     host, decision_id, host_snapshot, mode, paused, decision_mode,
     reasoning_fell_back=False, plan_decision_id=None, metadata=None,
-    publish=None, on_resolution=None, on_worker_spawn=None,
+    publish=None, on_resolution=None, on_worker_spawn=None, on_worker_packed=None,
     required_capabilities=None, action_authority=None,
     normalize_result=None, on_host_diagnostics=None,
     now=None, catalog=None, policy_excluded=None,
@@ -108,6 +108,7 @@ def run_bound_delegation(
         # if this caller later times out, which process owns the work stays
         # a checkable fact instead of a guess.
         on_spawn=spawned,
+        on_packed=on_worker_packed,
         stop_requested=lambda: service_history.attempt_stop_requested(db_path, attempt_id),
         # The attempt row can record when objective verification starts and
         # finishes, but no verification runs: outcome.py never

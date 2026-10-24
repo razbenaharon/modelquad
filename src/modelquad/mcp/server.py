@@ -283,7 +283,50 @@ def _build_execution_manager(config: object) -> ExecutionManager:
     return ExecutionManager(config, health_db_path=service_db.DEFAULT_DB_PATH)
 
 
-async def _delegate_observing_the_caller(call: Any, handle: CallerWaitHandle) -> Any:
+DELEGATE_PROGRESS_INTERVAL_SECONDS = 15.0
+_PROGRESS_REPORT_TIMEOUT_SECONDS = 0.1
+
+
+class _DelegateProgress:
+    """Best-effort, request-scoped progress delivery with no task material."""
+
+    def __init__(self, ctx: Context | None) -> None:
+        self.ctx = ctx
+        self.enabled = ctx is not None
+        self.value = 0
+        self.worker_started = False
+
+    async def report(self, message: str) -> None:
+        if not self.enabled:
+            return
+        self.value += 1
+        try:
+            # A Host that cannot accept progress is not allowed to hold up a
+            # delegation. Stop trying after the first failed/timed-out send.
+            with anyio.move_on_after(_PROGRESS_REPORT_TIMEOUT_SECONDS) as scope:
+                await self.ctx.report_progress(self.value, total=None, message=message)
+            if scope.cancel_called:
+                self.enabled = False
+        except Exception:  # noqa: BLE001 - progress is strictly advisory
+            self.enabled = False
+
+    async def report_started(self) -> None:
+        await self.report("Codex started")
+        self.worker_started = self.enabled
+
+
+async def _delegate_heartbeat(progress: _DelegateProgress, started_at: float) -> None:
+    while progress.enabled:
+        await anyio.sleep(DELEGATE_PROGRESS_INTERVAL_SECONDS)
+        if not progress.worker_started:
+            continue
+        elapsed = max(0, int(time.monotonic() - started_at))
+        await progress.report(f"Codex is working ({elapsed}s)")
+
+
+async def _delegate_observing_the_caller(
+    call: Any, handle: CallerWaitHandle, progress: _DelegateProgress | None = None,
+) -> Any:
     """Run one blocking delegation on a worker thread, watching for the caller to leave.
 
     This is the whole of the caller-abandonment mechanism, and it exists because of a
@@ -320,38 +363,43 @@ async def _delegate_observing_the_caller(call: Any, handle: CallerWaitHandle) ->
       would see a request that failed rather than one that was cancelled.
     """
 
-    try:
-        return await anyio.to_thread.run_sync(call, abandon_on_cancel=True)
-    except anyio.get_cancelled_exc_class():
-        with anyio.CancelScope(shield=True):
-            # Half of a two-sided hand-off. The reason is stamped on the
-            # handle FIRST, so that a cancellation arriving before the row
-            # exists is still visible to `_delegate_payload`, which writes it
-            # as soon as it publishes the attempt id. Both sides may then
-            # attempt the write; it is write-once, so whichever side holds
-            # both facts records the departure and the other is a no-op.
-            handle.abandoned_reason = "transport_cancelled"
-            # One read of one field, so the two halves of the identity are
-            # either both there or both absent: the publishing thread writes
-            # them as a single tuple. Absent means the row does not exist
-            # yet, and there is nothing here to mark -- `_delegate_payload`
-            # writes the mark when it publishes, having just read the reason
-            # stamped above.
-            identity = handle.identity
-            if identity is not None:
-                db_path, attempt_id = identity
-                try:
-                    service_history.record_caller_abandonment(
-                        db_path, attempt_id, reason=handle.abandoned_reason
-                    )
-                except Exception:
-                    logger.warning(
-                        "could not record the caller of attempt %s leaving; "
-                        "the cancellation is re-raised regardless",
-                        attempt_id,
-                        exc_info=True,
-                    )
-        raise
+    async with anyio.create_task_group() as task_group:
+        if progress is not None and progress.enabled:
+            task_group.start_soon(_delegate_heartbeat, progress, time.monotonic())
+        try:
+            return await anyio.to_thread.run_sync(call, abandon_on_cancel=True)
+        except anyio.get_cancelled_exc_class():
+            with anyio.CancelScope(shield=True):
+                # Half of a two-sided hand-off. The reason is stamped on the
+                # handle FIRST, so that a cancellation arriving before the row
+                # exists is still visible to `_delegate_payload`, which writes it
+                # as soon as it publishes the attempt id. Both sides may then
+                # attempt the write; it is write-once, so whichever side holds
+                # both facts records the departure and the other is a no-op.
+                handle.abandoned_reason = "transport_cancelled"
+                # One read of one field, so the two halves of the identity are
+                # either both there or both absent: the publishing thread writes
+                # them as a single tuple. Absent means the row does not exist
+                # yet, and there is nothing here to mark -- `_delegate_payload`
+                # writes the mark when it publishes, having just read the reason
+                # stamped above.
+                identity = handle.identity
+                if identity is not None:
+                    db_path, attempt_id = identity
+                    try:
+                        service_history.record_caller_abandonment(
+                            db_path, attempt_id, reason=handle.abandoned_reason
+                        )
+                    except Exception:
+                        logger.warning(
+                            "could not record the caller of attempt %s leaving; "
+                            "the cancellation is re-raised regardless",
+                            attempt_id,
+                            exc_info=True,
+                        )
+            raise
+        finally:
+            task_group.cancel_scope.cancel()
 
 
 def _resolve_consumption_evidence(prompt, parsed_capsule, expected_consumption) -> ExpectedConsumption:
@@ -495,15 +543,44 @@ def _session_close_stops_worker() -> bool:
 # AnyIO copies this request-local context into the preparation worker thread.
 # Never retain a Host context globally or pass it into a detached job spec.
 _runner_notice_context: ContextVar[Context | None] = ContextVar("runner_notice_context", default=None)
+_runner_progress_context: ContextVar[_DelegateProgress | None] = ContextVar(
+    "runner_progress_context", default=None,
+)
 
 
 @contextmanager
 def _runner_notifications(ctx):
     token = _runner_notice_context.set(ctx)
+    progress_token = _runner_progress_context.set(_DelegateProgress(ctx))
     try:
-        yield
+        yield _runner_progress_context.get()
     finally:
+        _runner_progress_context.reset(progress_token)
         _runner_notice_context.reset(token)
+
+
+def _runner_notice(message: str) -> None:
+    """Deliver a phase from the worker thread on its owning MCP request."""
+    progress = _runner_progress_context.get()
+    if progress is None or not progress.enabled:
+        return
+    try:
+        sender = progress.report_started if message == "Codex started" else progress.report
+        anyio.from_thread.run(sender, *(() if message == "Codex started" else (message,)))
+    except Exception:  # noqa: BLE001 - progress cannot affect a delegation
+        progress.enabled = False
+
+
+def _runner_packed(audit: dict[str, Any]) -> None:
+    """Report the closed audit's counts, never its paths or contents."""
+    sent = audit.get("sent") if isinstance(audit, dict) else None
+    if not isinstance(sent, list) or not sent:
+        _runner_notice("Sending only the task text to Codex")
+        return
+    sizes = [item.get("bytes") for item in sent if isinstance(item, dict)]
+    if len(sizes) != len(sent) or any(type(size) is not int or size < 0 for size in sizes):
+        return
+    _runner_notice(f"Packed {len(sent)} file(s), {sum(sizes)} bytes for Codex")
 
 
 def _warn_in_session_runner(reason):
@@ -1006,7 +1083,12 @@ def _delegate_after_policy(
             # Job Object here so server process death stops contained workers.
             token = procutil.default_kill_on_close.set(True)
             try:
-                payload = run_bound_delegation(manager, **call_args)
+                payload = run_bound_delegation(
+                    manager,
+                    **call_args,
+                    on_worker_packed=_runner_packed,
+                    on_worker_spawn=lambda _pid: _runner_notice("Codex started"),
+                )
             finally:
                 procutil.default_kill_on_close.reset(token)
             payload["runner_note"] = _in_session_runner_note(reason)
@@ -1026,7 +1108,12 @@ def _delegate_after_policy(
     # worker's Job Object closes and Windows stops its tree.
     token = procutil.default_kill_on_close.set(True)
     try:
-        payload = run_bound_delegation(manager, **call_args)
+        payload = run_bound_delegation(
+            manager,
+            **call_args,
+            on_worker_packed=_runner_packed,
+            on_worker_spawn=lambda _pid: _runner_notice("Codex started"),
+        )
     finally:
         procutil.default_kill_on_close.reset(token)
     return payload
@@ -1391,6 +1478,16 @@ def _report_files(payload: dict[str, Any], prompt: str, working_directory: str, 
                 "again and pass them in files.")
 
 
+def _delegate_completion_notice(payload: dict[str, Any]) -> str:
+    """Return a closed, content-free terminal phase for one inline call."""
+    reason = payload.get("task_status_reason")
+    if payload.get("refused") and isinstance(reason, str) and reason.replace("_", "").isalnum():
+        return f"Codex refused: {reason}"
+    if payload.get("refused"):
+        return "Codex answer withheld"
+    return "Codex answered" if isinstance(payload.get("output"), str) and payload["output"] else "Codex answer withheld"
+
+
 @server.tool(title="Ask Codex for a second opinion", annotations=STARTS_CODEX, meta={"anthropic/requiresUserInteraction": True})
 async def modelquad_delegate(
     task_type: str,
@@ -1420,7 +1517,7 @@ async def modelquad_delegate(
     host_protocol = host_protocol_from_context(ctx)
     host_request_meta = host_request_meta_from_context(ctx)
     handle = CallerWaitHandle()
-    with _runner_notifications(ctx):
+    with _runner_notifications(ctx) as progress:
         payload = await _delegate_observing_the_caller(
             functools.partial(
                 _delegate_payload,
@@ -1448,7 +1545,10 @@ async def modelquad_delegate(
                 approval=approval,
             ),
             handle,
+            progress,
         )
+        if "job_id" not in payload:
+            await progress.report(_delegate_completion_notice(payload))
     _report_files(payload, prompt, working_directory, files)
     if "job_id" in payload:
         # A job response has its own evidence shape. Legacy presentation

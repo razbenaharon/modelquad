@@ -355,6 +355,7 @@ class ExecutionManager:
         *,
         agent_runtime: str | None = None,
         on_spawn: Any = None,
+        on_packed: Any = None,
         stop_requested: Any = None,
     ) -> ExecutionResult:
         try:
@@ -370,6 +371,7 @@ class ExecutionManager:
                 metadata=metadata or {},
                 agent_runtime=agent_runtime,
                 on_spawn=on_spawn,
+                on_packed=on_packed,
                 stop_requested=stop_requested,
             )
         except ValueError as exc:
@@ -466,6 +468,7 @@ class ExecutionManager:
         expected_consumption: ExpectedConsumption | None = None,
         required_capabilities: Iterable[str] | None = None,
         on_spawn: Any = None,
+        on_packed: Any = None,
         stop_requested: Any = None,
         verification: Any = None,
         on_verification: Any = None,
@@ -624,6 +627,7 @@ class ExecutionManager:
                         metadata,
                         agent_runtime=runtime_id,
                         on_spawn=on_spawn,
+                        on_packed=on_packed,
                         stop_requested=stop_requested,
                     ),
                     runtime_id,
@@ -738,6 +742,7 @@ class ExecutionManager:
             worker_metadata,
             agent_runtime=runtime_id,
             on_spawn=on_spawn,
+            on_packed=on_packed,
             stop_requested=stop_requested,
         )
         result = self._with_execution_identity(result, runtime_id)
