@@ -3,6 +3,8 @@ name: handoff
 description: Hand the current read-only task (review, exploration or architecture) to Codex through ModelQuad.
 argument-hint: "[what Codex should do]"
 disable-model-invocation: true
+metadata:
+  managed-by: modelquad
 ---
 
 # Hand a task to Codex

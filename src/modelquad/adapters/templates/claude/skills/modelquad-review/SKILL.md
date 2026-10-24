@@ -3,6 +3,8 @@ name: modelquad-review
 description: Ask Codex, through ModelQuad, for a read-only second opinion on files you name.
 argument-hint: "[files or a short question]"
 disable-model-invocation: true
+metadata:
+  managed-by: modelquad
 ---
 
 # Codex review

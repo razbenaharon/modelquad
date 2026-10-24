@@ -2,6 +2,8 @@
 name: quota
 description: Show your Claude and Codex usage and reset times. Display only; starts nothing.
 disable-model-invocation: true
+metadata:
+  managed-by: modelquad
 ---
 
 # Quotas

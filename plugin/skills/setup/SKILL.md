@@ -2,6 +2,8 @@
 name: setup
 description: Check that ModelQuad is set up correctly and explain any problem in plain words.
 disable-model-invocation: true
+metadata:
+  managed-by: modelquad
 ---
 
 # ModelQuad setup check

@@ -768,3 +768,22 @@ def test_claude_command_skills_are_user_only_and_never_guess_files(tmp_path):
             # No pre-run shell lines, no on-its-own wording.
             assert not any(line.lstrip().startswith("!") for line in body.splitlines())
             assert "proactive" not in text.casefold()
+
+
+def test_a_users_own_file_at_a_command_skill_path_is_never_replaced_or_removed(tmp_path):
+    target = tmp_path / "claude"
+    mine = target / "skills" / "modelquad-review" / "SKILL.md"
+    mine.parent.mkdir(parents=True)
+    mine.write_text("my own review skill\n", encoding="utf-8")
+
+    report = ClaudeAdapter().install(target)
+    (action,) = [a for a in report.actions if a.path == mine]
+    assert action.kind is ActionKind.SKIPPED and "not ModelQuad's" in action.detail
+    assert mine.read_text(encoding="utf-8") == "my own review skill\n"
+    assert (target / "skills" / "modelquad-quota" / "SKILL.md").is_file()
+
+    removal = ClaudeAdapter().uninstall(target)
+    (action,) = [a for a in removal.actions if a.path == mine]
+    assert action.kind is ActionKind.SKIPPED
+    assert mine.read_text(encoding="utf-8") == "my own review skill\n"
+    assert not (target / "skills" / "modelquad-quota" / "SKILL.md").exists()

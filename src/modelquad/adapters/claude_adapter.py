@@ -51,6 +51,11 @@ _SKILL_DIR = PRODUCT_SLUG
 # still reaches Codex only through a tool Claude Code asks about.
 _COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("review", "handoff", "quota", "setup"))
 _SKILL_DIRS = (_SKILL_DIR, *_COMMAND_SKILL_DIRS)
+# Command skills sit in folders a user could also choose, so each copy carries
+# this line in its frontmatter; install and uninstall touch only a file that
+# has it.
+_COMMAND_SKILL_MARK = b"managed-by: modelquad"
+_NOT_OURS = "{} has no ModelQuad mark, so it is not ModelQuad's and was left unchanged."
 _STATUS_LINE_ARGUMENTS = ("usage-hook", "claude")
 #: The compact part a user adds to a status line of their own.
 SEGMENT_ARGUMENTS = ("usage-hook", "claude", "--segment")
@@ -170,6 +175,27 @@ def _plan_owned_copy(staged: _OwnedFile, content: bytes) -> Change:
         return UNCHANGED
     staged.content = content
     return UNCHANGED if staged.original == content else Change("set")
+
+
+def _plan_command_skill(staged: _OwnedFile, content: bytes) -> Change:
+    """Like :func:`_plan_owned_copy`, but never replace a file without our mark."""
+
+    if staged.refusal is None and staged.original is not None and _COMMAND_SKILL_MARK not in staged.original:
+        staged.refusal = _NOT_OURS.format(staged.path)
+    return _plan_owned_copy(staged, content)
+
+
+def _remove_command_skill(destination: Path, *, dry_run: bool) -> FileAction:
+    """Remove a command skill only when the file carries ModelQuad's mark."""
+
+    if not is_link(destination) and destination.is_file():
+        try:
+            data = destination.read_bytes()
+        except OSError:
+            data = None
+        if data is not None and _COMMAND_SKILL_MARK not in data:
+            return FileAction(destination, ActionKind.SKIPPED, detail=_NOT_OURS.format(destination))
+    return _remove_owned_file(destination, dry_run=dry_run)
 
 
 def _remove_owned_file(destination: Path, *, dry_run: bool) -> FileAction:
@@ -358,8 +384,9 @@ class ClaudeAdapter:
         policy = StagedText.load(destination / "CLAUDE.md")
         settings = StagedJson.load(destination / "settings.json")
 
-        skill_changes = {name: _plan_owned_copy(skills[name], skill_contents[name])
-                         for name in _SKILL_DIRS}
+        skill_changes = {_SKILL_DIR: _plan_owned_copy(skills[_SKILL_DIR], skill_contents[_SKILL_DIR])}
+        skill_changes.update({name: _plan_command_skill(skills[name], skill_contents[name])
+                              for name in _COMMAND_SKILL_DIRS})
         mcp_change = set_key(mcp.payload, _MCP_KEY_PATH, mcp_value) if mcp.refusal is None else UNCHANGED
         policy_change = _plan_remove_policy_block(policy)
         status_change = timeout_change = pending_change = UNCHANGED
@@ -410,10 +437,12 @@ class ClaudeAdapter:
             timeout_change, retire = _plan_remove_tool_timeout(settings)
             pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run, remove=True)
 
-        skills = {
-            name: _remove_owned_file(destination / "skills" / name / "SKILL.md", dry_run=dry_run)
-            for name in _SKILL_DIRS
-        }
+        skills = {_SKILL_DIR: _remove_owned_file(destination / "skills" / _SKILL_DIR / "SKILL.md",
+                                                 dry_run=dry_run)}
+        skills.update({
+            name: _remove_command_skill(destination / "skills" / name / "SKILL.md", dry_run=dry_run)
+            for name in _COMMAND_SKILL_DIRS
+        })
         for staged in (mcp, policy, settings):
             staged.commit(dry_run=dry_run)
         actions = [

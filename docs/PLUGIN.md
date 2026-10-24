@@ -32,8 +32,12 @@ ModelQuad up, and nothing here is published to any plugin directory.
 ## Before this becomes a supported install
 
 - A live test that the plugin's hook and commands behave the same as the
-  installed ones, and that installing both does not duplicate them (today it
-  would: the installer also writes the skills and the hook).
+  installed ones.
+- **Known issue:** enabling the plugin and also running
+  `modelquad install claude` (still needed for the MCP server) gives two
+  copies of the commands and runs the SessionStart reminder twice, because
+  plugin hooks and settings hooks are separate. Do not enable the plugin until
+  the installer can leave the skills and the hook to it.
 - Decide how `modelquad install claude` and the plugin share the skills and
   the hook, so a user has one copy of each.
 - Keep `plugin/.claude-plugin/plugin.json`'s `version` equal to the package
