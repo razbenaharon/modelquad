@@ -779,7 +779,16 @@ def run_onboarding(
         else:
             default_str = ", ".join(detected_ids)
             prompt_msg = f"Which AI tools do you use? [{default_str}]: "
-            user_input = input_fn(prompt_msg).strip()
+            try:
+                user_input = input_fn(prompt_msg).strip()
+            except EOFError:
+                # No terminal to answer from (a script, a pipe, an agent):
+                # choose nothing on the user's behalf.
+                raise ValueError(
+                    "Could not read an answer because this is not an interactive terminal. "
+                    "Run onboard in a terminal, or pass --providers claude,codex (or --yes "
+                    "to use every tool found)."
+                ) from None
             if not user_input:
                 effective_selected = tuple(detected_ids)
             else:

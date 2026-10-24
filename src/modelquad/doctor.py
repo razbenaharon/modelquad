@@ -377,8 +377,10 @@ def _claude_version_check(
     if not version:
         return DoctorCheck(
             name, CheckStatus.UNKNOWN,
-            "Not seen yet. Open Claude Code and send one message; its version and Claude's "
-            "quota arrive through the status line after the first reply.",
+            "Not seen yet. Open Claude Code in a terminal and send one message; its version "
+            "and Claude's quota arrive through the status line after the first reply. The "
+            "desktop app's Code tab has no status line, so there both stay unknown; Codex's "
+            "quota still shows.",
         )
     if _claude_reading_exists(usage_directory):
         return DoctorCheck(name, CheckStatus.OK, f"Claude Code {version}, from your last session.")

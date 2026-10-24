@@ -278,6 +278,18 @@ def _has_no_five_hour_window(status):
     return bool(observed) and not any(w.get("slot") == "five_hour" for w in observed)
 
 
+def _plan_without_five_hour(name, status, windows):
+    """Codex's plan has no 5-hour window, judged only from a current reading.
+
+    A stale or missing weekly reading (say, one an earlier install left
+    behind) says nothing about the plan today, so the window stays unknown.
+    """
+    seven = windows.get("seven_day")
+    return (name == "codex" and status is not None and "five_hour" not in windows
+            and seven is not None and not seven.get("unknown") and not seven.get("stale")
+            and _has_no_five_hour_window(status))
+
+
 def pace_full_at(first, window, now):
     """When this window fills at the pace since ``first``, or None.
 
@@ -404,8 +416,7 @@ def statusline_text(statuses, thresholds, *, now, pace=None):
             parts.append(lead)
             continue
         seven = _window_text(windows.get("seven_day"), now, name=name)
-        if (name == "codex" and status is not None and "five_hour" not in windows
-                and _has_no_five_hour_window(status)):
+        if _plan_without_five_hour(name, status, windows):
             parts.append(f"Codex: {NO_FIVE_HOUR} / 7d {seven}")
             continue
         five_window = windows.get("five_hour")
@@ -437,8 +448,7 @@ def statusline_segment(statuses, thresholds, *, now, pace=None):
         if lead is not None:
             parts.append(lead)
             continue
-        if (name == "codex" and status is not None and "five_hour" not in windows
-                and _has_no_five_hour_window(status)):
+        if _plan_without_five_hour(name, status, windows):
             parts.append(f"Codex week {_window_text(windows.get('seven_day'), now, name=name)}")
             continue
         five = _window_text(windows.get("five_hour"), now, name=name)

@@ -1377,15 +1377,21 @@ def _run_onboard_command(args: argparse.Namespace) -> int:
     db_path = _history_db_path(args)
     print_fn = (lambda *a, **k: None) if args.as_json else print
 
-    result = run_onboarding(
-        selected_providers=providers,
-        routing_mode=mode,
-        reset_routing_mode=getattr(args, "reset_routing_mode", False),
-        assume_yes=args.assume_yes,
-        print_fn=print_fn,
-        db_path=db_path,
-        dry_run=args.dry_run,
-    )
+    try:
+        result = run_onboarding(
+            selected_providers=providers,
+            routing_mode=mode,
+            reset_routing_mode=getattr(args, "reset_routing_mode", False),
+            assume_yes=args.assume_yes,
+            print_fn=print_fn,
+            db_path=db_path,
+            dry_run=args.dry_run,
+        )
+    except ValueError as error:
+        # A wrong --providers value or no terminal to answer from: a plain
+        # message, not a traceback.
+        print(f"{CLI_COMMAND} onboard: {error}", file=sys.stderr)
+        return 2
 
     if args.as_json:
         print(json.dumps(result.to_dict(), indent=2, sort_keys=True))

@@ -67,10 +67,30 @@ Status: early, source-only release. Windows only.
   and in bypass-permissions mode. ModelQuad adds no permission rule for its
   tools.
 - `modelquad_handoff` then shows a prompt of its own. Codex starts only if you
-  tick the box and accept.
+  tick the box and accept. If your Claude Code cannot show that form, nothing
+  starts, and Claude asks you in the conversation instead and, only if you
+  agree, uses `modelquad_delegate`, which Claude Code asks about first.
 - To block new Codex calls from Claude Code: `modelquad host disconnect claude`.
   Undo with `modelquad host connect claude`.
 - Treat Codex's answer as input to check, not as a verified result.
+
+## Terminal or desktop app
+
+ModelQuad works in Claude Code in a terminal and in the Claude desktop app's
+Code tab, with differences found in testing (Claude Code 2.1.296, October
+2026):
+
+- **Status line, and so Claude's quota and Claude Code's version, appear only
+  in a terminal session.** The desktop app's Code tab has no status line, so
+  there Claude's quota stays unknown or goes stale; Codex's quota still shows,
+  for example with `/modelquad-quota`.
+- **The approval prompt before each Codex call appears in both,** also in auto
+  mode.
+- **The handoff form did not appear in the desktop app's Code tab,** so a
+  handoff there starts nothing and Claude falls back to asking you in the
+  conversation.
+- **Progress while Codex works** shows where Claude Code displays MCP progress;
+  it was not visible in the desktop app's Code tab.
 
 ## Requirements
 

@@ -799,3 +799,20 @@ def test_claude_and_codex_keep_their_own_stronger_evidence(tmp_path):
 
     assert probe_sign_in("claude", home=home).state is SignInState.SIGNED_IN
     assert probe_sign_in("codex", home=home).state is SignInState.SIGNED_IN
+
+
+def test_onboarding_without_a_terminal_chooses_nothing_and_says_how(tmp_path, monkeypatch):
+    registry = _make_stub_registry(tmp_path)
+    _stub_doctor(monkeypatch)
+
+    def no_terminal(prompt: str) -> str:
+        raise EOFError
+
+    with pytest.raises(ValueError, match="not an interactive terminal") as caught:
+        run_onboarding(
+            selected_providers=None, routing_mode=None, assume_yes=False,
+            input_fn=no_terminal, print_fn=lambda *a, **k: None,
+            which=lambda exe: "/bin/tool-a-cli" if exe == "tool-a-cli" else None,
+            registry=registry, db_path=tmp_path / "no_terminal.db", dry_run=True,
+        )
+    assert "--providers" in str(caught.value) and "--yes" in str(caught.value)

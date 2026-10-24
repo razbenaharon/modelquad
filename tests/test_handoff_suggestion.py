@@ -471,3 +471,28 @@ def test_suggestion_module_has_no_launch_path():
     source = inspect.getsource(assistance)
     for forbidden in ("ExecutionManager", "start_job", "_delegate_payload", "subprocess", "execute("):
         assert forbidden not in source
+
+
+def test_a_stale_reading_never_claims_the_plan_has_no_five_hour_limit():
+    status = codex_status(windows=[{"slot": "seven_day", "used_percentage": 40.0, "window_minutes": 10080}],
+                          seven=40)
+    stale = ProviderStatus(name="codex", available=True, observed_at=NOW - timedelta(days=3),
+                           freshness=Freshness.STALE, metadata={**status.metadata, "stale": True})
+    claude = reading("claude", five=20, seven=10)
+    line = statusline_text([claude, stale], THRESHOLDS, now=NOW)
+    assert "no 5-hour limit" not in line
+    assert "Codex 5h unknown" in line
+    assert "Codex week" not in assistance.statusline_segment([claude, stale], THRESHOLDS, now=NOW)
+
+
+def test_a_client_without_forms_gets_a_reason_files_and_a_safe_next_step(low_claude_world, monkeypatch):
+    monkeypatch.setattr(mcp, "modelquad_delegate", lambda **kwargs: pytest.fail("started"))
+    ctx = _Ctx(RuntimeError("client does not support elicitation"))
+    result = asyncio.run(mcp.modelquad_handoff("review", "task", "C:/work/app", ctx=ctx))
+    content = result.structured_content
+    assert content["started"] is False and content["approval"] == "unavailable"
+    assert content["form_unavailable_reason"] == "RuntimeError"
+    assert "client does not support" not in str(content)
+    assert content["files_preview"] == "Files to send: none (only the task text)."
+    assert "could not show ModelQuad's handoff form" in content["next_step"]
+    assert "Only if they say yes, call modelquad_delegate" in content["next_step"]

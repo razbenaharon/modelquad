@@ -1592,25 +1592,41 @@ def _plain_result(payload: dict) -> CallToolResult:
                           structured_content=payload)
 
 
-async def _ask_handoff_approval(ctx: Context | None, message: str) -> str:
+async def _elicit_handoff(ctx: Context | None, message: str) -> tuple[str, str | None]:
     """Ask the user through MCP elicitation (form mode).
 
-    Returns "accept" only for an accepted form with the box ticked;
-    "decline" or "cancel" as the user answered; "unavailable" when there is
-    no request context or the client cannot show the prompt. Anything but
+    Returns ("accept", None) only for an accepted form with the box ticked;
+    "decline" or "cancel" as the user answered; ("unavailable", why) when
+    there is no request context or the client cannot show the form, where
+    ``why`` is the error's class name only (never its text). Anything but
     "accept" starts nothing.
     """
     if ctx is None:
-        return "unavailable"
+        return "unavailable", "no_request_context"
     try:
         answer = await ctx.elicit(message=message, schema=HandoffApproval)
-    except Exception:  # noqa: BLE001 - a client without elicitation, or a malformed answer
-        return "unavailable"
+    except Exception as error:  # noqa: BLE001 - a client without elicitation, or a malformed answer
+        return "unavailable", type(error).__name__
     action = getattr(answer, "action", None)
     if action == "accept":
         data = getattr(answer, "data", None)
-        return "accept" if getattr(data, "hand_off", False) is True else "decline"
-    return "decline" if action == "decline" else "cancel"
+        return ("accept" if getattr(data, "hand_off", False) is True else "decline"), None
+    return ("decline" if action == "decline" else "cancel"), None
+
+
+async def _ask_handoff_approval(ctx: Context | None, message: str) -> str:
+    """The user's answer to the handoff form; see :func:`_elicit_handoff`."""
+    return (await _elicit_handoff(ctx, message))[0]
+
+
+#: What Claude does when this Claude Code client cannot show the handoff form
+#: (the desktop app's Code tab, for one). The delegate tool is the fallback
+#: because Claude Code shows its own approval prompt before that call.
+_FORM_UNAVAILABLE_STEP = (
+    "This Claude Code client could not show ModelQuad's handoff form, so nothing "
+    "started. Tell the user that, then ask in the conversation whether to send this "
+    "task to Codex. Only if they say yes, call modelquad_delegate with the same task "
+    "and files; Claude Code asks them before that call too.")
 
 
 def _handoff_message(task_type: str, working_directory: str) -> tuple[str, dict | None]:
@@ -1658,16 +1674,21 @@ async def modelquad_handoff(
     preview = " ".join(prompt.split())[:300]
     message = (f"{message}\nTask preview: {preview}\n{_files_preview(working_directory, files)}\n"
                f"{_codex_account_line()}")
-    answer = await _ask_handoff_approval(ctx, message)
+    answer, why = await _elicit_handoff(ctx, message)
     if answer != "accept":
-        return _plain_result({
+        refusal = {
             "started": False,
             "approved": False,
             "approval": answer,
             "message": (suggestion or {}).get("message") or "Hand this task to Codex?",
             "next_step": ("Ask the user in the conversation. Start nothing unless they ask; then "
                           "call modelquad_delegate."),
-        })
+        }
+        if answer == "unavailable":
+            refusal["form_unavailable_reason"] = why
+            refusal["files_preview"] = _files_preview(working_directory, files)
+            refusal["next_step"] = _FORM_UNAVAILABLE_STEP
+        return _plain_result(refusal)
     token = _approval_route.set("handoff")
     try:
         return await modelquad_delegate(
