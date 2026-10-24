@@ -1,0 +1,12 @@
+{
+  "name": "modelquad",
+  "version": "0.3.0",
+  "description": "Commands for read-only Codex second opinions, handoff, quotas and setup. Experimental: the MCP server and status line still come from `modelquad install claude`.",
+  "author": {
+    "name": "Raz Ben Aharon"
+  },
+  "homepage": "https://modelquad.com",
+  "repository": "https://github.com/razbenaharon/modelquad",
+  "license": "Apache-2.0",
+  "keywords": ["codex", "second-opinion", "review", "quota"]
+}

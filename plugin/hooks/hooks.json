@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "modelquad",
+            "args": ["hook-pending", "claude"],
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

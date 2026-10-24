@@ -312,6 +312,8 @@ ModelQuad was developed with substantial help from AI coding agents.
   Claude Code settings, in plain language.
 - [NETWORK.md](NETWORK.md): which connections ModelQuad and the programs it
   starts make.
+- [docs/PLUGIN.md](docs/PLUGIN.md): the experimental Claude Code plugin in this
+  repository (not yet a supported install).
 - [SECURITY.md](SECURITY.md): how to report a vulnerability, and the security
   design.
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to contribute.

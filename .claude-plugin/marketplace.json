@@ -1,0 +1,14 @@
+{
+  "name": "modelquad",
+  "description": "ModelQuad for Claude Code (experimental plugin, not yet published)",
+  "owner": {
+    "name": "Raz Ben Aharon"
+  },
+  "plugins": [
+    {
+      "name": "modelquad",
+      "source": "./plugin",
+      "description": "Commands for read-only Codex second opinions, handoff, quotas and setup. Needs the modelquad package installed with pip."
+    }
+  ]
+}
