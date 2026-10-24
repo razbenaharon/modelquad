@@ -213,6 +213,27 @@ def _echo(command: list[str], *, cwd: Path) -> None:
     print(f"\n  $ {' '.join(command)}    (in {_rel(cwd)})", flush=True)
 
 
+#: How hard a check may load the machine: "normal" (default) uses every core
+#: at below-normal priority, so it runs at full speed on an idle machine and
+#: yields to whatever you are doing; "gentle" also halves the test workers;
+#: "full" keeps normal priority. Set with --pace or MODELQUAD_TEST_PACE.
+PACES = ("gentle", "normal", "full")
+PACE = os.environ.get("MODELQUAD_TEST_PACE", "normal") if os.environ.get("MODELQUAD_TEST_PACE") in PACES else "normal"
+#: Windows BELOW_NORMAL_PRIORITY_CLASS. Set on this process, so every process
+#: it starts (pytest, its workers, and what the tests start) inherits it.
+_BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+
+
+def _apply_pace_priority() -> bool:
+    """Lower this process to below-normal priority unless the pace is "full"."""
+    if os.name != "nt" or PACE == "full":
+        return False
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    return bool(kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), _BELOW_NORMAL_PRIORITY_CLASS))
+
+
 def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> int:
     _echo(command, cwd=cwd)
     return subprocess.run(command, cwd=str(cwd), env=env, **no_window_kwargs(streams_to_console=True)).returncode
@@ -234,7 +255,11 @@ def _pytest_parallel_args() -> list[str]:
     suite runs serially and proves the same thing more slowly; the answer is
     printed so a green run says how it was produced.
     """
-    return ["-n", "auto"] if importlib.util.find_spec("xdist") is not None else []
+    if importlib.util.find_spec("xdist") is None:
+        return []
+    if PACE == "gentle":
+        return ["-n", str(max(2, (os.cpu_count() or 4) // 2))]
+    return ["-n", "auto"]
 
 
 def _pytest_phases() -> list[tuple[str, list[str]]]:
@@ -301,6 +326,8 @@ def check_python() -> int:
         return EXIT_FAILED
 
     print(f"  import root: {resolved}")
+    print(f"  pace: {PACE} ({'normal priority' if PACE == 'full' or os.name != 'nt' else 'below-normal priority'}"
+          f"{', half the workers' if PACE == 'gentle' else ''})")
     try:
         Path(resolved).resolve().relative_to(SRC.resolve())
     except ValueError:
@@ -922,6 +949,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--list", action="store_true", help="describe each check and exit")
     parser.add_argument(
+        "--pace",
+        choices=PACES,
+        default=None,
+        help="how hard the test run may load the machine: normal (default: every core, "
+             "below-normal priority), gentle (half the workers too, for while you work) or "
+             "full (normal priority, for an unattended run); also MODELQUAD_TEST_PACE",
+    )
+    parser.add_argument(
         "--repo",
         metavar="DIR",
         default=None,
@@ -929,6 +964,10 @@ def main(argv: list[str] | None = None) -> int:
              "trusted copy of this script check a candidate that modifies it",
     )
     args = parser.parse_args(argv)
+    if args.pace is not None:
+        global PACE
+        PACE = args.pace
+    _apply_pace_priority()
     if args.repo:
         bound = _bind_repo(Path(args.repo))
         if not (bound / "scripts").is_dir() or not (bound / "src").is_dir():

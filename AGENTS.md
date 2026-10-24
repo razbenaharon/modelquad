@@ -53,6 +53,12 @@ here; the tool under development is not the instrument for developing it.
     python scripts/check.py fast      # docs + secret scan, seconds
     python scripts/check.py review    # fast + the tests your diff touches
     python scripts/check.py python    # the whole suite
+    python scripts/check.py python --pace gentle   # while you work: half the workers
+    python scripts/check.py python --pace full     # unattended: normal priority
+
+    # By default the suite runs on every core at below-normal priority: full
+    # speed on an idle machine, and your foreground programs come first.
+    # MODELQUAD_TEST_PACE=gentle|normal|full sets the same thing.
 
     # Tests marked ci_only (wheel build, real venv, repository-wide scans of
     # the tests) are skipped locally; CI runs them. Locally, set

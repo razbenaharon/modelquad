@@ -57,3 +57,31 @@ def test_standalone_trusted_checker_needs_no_new_phase_dependency(tmp_path):
     check = load_script(standalone)
     assert check._load_devenv() is None
     assert check._pytest_phases(), "phase selection works without sibling modules or the product"
+
+
+@pytest.mark.parametrize(("pace", "workers", "below_normal"), [
+    ("normal", "auto", True), ("full", "auto", False), ("gentle", "half", True),
+])
+def test_pace_sets_workers_and_priority(monkeypatch, pace, workers, below_normal):
+    check = load_script(ROOT / "scripts/check.py")
+    monkeypatch.setattr(check, "PACE", pace)
+    args = check._pytest_parallel_args()
+    if args:
+        expected = "auto" if workers == "auto" else str(max(2, (__import__("os").cpu_count() or 4) // 2))
+        assert args == ["-n", expected]
+    calls = []
+
+    class _Kernel:
+        def GetCurrentProcess(self):
+            return -1
+
+        def SetPriorityClass(self, handle, priority):
+            calls.append(priority)
+            return 1
+
+    import ctypes
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **k: _Kernel(), raising=False)
+    applied = check._apply_pace_priority()
+    if sys.platform == "win32":
+        assert applied is below_normal
+        assert calls == ([0x00004000] if below_normal else [])
