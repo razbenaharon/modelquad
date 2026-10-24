@@ -20,7 +20,6 @@ from pathlib import Path
 import pytest
 
 from modelquad import cli, cli_entry, hostruntime, usage_hook
-from modelquad.adapters import gate
 from modelquad.adapters import staging
 from modelquad.adapters.claude_adapter import ClaudeAdapter
 from modelquad.adapters.registration import RegistrationStatus
@@ -320,22 +319,6 @@ def _ansi_stdin(monkeypatch, payload: dict) -> None:
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw), encoding="cp1252"))
 
 
-def test_hook_gate_reads_a_cjk_path_from_utf8_bytes(monkeypatch, capsys):
-    seen: dict = {}
-
-    def capture(**kwargs):
-        seen.update(kwargs)
-        return {}
-
-    monkeypatch.setattr(cli, "evaluate_gate", capture)
-    _ansi_stdin(monkeypatch, {"tool_name": "Bash", "session_id": "s1",
-                              "transcript_path": "C:\\用户\\项目\\会话.jsonl"})
-
-    assert cli.main(["hook-gate"]) == 0
-    assert seen["tool_name"] == "Bash"
-    assert seen["transcript_path"] == "C:\\用户\\项目\\会话.jsonl"
-
-
 def test_usage_hook_reads_a_cjk_path_from_utf8_bytes(monkeypatch, capsys, tmp_path):
     seen: list = []
     monkeypatch.setattr(usage_hook, "parse_claude_statusline_payload", lambda payload: seen.append(payload) or {})
@@ -356,8 +339,6 @@ def test_hooks_exit_zero_and_print_nothing_on_any_failure(monkeypatch, capsys, a
     def explode(*a, **k):
         raise RuntimeError("unexpected")
 
-    monkeypatch.setattr(cli, "evaluate_gate", explode)
-    monkeypatch.setattr(gate, "evaluate_gate", explode)
     monkeypatch.setattr(usage_hook, "parse_claude_statusline_payload", explode)
     _ansi_stdin(monkeypatch, {"tool_name": "Bash"})
 

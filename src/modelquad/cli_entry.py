@@ -78,35 +78,15 @@ def dispatch_usage_hook(argv: Sequence[str]) -> int | None:
 
 
 def dispatch_gate(argv: Sequence[str]) -> int | None:
-    """Cheap advisory gate path: no CLI, router, or history import.
+    """``hook-gate``: a no-op kept for Claude Code sessions started before an upgrade.
 
-    Same marker directory and pause check as the ``cli.main`` hook-gate
-    branch. It always exits 0 and never blocks the host's tool call.
+    Earlier builds installed a PreToolUse hook running ``modelquad hook-gate``
+    that added a one-line note per session. The guidance now comes from the MCP
+    server's instructions, install and uninstall remove the hook, and a session
+    that still has it gets an immediate exit 0: no output, nothing read or kept.
     """
     if list(argv) != ["hook-gate"]:
         return None
-    try:
-        from .hookinput import read_hook_payload
-        try:
-            payload = read_hook_payload()
-        except ValueError:
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        from .adapters.gate import evaluate_gate
-        from .paths import state_root
-        try:
-            from .service.db import DEFAULT_DB_PATH, read_routing_paused
-            paused = read_routing_paused(DEFAULT_DB_PATH)
-        except Exception:
-            paused = False
-        answer = evaluate_gate(tool_name=payload.get("tool_name") or "",
-                               transcript_path=payload.get("transcript_path"),
-                               session_id=payload.get("session_id"), environ=os.environ,
-                               state_dir=state_root() / "gate-state", routing_paused=paused)
-        print(json.dumps(answer))
-    except Exception:
-        pass
     return 0
 
 

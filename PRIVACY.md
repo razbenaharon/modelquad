@@ -398,7 +398,7 @@ bytes are erased from disk.
 | Codex's answers are not stored in the history. A background job's answer waits in `pending-output\` until it is acknowledged or expires | `service/history.record_execution`, `jobs/store.py` |
 | The contents of files sent to Codex are not stored. They are read into memory, sent, and dropped | `execution/noshell.py` |
 | The text of Codex's error output is not stored, in any mode; only its size and a category | `execution/base.result_error`, `workerevidence.py` |
-| Conversation transcripts are never opened | `adapters/gate.py`, `adapters/pending_reminder.py`, `hostobs.record_host_push`; `tests/test_hook_transcript_boundary.py` |
+| Conversation transcripts are never opened | `cli_entry.dispatch_gate` (a no-op), `adapters/pending_reminder.py`, `hostobs.record_host_push`; `tests/test_hook_transcript_boundary.py` |
 | Absolute paths do not reach the history | `privacy.py`, `service/history.py`; `tests/test_privacy_paths.py` |
 | The raw Claude Code session id is not stored. It becomes a 16-character HMAC keyed by the installation id | `hostobs.session_fingerprint` |
 | Provider credential files are not opened, copied or sent to Codex. Sign-in checks test only whether they exist. Two kinds of copies can still hold secrets you put in configuration: `host-registration-backup.json` and the `*.modelquad-backup-*` files | `provider_connection.py`, `execution/noshell.py`, `adapters/registration.py` |

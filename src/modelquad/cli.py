@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .adapters import CLIENT_NAMES, InstallReport, default_target_dir, get_adapter, get_host_descriptor
-from .adapters.gate import evaluate_gate
 from .branding import CLI_COMMAND, PRODUCT_NAME
 from .config import load_config
 from .doctor import DoctorReport, run_doctor
@@ -1736,11 +1735,8 @@ def build_parser() -> argparse.ArgumentParser:
     usage_refresh.add_argument("--json", action="store_true", dest="as_json", help="Print JSON.")
     subcommands.add_parser(
         "hook-gate",
-        help="Backend of the advisory Claude Code PreToolUse hook. "
-        "Reads a hook-input JSON payload from stdin and prints either {} or one "
-        "advisory note for the Host's context -- never a permissionDecision. "
-        "Wired in by `modelquad install claude` as a PreToolUse "
-        "hook command -- not intended to be run manually.",
+        help="No-op kept for Claude Code sessions that still run the PreToolUse hook "
+        "earlier builds installed. Exits 0 and prints nothing; not intended to be run manually.",
     )
     pending_hook = subcommands.add_parser("hook-pending", help="Metadata-only startup context for the Host agent.")
     pending_hook.add_argument("host", choices=("claude", "codex"))
@@ -1969,30 +1965,8 @@ def _run_command(argv: Sequence[str] | None) -> int:
                 return refused
         return _run_service_lifecycle_command(args)
     if args.command == "hook-gate":
-        try:
-            hook_input = _read_hook_payload()
-        except (json.JSONDecodeError, ValueError):
-            hook_input = {}
-        if not isinstance(hook_input, dict):
-            hook_input = {}
-        try:
-            routing_mode = service_history.get_routing_mode(service_db.DEFAULT_DB_PATH)
-        except Exception:
-            routing_mode = None
-        try:
-            routing_paused = service_history.get_routing_paused(service_db.DEFAULT_DB_PATH)
-        except Exception:
-            routing_paused = False
-        decision = evaluate_gate(
-            tool_name=hook_input.get("tool_name") or "",
-            transcript_path=hook_input.get("transcript_path"),
-            session_id=hook_input.get("session_id"),
-            environ=os.environ,
-            state_dir=state_root() / "gate-state",
-            routing_mode=routing_mode,
-            routing_paused=routing_paused,
-        )
-        print(json.dumps(decision))
+        # A no-op for sessions started before the gate hook was removed; see
+        # cli_entry.dispatch_gate.
         return 0
     if args.command == "onboard":
         return _run_onboard_command(args)

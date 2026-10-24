@@ -284,50 +284,10 @@ def test_usage_hook_degrades_gracefully_on_malformed_stdin(tmp_path, capsys, mon
     assert (tmp_path / "usage-claude.json").is_file()
 
 
-def test_hook_gate_cli_prints_nothing_for_a_non_gated_tool(capsys, monkeypatch):
-    payload = {
-        "tool_name": "Read",
-        "transcript_path": None,
-        "session_id": "test-session-1",
-    }
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
-
-    assert main(["hook-gate"]) == 0
-
-    assert json.loads(capsys.readouterr().out) == {}
-
-
 def _rerun_hook_gate(monkeypatch, capsys, payload) -> dict:
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     assert main(["hook-gate"]) == 0
     return json.loads(capsys.readouterr().out)
-
-
-def test_hook_gate_cli_advises_once_per_session_and_never_decides(tmp_path, capsys, monkeypatch):
-    """The first gated call of a session gets the advisory note, the next gets
-    nothing, and neither carries a permission decision."""
-
-    from modelquad.adapters.gate import ADVISORY_NOTE
-
-    monkeypatch.setattr(cli_module, "state_root", lambda: tmp_path / "state")
-    payload = {"tool_name": "Bash", "transcript_path": None, "session_id": "cli-gate-session-1"}
-
-    first = _rerun_hook_gate(monkeypatch, capsys, payload)
-    second = _rerun_hook_gate(monkeypatch, capsys, payload)
-
-    assert first == {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": ADVISORY_NOTE}}
-    assert second == {}
-    markers = list((tmp_path / "state" / "gate-state").iterdir())
-    assert len(markers) == 1
-    assert "cli-gate-session-1" not in markers[0].name
-
-
-def test_hook_gate_cli_handles_malformed_stdin_gracefully(capsys, monkeypatch):
-    monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
-
-    assert main(["hook-gate"]) == 0
-
-    assert json.loads(capsys.readouterr().out) == {}
 
 
 def test_build_parser_accepts_mcp_subcommand():
@@ -581,30 +541,6 @@ def test_run_service_command_has_no_static_serving(monkeypatch):
         parser.parse_args(["serve", "--static-dir", "."])
 
 
-def test_hook_gate_cli_treats_retired_saved_mode_as_automatic(tmp_path, capsys, monkeypatch):
-    from modelquad.service import db as service_db
-    from modelquad.service import history as service_history
-
-    db_path = tmp_path / "gate_manual.db"
-    original_default = service_db.DEFAULT_DB_PATH
-    service_db.DEFAULT_DB_PATH = db_path
-    save_legacy_mode(db_path, "manual")
-    monkeypatch.setattr(cli_module, "state_root", lambda: tmp_path / "state")
-
-    payload = {
-        "tool_name": "Bash",
-        "transcript_path": None,
-        "session_id": "test-manual-gate-session",
-    }
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
-
-    try:
-        assert main(["hook-gate"]) == 0
-        assert "additionalContext" in json.loads(capsys.readouterr().out)["hookSpecificOutput"]
-    finally:
-        service_db.DEFAULT_DB_PATH = original_default
-
-
 def test_build_parser_accepts_onboard_subcommand():
     parser = cli_module.build_parser()
     args = parser.parse_args(
@@ -712,3 +648,10 @@ def test_delegate_is_rejected_by_parser(capsys):
         cli_module.build_parser().parse_args(["delegate"])
     assert error.value.code == 2
     assert "invalid choice: 'delegate'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("stdin", ['{"tool_name": "Bash", "session_id": "s1"}', "not json", ""])
+def test_hook_gate_is_a_silent_no_op_for_sessions_from_before_the_upgrade(capsys, monkeypatch, stdin):
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+    assert main(["hook-gate"]) == 0
+    assert capsys.readouterr().out == ""

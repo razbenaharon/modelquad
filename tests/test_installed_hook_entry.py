@@ -179,40 +179,9 @@ def test_an_explicit_usage_directory_is_honoured_by_the_installed_entry(tmp_path
     assert not (home / ".claude" / "usage-claude.json").exists()
 
 
-def test_installed_gate_uses_the_full_cli_marker_location(tmp_path):
-    payload = json.dumps({"tool_name": "Bash", "session_id": "session-one"}).encode("utf-8")
-    folders, modules = {}, {}
-    for mode in ("entry", "cli"):
-        home = tmp_path / mode
-        first = _run(home, mode, ["hook-gate"], payload)
-        second = _run(home, mode, ["hook-gate"], payload)
-        assert first["code"] == second["code"] == 0
-        assert "additionalContext" in json.loads(first["stdout"])["hookSpecificOutput"]
-        assert json.loads(second["stdout"]) == {}
-        markers = list((Path(first["state_root"]) / "gate-state").glob("*.advised"))
-        assert len(markers) == 1
-        # Marker names are per-installation fingerprints; their folder is not.
-        folders[mode] = {name.rsplit("/", 1)[0] for name in _files(home) if name.endswith(".advised")}
-        modules[mode] = set(first["modules"])
-    assert folders["entry"] == folders["cli"]
-    assert folders["entry"] == {".modelquad/gate-state"}
-    assert not set(_HEAVY) & modules["entry"]
-
-
-@pytest.mark.parametrize("mode", ["entry", "cli"])
-def test_installed_gate_is_silent_while_routing_is_paused(tmp_path, mode):
-    home = tmp_path / "home"
-    _run(home, "pause", [])
-    payload = json.dumps({"tool_name": "Bash", "session_id": "session-one"}).encode("utf-8")
-    result = _run(home, mode, ["hook-gate"], payload)
-    assert result["code"] == 0
-    assert json.loads(result["stdout"]) == {}
-    assert not list(Path(result["state_root"]).glob("gate-state/*.advised"))
-
-
 @pytest.mark.parametrize("stdin", [b"not json", b"[1, 2]", b""])
 def test_installed_gate_always_exits_zero(tmp_path, stdin):
     result = _run(tmp_path / "home", "entry", ["hook-gate"], stdin)
     assert result["code"] == 0
-    assert json.loads(result["stdout"]) == {}
+    assert result["stdout"] == ""
     assert "modelquad.cli" not in result["modules"]

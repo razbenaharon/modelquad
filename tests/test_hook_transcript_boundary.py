@@ -7,15 +7,14 @@ advisory. A ModelQuad recommendation never stops the Host, so the hook never
 denies -- and it never approves either, because a PreToolUse ``allow`` skips
 the permission prompt the user would otherwise see.
 
-Every test here drives the real ``hook-gate`` CLI entry point, the command
-Claude Code runs, with a *canary* transcript: a file holding a route call that
-recommends another provider. The pre-advisory gate read that file and denied
-the call; the advisory gate must not so much as stat it.
+The tests drive the real hook entry points, the commands Claude Code runs,
+with a *canary* transcript: a file the hook must not so much as stat. The old
+advisory gate is now a no-op kept for sessions started before the upgrade; it
+reads nothing at all.
 """
 
 from __future__ import annotations
 
-import ast
 import functools
 import inspect
 import io
@@ -31,28 +30,13 @@ import pytest
 
 import modelquad
 import modelquad.cli as cli_module
-from modelquad.adapters import gate as gate_module
 from modelquad.cli import main
-from modelquad.execution.base import WORKER_ENV_VAR
 from modelquad.procutil import no_window_kwargs
-from modelquad.service import history as service_history
 
 # The imported package, not the source tree: CI also runs these tests against a
 # non-editable install, where the code that executes lives in site-packages.
 PKG = Path(modelquad.__file__).resolve().parent
-# Looked up rather than imported so the regression test below runs -- and
-# fails on its assertions -- against the pre-advisory gate, which has no note.
-ADVISORY_NOTE = getattr(gate_module, "ADVISORY_NOTE", None)
 RAW_SESSION_ID = "RAWSESSIONID-7e3c1f0a-9b2d-4c6e-8a1f-3d5b7c9e0f24"
-ADVISORY_OUTPUT = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": ADVISORY_NOTE}}
-DECISION_KEYS = (
-    "permissionDecision",
-    "permissionDecisionReason",
-    "updatedInput",
-    "decision",
-    "continue",
-    "systemMessage",
-)
 
 
 # ---------------------------------------------------------------------------
@@ -210,153 +194,19 @@ def _run_hook_gate(monkeypatch, capsys, stdin_text: str, canary: Path) -> tuple[
     return code, capsys.readouterr().out
 
 
-def _keys(value) -> set[str]:
-    if isinstance(value, dict):
-        return set(value) | {k for v in value.values() for k in _keys(v)}
-    if isinstance(value, list):
-        return {k for v in value for k in _keys(v)}
-    return set()
-
-
-@pytest.fixture
-def state_dir(tmp_path, monkeypatch) -> Path:
-    root = tmp_path / "state"
-    monkeypatch.setattr(cli_module, "state_root", lambda: root)
-    return root / "gate-state"
-
-
 # ---------------------------------------------------------------------------
-# Regression: the hook neither reads the transcript nor decides the call
+# The legacy gate: a no-op that reads nothing
 # ---------------------------------------------------------------------------
 
 
-def test_hook_gate_never_opens_the_transcript_and_never_decides(tmp_path, capsys, monkeypatch, state_dir):
-    """Fails on main at 2a2e9f5: the old gate read the whole transcript and
-    printed ``permissionDecision: deny`` for exactly this payload."""
+def test_legacy_hook_gate_reads_no_transcript_prints_nothing_and_decides_nothing(tmp_path, capsys, monkeypatch):
+    """Sessions started before the upgrade may still run ``hook-gate``. It must
+    exit 0 without opening the transcript, starting a process or printing."""
 
     canary = _write_canary(tmp_path)
     payload = {"tool_name": "Bash", "session_id": RAW_SESSION_ID, "transcript_path": str(canary)}
-
     code, out = _run_hook_gate(monkeypatch, capsys, json.dumps(payload), canary)
-
-    assert code == 0
-    assert "permissionDecision" not in _keys(json.loads(out))
-
-
-# ---------------------------------------------------------------------------
-# No decision in any branch
-# ---------------------------------------------------------------------------
-
-
-def _unwritable(state_dir: Path, monkeypatch) -> None:
-    # The state root is a FILE, so gate-state beneath it can never be created.
-    state_dir.parent.parent.mkdir(parents=True, exist_ok=True)
-    state_dir.parent.write_text("not a directory", encoding="utf-8")
-
-
-BRANCHES = {
-    "worker-env": ({"tool_name": "Bash"}, {}),
-    "paused": ({"tool_name": "Bash"}, {}),
-    "manual": ({"tool_name": "Bash"}, ADVISORY_OUTPUT),
-    "non-gated-tool": ({"tool_name": "Read"}, {}),
-    "first-gated-call": ({"tool_name": "Bash"}, ADVISORY_OUTPUT),
-    "second-gated-call": ({"tool_name": "Edit"}, {}),
-    "missing-session-id": ({"tool_name": "Bash", "session_id": None}, {}),
-    "unwritable-state-dir": ({"tool_name": "Bash"}, {}),
-    "malformed-stdin": (None, {}),
-}
-
-
-@pytest.mark.parametrize("branch", list(BRANCHES))
-def test_no_branch_returns_a_decision(tmp_path, capsys, monkeypatch, state_dir, branch):
-    overrides, expected = BRANCHES[branch]
-    canary = _write_canary(tmp_path)
-    if branch == "worker-env":
-        monkeypatch.setenv(WORKER_ENV_VAR, "1")
-    elif branch == "paused":
-        monkeypatch.setattr(service_history, "get_routing_paused", lambda db: True)
-    elif branch == "manual":
-        monkeypatch.setattr(service_history, "get_routing_mode", lambda db: "manual")
-    elif branch == "second-gated-call":
-        first = {"tool_name": "Bash", "session_id": RAW_SESSION_ID, "transcript_path": str(canary)}
-        assert _run_hook_gate(monkeypatch, capsys, json.dumps(first), canary) == (0, json.dumps(ADVISORY_OUTPUT) + "\n")
-    elif branch == "unwritable-state-dir":
-        _unwritable(state_dir, monkeypatch)
-
-    if overrides is None:
-        stdin_text = "{not json"
-    else:
-        payload = {"session_id": RAW_SESSION_ID, "transcript_path": str(canary), **overrides}
-        stdin_text = json.dumps(payload)
-
-    code, out = _run_hook_gate(monkeypatch, capsys, stdin_text, canary)
-    output = json.loads(out)
-
-    assert code == 0
-    assert not (_keys(output) & set(DECISION_KEYS)), output
-    assert output == expected
-
-
-def test_unwritable_state_dir_never_repeats_the_note(tmp_path, capsys, monkeypatch, state_dir):
-    canary = _write_canary(tmp_path)
-    _unwritable(state_dir, monkeypatch)
-    payload = json.dumps({"tool_name": "Bash", "session_id": RAW_SESSION_ID, "transcript_path": str(canary)})
-
-    for _ in range(3):
-        assert _run_hook_gate(monkeypatch, capsys, payload, canary) == (0, "{}\n")
-
-
-# ---------------------------------------------------------------------------
-# Gate state: zero-byte, fingerprint-named, legacy raw-id markers removed
-# ---------------------------------------------------------------------------
-
-
-def test_gate_state_holds_no_raw_session_id_and_no_content(tmp_path, capsys, monkeypatch, state_dir):
-    canary = _write_canary(tmp_path)
-    state_dir.mkdir(parents=True)
-    legacy = state_dir / f"{RAW_SESSION_ID}.0.prompted"
-    legacy.write_text("", encoding="utf-8")
-    payload = json.dumps({"tool_name": "Write", "session_id": RAW_SESSION_ID, "transcript_path": str(canary)})
-
-    code, out = _run_hook_gate(monkeypatch, capsys, payload, canary)
-
-    assert code == 0 and json.loads(out) == ADVISORY_OUTPUT
-    assert not legacy.exists()
-    files = list(state_dir.iterdir())
-    assert len(files) == 1
-    for entry in files:
-        assert entry.is_file() and entry.stat().st_size == 0
-        assert RAW_SESSION_ID not in entry.name
-        assert RAW_SESSION_ID.lower() not in entry.name.lower()
-
-
-# ---------------------------------------------------------------------------
-# Static: nothing in gate.py can read a file
-# ---------------------------------------------------------------------------
-
-
-def test_gate_module_has_no_transcript_reader_and_no_file_read():
-    tree = ast.parse(Path(gate_module.__file__).read_text(encoding="utf-8"))
-
-    defined = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    }
-    assert not defined & {"scan_modelquad_calls", "transcript_has_modelquad_call", "ModelQuadCallState"}
-
-    called = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            called.add(func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", ""))
-    assert not called & {"read_text", "read_bytes", "open"}, called
-
-    (evaluate,) = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "evaluate_gate"]
-    loads = [
-        n for n in ast.walk(evaluate) if isinstance(n, ast.Name) and n.id == "transcript_path" and isinstance(n.ctx, ast.Load)
-    ]
-    assert loads == []
+    assert (code, out) == (0, "")
 
 
 # ---------------------------------------------------------------------------
