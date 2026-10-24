@@ -247,8 +247,6 @@ ALLOW_LIST = (
      "Windows tasklist remains pinned through system_executable; includes default reference"),
     ("project_notes.py", "_observe", "launch", 1,
      "forwarding wrapper, guard inside: jobs.changes._git resolves/excludes Git; literal metadata queries share a deadline"),
-    ("repo_identity.py", "resolve_repo_identity.<locals>.observe", "launch", 1,
-     "forwarding wrapper, guard inside: jobs.changes._git resolves/excludes Git for metadata"),
     ("service/collector.py", "Scheduler.start", "launch", 1,
      "non-launch classification: self._run is an async in-process collection coroutine"),
     ("service/job_maintenance.py", "JobMaintenance.start", "launch", 1,

@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from modelquad import procutil, repo_identity
+from modelquad import procutil
 from modelquad.jobs import changes, runner
 from modelquad.jobs.handle import JobSpec, PreparedDelegation
 from modelquad.jobs.seam import JobRef
@@ -202,36 +202,6 @@ def test_filter_observation_is_disabled(git_repo, tmp_path, monkeypatch, kind):
         assert changes.snapshot(git_repo) is None
         assert changes.changed_files(legacy, git_repo) is None
     assert not marker.exists()
-
-
-@pytest.mark.parametrize('kind', ['linked-worktree', 'unborn', 'detached', 'submodule'],
-                         ids=['linked-worktree', 'unborn', 'detached', 'submodule'])
-def test_repo_identity_survives_disabled_snapshots(git_repo, tmp_path, monkeypatch, kind):
-    directory = git_repo
-    if kind == 'linked-worktree':
-        directory = tmp_path / 'linked'
-        git(git_repo, 'worktree', 'add', '-b', 'fixture-linked', str(directory))
-    elif kind == 'unborn':
-        directory = tmp_path / 'unborn'
-        directory.mkdir()
-        git(directory, 'init')
-    elif kind == 'detached':
-        git(git_repo, 'checkout', '--detach')
-    else:
-        source = tmp_path / 'module-source'
-        git(tmp_path, 'clone', str(git_repo), str(source))
-        git(git_repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', str(source), 'module')
-        directory = git_repo / 'module'
-    monkeypatch.setattr(changes, 'snapshot', fail_observation)
-    monkeypatch.setattr(changes, 'changed_files', fail_observation)
-    identity = repo_identity.resolve_repo_identity(directory, installation_key='1' * 32)
-    assert isinstance(identity, repo_identity.RepoIdentity)
-    assert identity.head_kind == {'unborn': 'unborn', 'detached': 'detached'}.get(kind, 'branch')
-    if kind in {'linked-worktree', 'submodule'}:
-        parent = repo_identity.resolve_repo_identity(git_repo, installation_key='1' * 32)
-        assert isinstance(parent, repo_identity.RepoIdentity)
-        assert (identity.repo_key == parent.repo_key) is (kind == 'linked-worktree')
-        assert identity.worktree_key != parent.worktree_key
 
 
 RUNNER_CASES = [(mode, ending, '') for mode in ('raw', 'delegated')

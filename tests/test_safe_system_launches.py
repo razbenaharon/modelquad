@@ -18,7 +18,6 @@ import pytest
 
 from modelquad import buildinfo, executable_resolution as resolver, procutil
 from modelquad.jobs import changes
-from modelquad import repo_identity
 from modelquad.service import lifecycle
 
 
@@ -161,31 +160,6 @@ def test_git_excludes_all_enclosing_repositories(tmp_path, monkeypatch, isolated
 
 
 @win_only
-@pytest.mark.parametrize("case", ["root", "nested", "linked-worktree", "extended-prefix"],
-                         ids=["root", "nested", "linked-worktree", "extended-prefix"])
-def test_repo_identity_excludes_repository_git(case, tmp_path, monkeypatch, isolated):
-    repo = tmp_path / "repository"
-    repo.mkdir()
-    if case == "linked-worktree":
-        (repo / ".git").write_text("gitdir: ../main/.git/worktrees/linked\n", encoding="utf-8")
-    else:
-        (repo / ".git").mkdir()
-    directory = repo / "nested" if case in {"nested", "linked-worktree"} else repo
-    directory.mkdir(exist_ok=True)
-    planted = _git_file(repo)
-    monkeypatch.setenv("PATH", str(repo))
-    calls = _record_git_popen(monkeypatch)
-    path = Path("\\\\?\\" + os.path.realpath(directory)) if case == "extended-prefix" else directory
-    assert str(repo_identity._canonical_directory(path)).startswith("\\\\?\\")
-
-    result = repo_identity.resolve_repo_identity(path, installation_key="1" * 32)
-
-    assert result == repo_identity.Unknown("git_unavailable")
-    assert calls == []
-    assert all(_canonical(argv[0]) != _canonical(planted) for argv, _ in calls)
-
-
-@win_only
 @pytest.mark.parametrize("case", ["drive", "unc"], ids=["drive", "unc"])
 def test_git_excluded_roots_use_normal_win32_spelling(case, tmp_path, monkeypatch):
     # Do not open a UNC share: this fake supplies the .git entry observation.
@@ -230,16 +204,6 @@ def test_unsupported_git_root_prefix_refuses_before_lookup(directory, caller, mo
         assert caught.value.args == ()
     else:
         assert buildinfo._git_head(root) is None
-
-
-def test_missing_git_preserves_the_existing_identity_reason(tmp_path, monkeypatch, isolated):
-    repo = tmp_path / "repository"
-    repo.mkdir()
-    calls = _record_git_popen(monkeypatch)
-    with pytest.raises(FileNotFoundError):
-        changes._git(repo, ["rev-parse", "HEAD"], time.monotonic() + 60)
-    assert repo_identity.resolve_repo_identity(repo, installation_key="1" * 32) == repo_identity.Unknown("git_missing")
-    assert calls == []
 
 
 def test_git_exclusion_lookup_failure_is_unavailable(tmp_path, monkeypatch, isolated):

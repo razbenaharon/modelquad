@@ -198,13 +198,8 @@ def _loaded_runner_git_headroom():
     budgets set their own values with monkeypatch, which wins. This fixture
     saves and restores by itself instead of requesting monkeypatch, so it does
     not move monkeypatch's teardown ahead of other fixtures' teardown."""
-    from modelquad import repo_identity
     from modelquad.jobs import changes
-    saved = [(repo_identity, "RESOLVE_SECONDS", repo_identity.RESOLVE_SECONDS),
-             (repo_identity, "GIT_SECONDS", repo_identity.GIT_SECONDS),
-             (changes, "GIT_SECONDS", changes.GIT_SECONDS)]  # _git clamps to its own module value
-    repo_identity.RESOLVE_SECONDS = 120
-    repo_identity.GIT_SECONDS = 60
+    saved = [(changes, "GIT_SECONDS", changes.GIT_SECONDS)]  # _git clamps to its own module value
     changes.GIT_SECONDS = 60
     try:
         yield

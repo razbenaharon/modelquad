@@ -1615,4 +1615,5 @@ def test_failed_release_always_retains_job_ownership(synthetic, tmp_path, monkey
         assert history.read_job(synthetic, job_id)['status'] == ('failed' if state == 'terminal' else 'starting')
         if state == 'recovery':
             history.fail_job_attempt(synthetic, job_id, detail='test_cleanup')
-    assert history.fetch_plan_decisions(synthetic) == []
+    with sqlite3.connect(synthetic) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM plan_decisions').fetchone() == (0,)
