@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import tempfile
 
+from ..fsretry import retry_sharing
 from . import file_security
 
 
@@ -59,7 +60,8 @@ def atomic_write(
                     os.close(descriptor)
                 raise
             os.close(descriptor)  # The metadata-only cleanup handle stays open.
-            temporary.replace(path)
+            # A scanner or backup tool may hold the fresh file for a moment.
+            retry_sharing(lambda: temporary.replace(path))
     except BaseException:
         # Only this call's file is ours to remove; preserve the original error.
         with suppress(OSError):

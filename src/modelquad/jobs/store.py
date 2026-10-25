@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Literal
 
 from modelquad.execution.base import WorkerTaskStatus
+from modelquad.fsretry import retry_sharing
 from modelquad.jobs.seam import (
     EXPIRY_WARNING, MAX_RETENTION, RETENTION, CollectResult, JobOutcome,
     JobOutput, JobRef, JobStatus, PendingEntry, _utc,
@@ -445,7 +446,7 @@ class FileOutputStore:
                 initial = self._slot_frame(0, None) + self._slot_frame(1, None)
                 name = secrets.token_hex(16) + '.tmp'
                 self._allocating_write(name, initial)
-                os.replace(self._path(name), path)
+                retry_sharing(lambda: os.replace(self._path(name), path))
                 self._sync_directory()
                 self._read_slot()
             if not self._slot_allocated():
@@ -560,7 +561,7 @@ class FileOutputStore:
                 if staged_inspection is _Inspection.SAFE:
                     if self._inspect(staged, retry=False) is not _Inspection.SAFE:
                         raise PendingOutputTemporarilyUnavailable()
-                    os.replace(staged, candidate)
+                    retry_sharing(lambda: os.replace(staged, candidate))
                 elif target_inspection is not _Inspection.SAFE:
                     raise OSError("journaled pending output is unavailable")
             elif op["kind"] == "remove":
@@ -657,7 +658,7 @@ class FileOutputStore:
             if path.name in active_temps:
                 continue
             if self._safe_recovery_file(path):
-                path.unlink()
+                retry_sharing(path.unlink)
         self._sync_directory()
         self._entries = {}
         for path in self.root.glob("*.json") if content else ():
@@ -665,7 +666,7 @@ class FileOutputStore:
                 continue
             if path.stem in self._removed:
                 if self._safe_recovery_file(path):
-                    path.unlink()
+                    retry_sharing(path.unlink)
                 continue
             if self._inspect_available(path) is not _Inspection.SAFE:
                 continue
@@ -689,7 +690,7 @@ class FileOutputStore:
             if job_id in self._completed or self._job_hash(job_id) in self._removed:
                 # Removal intent wins even if stale content was left behind.
                 if self._safe_recovery_file(path):
-                    path.unlink()
+                    retry_sharing(path.unlink)
             else:
                 self._entries[job_id] = raw
         self._operations = []
@@ -756,7 +757,7 @@ class FileOutputStore:
         name = secrets.token_hex(16) + ".tmp"
         self._allocating_write(name, (json.dumps(snapshot, ensure_ascii=True, separators=(',', ':')) + '\n').encode())
         self._checkpoint("snapshot_staged")
-        os.replace(self._path(name), journal)
+        retry_sharing(lambda: os.replace(self._path(name), journal))
         self._sync_directory()
         self._checkpoint("compacted")
         self._completed = completed
@@ -1069,7 +1070,7 @@ class FileOutputStore:
                     if self._inspect_available(slot) is not _Inspection.SAFE:
                         raise
                     name = f"{REMOVAL_SLOT_NAME}.corrupt-{now.timestamp():.6f}-{secrets.token_hex(4)}"
-                    os.replace(slot, self._path(name))
+                    retry_sharing(lambda: os.replace(slot, self._path(name)))
                     self._sync_directory()
                     self._read_slot()
                 self._ensure_capacity()
@@ -1080,7 +1081,7 @@ class FileOutputStore:
                         now = max(now, datetime.fromtimestamp(
                             journal.stat().st_mtime, timezone.utc))
                         name = f"outcomes.jsonl.corrupt-{now.timestamp():.6f}-{secrets.token_hex(4)}"
-                        os.replace(journal, self._path(name))
+                        retry_sharing(lambda: os.replace(journal, self._path(name)))
                     self._sync_directory()
                     self._completed = {}
                     self._removed = {}
@@ -1187,7 +1188,7 @@ class FileOutputStore:
                         continue
                     inspection = self._inspect(path, retry=False)
                     if inspection is _Inspection.SAFE:
-                        path.unlink()
+                        retry_sharing(path.unlink)
                     elif inspection is _Inspection.UNINSPECTABLE:
                         uninspectable_temp = True
                 self._sync_directory()
