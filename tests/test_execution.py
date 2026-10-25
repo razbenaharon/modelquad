@@ -1601,10 +1601,13 @@ def test_envelope_instruction_states_the_completion_contract():
     # review blockers). Read it with the real parser, not a JSON decoder.
     parsed = parse_completion_envelope(text)
     assert parsed is not None
-    assert set(parsed) == {"task_status", "reason", "limitations", "evidence"}
+    assert set(parsed) == {"task_status", "reason", "limitations", "files_needed", "evidence"}
     assert parsed["task_status"] == "completed"
     assert isinstance(parsed["limitations"], list) and len(parsed["limitations"]) == 1
     assert worker_limitations(text) == tuple(parsed["limitations"])
+    # The example names no file, so a worker copying it asks for nothing.
+    assert parsed["files_needed"] == []
+    assert '"files_needed"' in text and "were not given" in text
     for status in ("completed", "blocked", "partial", "failed"):
         assert f'"{status}"' in text
 

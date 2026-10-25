@@ -74,9 +74,13 @@ _COMPLETION_ENVELOPE_INSTRUCTION = (
     '"reason": null, '
     '"limitations": ["a tool or capability that was denied or unavailable '
     'but that the task did not need, and what you did instead"], '
+    '"files_needed": [], '
     '"evidence": {"summary": "one sentence, concrete, based on what you '
     'actually observed"}}\n'
     "```\n"
+    "files_needed lists the workspace-relative paths of files you were not "
+    "given that would have changed or strengthened your answer (an empty "
+    "list if none). Name only files you have reason to believe exist.\n"
     "task_status is one of \"completed\", \"blocked\", \"partial\" or "
     "\"failed\", and it answers one question: was the assigned task "
     "completed? "
@@ -189,6 +193,20 @@ def worker_limitations(primary_output: str) -> tuple[str, ...]:
     if envelope is None:
         return ()
     return _normalize_limitations(envelope.get("limitations"))
+
+
+def worker_files_needed(primary_output: str) -> tuple[str, ...]:
+    """The `files_needed` a worker listed in its envelope, or nothing.
+
+    A worker's claim, bounded like ``limitations``: it names files to offer
+    the user, never files to read or send. Whether a name is a real, sendable
+    workspace file is the caller's check (``noshell.needed_files``).
+    """
+
+    envelope = parse_completion_envelope(primary_output)
+    if envelope is None:
+        return ()
+    return _normalize_limitations(envelope.get("files_needed"))
 
 
 _MAX_LIMITATIONS = 20

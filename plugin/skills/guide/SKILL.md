@@ -13,6 +13,8 @@ PR), offer the user a Codex review. Call `modelquad_delegate` only when the
 user agrees or asks, unless the server instructions say proactive use is on.
 Pass the files Codex should read in `files` (paths relative to the working
 directory, at most 32); a file named only in the prompt is not sent.
+If a reply lists `files_needed`, offer the user a follow-up call with those
+files; call only if they agree.
 
 Use `modelquad_handoff` when ModelQuad reports a low-quota handoff suggestion.
 It shows the user the task and starts only after acceptance.

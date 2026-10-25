@@ -492,6 +492,76 @@ def test_reply_reports_sent_skipped_and_suggests_unsent_names(project):
     assert "not sent" in bare["suggested_files_note"]
 
 
+# --- Files Codex said it needed: offered, never sent --------------------------
+
+def _answer(files_needed):
+    envelope = {"task_status": "completed", "reason": None, "limitations": [],
+                "files_needed": files_needed, "evidence": {"summary": "read the file"}}
+    return "Looks fine.\n```json\n" + json.dumps(envelope) + "\n```"
+
+
+def test_reply_lists_only_sendable_files_codex_said_it_needed(project):
+    (project / "src" / "util.py").write_text("x = 1\n", encoding="utf-8")
+    (project / "src" / "hidden.py").write_text("x = 2\n", encoding="utf-8")
+    (project / ".modelquadignore").write_text("src/hidden.py\n", encoding="utf-8")
+    (project / ".env").write_text("A=1\n", encoding="utf-8")
+    payload = {"output": _answer(["src/app.py", "src\\util.py", "./src/util.py", "src/hidden.py", ".env",
+                                  "missing.py", "../outside.py", "C:/x.py", "src"]),
+               "metadata": {"file_audit": {
+                   "approval": "delegate", "total_bytes": 13, "skipped": [],
+                   "sent": [{"path": "src/app.py", "bytes": 13, "sha256": "0123456789abcdef"}]}}}
+    mcp._report_files(payload, "task", str(project), ["src/app.py"])
+    # Sent already, ignored by the rules, secret-shaped, missing, outside the
+    # folder or a folder: none of these is offered.
+    assert payload["files_needed"] == ["src/util.py"]
+    assert payload["files_needed_note"] == noshell.NEEDED_FILES_NOTE
+    assert "agreement" in noshell.NEEDED_FILES_NOTE
+
+
+def test_an_answer_naming_no_usable_file_adds_nothing(project):
+    malformed = "```json\n" + json.dumps({"task_status": "completed", "files_needed": "src/app.py"}) + "\n```"
+    for output in ("A plain answer.", _answer([]), malformed, None, _answer([7, None, ""])):
+        payload = {"output": output}
+        mcp._report_files(payload, "task", str(project), [])
+        assert "files_needed" not in payload and "files_needed_note" not in payload
+
+
+def test_needed_files_are_bounded(project):
+    names = [f"src/f{index}.py" for index in range(20)]
+    for name in names:
+        (project / name).write_text("x\n", encoding="utf-8")
+    assert noshell.needed_files(_answer(names), str(project)) == names[:noshell.MAX_NEEDED_FILES]
+
+
+def test_delegate_reply_offers_needed_files_and_starts_nothing_more(project, monkeypatch):
+    (project / "src" / "util.py").write_text("x = 1\n", encoding="utf-8")
+    calls = []
+
+    def fake_payload(*args, **kwargs):
+        calls.append(kwargs)
+        return {"task_type": "review", "provider": "codex", "status": "completed",
+                "output": _answer(["src/util.py"])}
+
+    monkeypatch.setattr(mcp, "_delegate_payload", fake_payload)
+    result = asyncio.run(mcp.modelquad_delegate("review", "task", str(project), timeout=60.0,
+                                                files=["src/app.py"]))
+    visible = json.loads(result.content[-1].text)
+    assert visible["files_needed"] == ["src/util.py"]
+    assert visible["files_needed_note"] == noshell.NEEDED_FILES_NOTE
+    # The one approved call ran; naming a file never starts another.
+    call, = calls
+    assert call["supplied_files"] == ["src/app.py"]
+
+
+def test_collected_answer_lists_needed_files(project):
+    from modelquad.mcp import jobs_tools
+
+    (project / "src" / "util.py").write_text("x = 1\n", encoding="utf-8")
+    response = jobs_tools._with_needed_files({"output": _answer(["src/util.py"])}, str(project))
+    assert response["files_needed"] == ["src/util.py"]
+    assert "files_needed" not in jobs_tools._with_needed_files({"error": "unavailable"}, str(project))
+
+
 # --- The approval covers the contents the user approved ----------------------
 
 def _clean_executor(monkeypatch, synthetic_worker_binary):

@@ -115,6 +115,17 @@ def collect_job_response(job_id, *, record=None):
     return payload
 
 
+def _with_needed_files(response, project_directory):
+    """Add the files a collected answer says Codex needed, as for a direct reply."""
+    from modelquad.execution import noshell
+
+    needed = noshell.needed_files(response.get('output'), project_directory)
+    if needed:
+        response['files_needed'] = needed
+        response['files_needed_note'] = noshell.NEEDED_FILES_NOTE
+    return response
+
+
 def read_job_summaries_from_store(*, store, now, since):
     """Read content-free public seam summaries from an explicit store.
 
@@ -205,7 +216,7 @@ def modelquad_job_collect(job_id: str, project_directory: str) -> dict:
     _row, refused = _scoped_job(job_id, project_directory)
     if refused:
         return refused
-    return collect_job_response(job_id)
+    return _with_needed_files(collect_job_response(job_id), project_directory)
 
 
 def modelquad_job_wait(job_id: str, project_directory: str, wait_seconds: int | None = None) -> dict:
@@ -238,13 +249,13 @@ def modelquad_job_wait(job_id: str, project_directory: str, wait_seconds: int | 
         except (OSError, sqlite3.Error, history.LaunchStateUnavailable):
             response = collect_job_response(job_id)
             if 'receipt' in response or 'error' in response:
-                return response
+                return _with_needed_files(response, project_directory)
             return {**response, 'status': 'unknown', 'job_status': 'unknown',
                     'terminal': False, 'wait_again_with': 'modelquad_job_wait'}
         if row is None:
             return {"job_id": job_id, "status": "not_found"}
         if row['ended_at'] is not None or row['status'] not in {'starting', 'running'}:
-            return collect_job_response(job_id, record=row)
+            return _with_needed_files(collect_job_response(job_id, record=row), project_directory)
         now = time.monotonic()
         if now >= deadline:
             return {"job_id": job_id, "status": row['status'], "terminal": False,

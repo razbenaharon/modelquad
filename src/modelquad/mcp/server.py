@@ -1499,6 +1499,7 @@ def _report_files(payload: dict[str, Any], prompt: str, working_directory: str, 
         payload.setdefault("sent_files", audit.get("sent") or [])
         payload.setdefault("skipped_files", audit.get("skipped") or [])
     payload["codex_account"] = _codex_account_line()
+    _report_needed_files(payload, working_directory)
     if not files:
         suggested = _suggested_files(prompt, working_directory)
         if suggested:
@@ -1506,6 +1507,17 @@ def _report_files(payload: dict[str, Any], prompt: str, working_directory: str, 
             payload["suggested_files_note"] = (
                 "These files are named in the task but were not sent. To include them, ask "
                 "again and pass them in files.")
+
+
+def _report_needed_files(payload: dict[str, Any], working_directory: str) -> None:
+    """Add the files Codex's answer says it needed, when there are any."""
+    from ..execution import noshell
+
+    sent = {item.get("path") for item in payload.get("sent_files") or () if isinstance(item, dict)}
+    needed = noshell.needed_files(payload.get("output"), working_directory, sent)
+    if needed:
+        payload["files_needed"] = needed
+        payload["files_needed_note"] = noshell.NEEDED_FILES_NOTE
 
 
 def _delegate_completion_notice(payload: dict[str, Any]) -> str:
@@ -1598,7 +1610,8 @@ async def modelquad_delegate(
     result = _decision_result(payload, presentation)
     visible = {key: payload.get(key) for key in ("task_type", "provider", "status", "partial", "output",
                                                  "sent_files", "skipped_files", "codex_account",
-                                                 "suggested_files")
+                                                 "suggested_files", "files_needed",
+                                                 "files_needed_note")
                if key in payload}
     if isinstance(visible.get("output"), str):
         from .jobs_tools import MAX_SHOWN_OUTPUT_CHARS
