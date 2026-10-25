@@ -218,9 +218,15 @@ HTML = """<!doctype html>
     if (outcome && outcome.recorded) {
       status.className = "status ok";
       status.textContent = approve ? "Approved. Claude starts Codex now." : "Declined. Nothing was sent.";
-    } else {
+    } else if (outcome && outcome.outcome === "unknown_or_expired") {
       status.className = "status";
       status.textContent = "This request is no longer open. Nothing was sent.";
+    } else if (outcome && outcome.outcome === "already_answered") {
+      status.className = "status";
+      status.textContent = "This request was already answered.";
+    } else {
+      status.className = "status";
+      status.textContent = "Your answer did not reach ModelQuad, so nothing was sent. Answer in the conversation instead.";
     }
   }
 

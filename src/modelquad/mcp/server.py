@@ -1653,8 +1653,19 @@ def _desktop_card_approves(ctx: Context | None) -> bool:
     Claude Code sets ``CLAUDE_CODE_ENTRYPOINT=claude-desktop`` for the servers
     it starts there. The card it shows before this tool runs
     (``anthropic/requiresUserInteraction``) is a click Claude cannot make, the
-    same approval ``modelquad_delegate`` rests on."""
-    return os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "claude-desktop" and not _client_shows_apps(ctx)
+    same approval ``modelquad_delegate`` rests on.
+
+    This holds even where the desktop app renders MCP Apps. In the live test
+    of 2026-10-25 it rendered the handoff window, but neither press of Approve
+    reached ``modelquad_handoff_confirm``, so a window there could never start
+    Codex. The card stays the answer until the window's press is shown to
+    arrive."""
+    return os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "claude-desktop"
+
+
+def _shows_handoff_window(ctx: Context | None) -> bool:
+    """Whether this session asks with the handoff window (see handoff_widget)."""
+    return _client_shows_apps(ctx) and not _desktop_card_approves(ctx)
 
 
 def _unseen_answer(answer: str, elapsed: float | None) -> str | None:
@@ -1741,14 +1752,24 @@ def _handoff_form_text(task_type: str, prompt: str, working_directory: str, file
     2026-07-28 call (a changed question is asked again), so it carries no
     live quota numbers: the files with sizes, the account kind, and the task.
 
-    The files come first: the Claude Code terminal shows only the first few
-    lines of a form and folds the rest behind "(+N more lines)"."""
+    The Claude Code terminal shows only the first three lines of a form and
+    folds the rest behind "(+N more lines)", so those three are the question,
+    the files on one line, and the account."""
     folder = Path(working_directory).name or working_directory
     preview = " ".join(prompt.split())[:300]
+    entries, skipped = _files_to_send(working_directory, files)
+    if entries:
+        listed = ", ".join(f"{entry['path']} (not found)" if entry["bytes"] is None
+                           else f"{entry['path']} ({entry['bytes']} bytes)" for entry in entries)
+        total = sum(entry["bytes"] or 0 for entry in entries)
+        files_line = f"Files to send ({len(entries)}, {total} bytes): {listed}"
+    else:
+        files_line = "Files to send: none (only the task text)."
     return "\n".join((
         "Hand this task to Codex?",
-        _files_preview(working_directory, files),
+        files_line,
         _codex_account_line(),
+        *(["Not sent: " + ", ".join(skipped)] if skipped else []),
         f"Task: {task_type} in {folder}. Codex runs it under your own login. "
         "Nothing starts unless you tick the box and accept.",
         f"Task preview: {preview}",
@@ -1767,10 +1788,10 @@ def _handoff_question(task_type: str, prompt: str, working_directory: str, files
         checked = _checked_files(files)
     except ToolError:
         return "not_asked"
-    if _client_shows_apps(ctx):
-        return "widget"
     if _desktop_card_approves(ctx):
         return "card_approved"
+    if _shows_handoff_window(ctx):
+        return "widget"
     # A client that declared no forms cannot answer one; asking would end the
     # call in a protocol error. The body then reports the form as unavailable.
     capabilities = getattr(ctx, "client_capabilities", None)
@@ -1816,7 +1837,7 @@ async def modelquad_handoff(
         return _plain_result(refusal)
     files = _checked_files(files)
     _message, suggestion = _handoff_message(task_type, working_directory)
-    if getattr(approval, "data", None) == "widget" and _client_shows_apps(ctx):
+    if getattr(approval, "data", None) == "widget" and _shows_handoff_window(ctx):
         return _plain_result(_widget_pending(
             task_type=task_type, prompt=prompt, working_directory=working_directory, timeout=timeout,
             model=model, reasoning_effort=reasoning_effort, capsule=capsule, files=files))
@@ -1900,8 +1921,14 @@ def modelquad_handoff_confirm(pending_id: str, approve: bool, ctx: Context | Non
     if not _client_shows_apps(ctx):
         # Only a client that renders the page also keeps this tool from the
         # model. Anywhere else an answer here could be Claude's own.
-        return _plain_result({"recorded": False, "outcome": "client_shows_no_widget"})
-    outcome = handoff_widget.decide(pending_id, bool(approve))
+        outcome = "client_shows_no_widget"
+    else:
+        outcome = handoff_widget.decide(pending_id, bool(approve))
+    # One line in Claude Code's MCP log, so a press that never arrives can be
+    # told from one that arrived and was refused. No ids, paths or text.
+    logger.warning("handoff window answer: %s", outcome)
+    if outcome == "client_shows_no_widget":
+        return _plain_result({"recorded": False, "outcome": outcome})
     return _plain_result({"recorded": outcome == "recorded", "outcome": outcome})
 
 
@@ -2280,13 +2307,14 @@ def modelquad_doctor(ctx: Context | None = None) -> dict:
         config,
         usage_directory=Path(USAGE_DIRECTORY) if USAGE_DIRECTORY else None,
     ).to_dict()
-    if _client_shows_apps(ctx):
-        approval = "window"  # the handoff window, with Approve / Decline
-    elif _desktop_card_approves(ctx):
+    if _desktop_card_approves(ctx):
         approval = "approval_card"  # the desktop app: Claude Code's own prompt is the answer
+    elif _shows_handoff_window(ctx):
+        approval = "window"  # the handoff window, with Approve / Decline
     else:
         approval = "form"
-    report["this_session"] = {"handoff_window_shown": approval == "window", "handoff_approval": approval}
+    report["this_session"] = {"handoff_window_shown": approval == "window", "handoff_approval": approval,
+                              "client_renders_mcp_apps": _client_shows_apps(ctx)}
     return report
 
 

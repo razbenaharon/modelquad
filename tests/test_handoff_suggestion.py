@@ -538,7 +538,7 @@ def test_the_handoff_form_reaches_a_real_client_on_both_protocols(low_claude_wor
 
     result = asyncio.run(run())
     assert len(asked) == 1
-    assert "Files to send (1, 6 bytes):" in asked[0] and "- notes.md (6 bytes)" in asked[0]
+    assert "Files to send (1, 6 bytes): notes.md (6 bytes)" in asked[0]
     assert low_claude_world == []
     if started:
         (call,) = delegated
@@ -604,13 +604,16 @@ def test_a_client_that_declares_no_forms_gets_the_plain_fallback(low_claude_worl
     assert "could not show ModelQuad's handoff form" in content["next_step"]
 
 
-def test_the_handoff_form_lists_the_files_before_the_task(tmp_path):
-    """The Claude Code terminal folds a long form after its first lines (live
-    test, 2026-10-25), so what is sent must come before the task text."""
+def test_the_handoff_form_shows_files_and_account_in_its_first_three_lines(tmp_path):
+    """The Claude Code terminal shows a form's first three lines and folds the
+    rest (live tests, 2026-10-25), so what is sent and to which account come
+    before the task text."""
     (tmp_path / "notes.md").write_bytes(b"hello\n")
-    lines = mcp._handoff_form_text("review", "word " * 200, str(tmp_path), ["notes.md"]).splitlines()
-    assert lines[:3] == ["Hand this task to Codex?", "Files to send (1, 6 bytes):", "- notes.md (6 bytes)"]
-    assert lines[3].startswith("Codex account:") and lines[-1].startswith("Task preview: ")
+    (tmp_path / "more.md").write_bytes(b"hi\n")
+    lines = mcp._handoff_form_text("review", "word " * 200, str(tmp_path), ["notes.md", "more.md"]).splitlines()
+    assert lines[:2] == ["Hand this task to Codex?",
+                         "Files to send (2, 9 bytes): notes.md (6 bytes), more.md (3 bytes)"]
+    assert lines[2].startswith("Codex account:") and lines[-1].startswith("Task preview: ")
 
 
 @pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])

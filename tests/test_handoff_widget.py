@@ -159,7 +159,30 @@ def test_the_doctor_tool_says_how_this_session_approves_a_handoff(monkeypatch):
             result = await client.call_tool("modelquad_doctor", {})
             return json.loads(result.content[0].text)["this_session"]
 
-    assert asyncio.run(run(_apps_client())) == {"handoff_window_shown": True, "handoff_approval": "window"}
+    assert asyncio.run(run(_apps_client())) == {
+        "handoff_window_shown": True, "handoff_approval": "window", "client_renders_mcp_apps": True}
     assert asyncio.run(run(Client(mcp.server, mode="legacy")))["handoff_approval"] == "form"
     monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
     assert asyncio.run(run(Client(mcp.server, mode="legacy")))["handoff_approval"] == "approval_card"
+    # The desktop app renders the window but its Approve never arrived
+    # (live test, 2026-10-25): there the card stays the answer.
+    assert asyncio.run(run(_apps_client())) == {
+        "handoff_window_shown": False, "handoff_approval": "approval_card", "client_renders_mcp_apps": True}
+
+
+def test_in_the_desktop_app_the_card_wins_even_where_the_window_renders(tmp_path, started, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+    (tmp_path / "notes.md").write_bytes(b"hello\n")
+
+    async def run():
+        async with _apps_client() as client:
+            return (await _handoff(client, tmp_path)).structured_content
+
+    assert asyncio.run(run()) == {"started": True}
+    (call,) = started
+    assert call["route"] == "delegate"
+
+
+def test_the_page_says_when_an_answer_did_not_arrive():
+    # A refused or failed call is not "no longer open": the request may still be.
+    assert "Your answer did not reach ModelQuad" in handoff_widget.HTML
