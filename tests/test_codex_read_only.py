@@ -243,3 +243,22 @@ def test_secret_shaped_names_of_any_service_are_removed(name):
 ])
 def test_what_codex_needs_still_passes(name):
     assert codex_module.worker_environment({name: "x"}) == {name: "x"}
+
+
+def test_off_windows_the_worker_refuses_before_any_process(tmp_path, monkeypatch, *, synthetic_worker_binary):
+    """Containment (Job Object, census, final-path check) is Windows-only, so
+    nothing runs elsewhere. os.name is patched only around the executor call:
+    pathlib reads it too."""
+    real_execute = codex_module.CodexExecutor._execute_noshell
+
+    def posix_execute(self, *args, **kwargs):
+        monkeypatch.setattr(codex_module.os, "name", "posix")
+        try:
+            return real_execute(self, *args, **kwargs)
+        finally:
+            monkeypatch.setattr(codex_module.os, "name", "nt")
+
+    monkeypatch.setattr(codex_module.CodexExecutor, "_execute_noshell", posix_execute)
+    run, result = _execute(tmp_path, TaskType.REVIEW, synthetic_worker_binary=synthetic_worker_binary)
+    assert run.calls == []
+    assert result.task_status_reason == "unsupported_platform"

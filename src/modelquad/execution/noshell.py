@@ -132,6 +132,8 @@ REFUSAL_MESSAGES = {
     "codex_executable_unverified": (
         "The Codex executable could not be read, or it changed while ModelQuad was checking "
         "it. Try again."),
+    "unsupported_platform": (
+        "ModelQuad runs Codex only on native Windows, where it can contain and check the run."),
     "supplied_file_changed": (
         "A file changed after the user approved sending it, so nothing was sent. Ask again "
         "to send the current version."),

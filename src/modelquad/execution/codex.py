@@ -329,6 +329,11 @@ class CodexExecutor(Executor):
                 limitations=noshell.limitations(metadata),
             ), diagnostics)
 
+        if os.name != "nt":
+            # The containment this run relies on (the Job Object, the census of
+            # what is left running, the final-path check) is Windows-only.
+            return refused("unsupported_platform")
+
         def inventory(argv, cwd, env):
             # The existing runner pins the executable and bounds/kills its tree.
             return (self._inventory or run_inventory)(argv, cwd, env)
