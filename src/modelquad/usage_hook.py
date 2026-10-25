@@ -111,10 +111,10 @@ def status_line_text(usage_directory: Path, claude_snapshot: dict, *, segment: b
     except Exception:  # noqa: BLE001
         five = claude_snapshot.get("five_hour_used_percentage")
         seven = claude_snapshot.get("seven_day_used_percentage")
-        five_text = f"{five:.0f}% used" if isinstance(five, (int, float)) else "unknown"
+        five_text = f"{100 - five:.0f}% left" if isinstance(five, (int, float)) else "unknown"
         if segment:
             return f"Claude 5h {five_text}"
-        seven_text = f"{seven:.0f}% used" if isinstance(seven, (int, float)) else "unknown"
+        seven_text = f"{100 - seven:.0f}% left" if isinstance(seven, (int, float)) else "unknown"
         return f"Claude 5h {five_text} / 7d {seven_text}"
 
 

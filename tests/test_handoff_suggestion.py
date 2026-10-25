@@ -120,8 +120,8 @@ def clock(minutes):
 def test_status_line_shows_both_providers_and_unknown_never_zero():
     line = statusline_text([reading("claude", five=85, seven=40), reading("codex", five=30)],
                            THRESHOLDS, now=NOW)
-    assert line == (f"Claude 5h 85% used, resets {clock(80)} / 7d 40% used"
-                    f" | Codex 5h 30% used, resets {clock(80)} / 7d unknown"
+    assert line == (f"Claude 5h 15% left, resets {clock(80)} / 7d 60% left"
+                    f" | Codex 5h 70% left, resets {clock(80)} / 7d unknown"
                     " | Claude is low: hand off to Codex?")
     empty = statusline_text([reading("claude", observed=None)], THRESHOLDS, now=NOW)
     assert empty == "Claude: shows after your first message | Codex 5h unknown / 7d unknown"
@@ -155,13 +155,13 @@ def codex_status(*, reason=None, available=True, windows=None, seven=None):
                          "error: {'message': 'Not logged in. Run codex login.'}"),
      "Codex: sign in to Codex", "Codex: sign in to Codex"),
     (codex_status(windows=[{"slot": "seven_day", "used_percentage": 40.0, "window_minutes": 10080}], seven=40),
-     "Codex: no 5-hour limit on your plan / 7d 40% used", "Codex week 40% used"),
+     "Codex: no 5-hour limit on your plan / 7d 60% left", "Codex week 60% left"),
 ])
 def test_plain_language_codex_states(status, full, segment):
     claude = reading("claude", five=20, seven=10)
     assert statusline_text([claude, status], THRESHOLDS, now=NOW).endswith(f" | {full}")
     assert assistance.statusline_segment([claude, status], THRESHOLDS, now=NOW) == (
-        f"{segment} | Claude 5h 20% used")
+        f"{segment} | Claude 5h 80% left")
 
 
 def test_a_missing_codex_usage_file_is_not_called_codex_not_found():
@@ -174,13 +174,13 @@ def test_a_missing_codex_usage_file_is_not_called_codex_not_found():
 def test_a_reset_claude_window_waits_for_the_next_message():
     old = reading("claude", five=40, seven=10, five_reset=-5)
     assert statusline_text([old], THRESHOLDS, now=NOW).startswith(
-        "Claude 5h shows after your next message / 7d 10% used")
+        "Claude 5h shows after your next message / 7d 90% left")
 
 
 def test_segment_is_compact_and_ascii():
     segment = assistance.statusline_segment(
         [reading("claude", five=62, seven=40), reading("codex", five=30)], THRESHOLDS, now=NOW)
-    assert segment == "Codex 5h 30% used | Claude 5h 62% used"
+    assert segment == "Codex 5h 70% left | Claude 5h 38% left"
     assert segment.isascii()
     assert assistance.statusline_segment([reading("claude", observed=None)], THRESHOLDS, now=NOW) == (
         "Codex 5h unknown | Claude: shows after your first message")
@@ -196,9 +196,9 @@ def test_pace_needs_two_readings_and_says_when_the_window_fills():
     pace = {"claude:five_hour": first}
     line = statusline_text([status], THRESHOLDS, now=NOW, pace=pace)
     assert line.startswith(
-        f"Claude 5h 50% used, resets {clock(240)}, at this pace full by about {clock(100)} / 7d 10% used")
+        f"Claude 5h 50% left, resets {clock(240)}, at this pace full by about {clock(100)} / 7d 90% left")
     assert assistance.statusline_segment([status], THRESHOLDS, now=NOW, pace=pace).endswith(
-        f"Claude 5h 50% used, full by about {clock(100)}")
+        f"Claude 5h 50% left, full by about {clock(100)}")
 
 
 @pytest.mark.parametrize("first", [
@@ -268,12 +268,12 @@ def test_status_line_command_prints_both_providers(tmp_path, capsys, monkeypatch
     resets = assistance.local_clock(datetime.fromtimestamp(now + 3600, timezone.utc),
                                     datetime.fromtimestamp(now, timezone.utc))
     assert capsys.readouterr().out.strip() == (
-        f"Claude 5h 85% used, resets {resets} / 7d 40% used | Codex 5h 30% used / 7d unknown"
+        f"Claude 5h 15% left, resets {resets} / 7d 60% left | Codex 5h 70% left / 7d unknown"
         " | Claude is low: hand off to Codex?")
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     assert cli.main(["--usage-directory", str(usage), "usage-hook", "claude", "--segment"]) == 0
     assert capsys.readouterr().out.strip() == (
-        "Codex 5h 30% used | Claude 5h 85% used | Claude is low: hand off to Codex?")
+        "Codex 5h 70% left | Claude 5h 15% left | Claude is low: hand off to Codex?")
 
 
 # --- waiting may be simpler ---------------------------------------------------------

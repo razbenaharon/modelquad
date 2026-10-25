@@ -152,7 +152,7 @@ def test_a_fresh_reading_reaches_the_status_line(tmp_path):
     background.run_codex_refresh_loop(tmp_path, stop, interval=60, refresh=once)
 
     line = _status_line_text(tmp_path, {})
-    assert "Codex 5h 30% used, resets " in line and "/ 7d 55% used" in line
+    assert "Codex 5h 70% left, resets " in line and "/ 7d 45% left" in line
 
 
 @pytest.mark.parametrize("worker", [False, True], ids=["host", "worker"])

@@ -202,7 +202,7 @@ because the status line is its only source of Claude's quota. Install,
 `modelquad onboard` and `modelquad doctor` print the exact one-line recipe for
 your setup. `modelquad usage-hook claude --segment` records the quota and
 prints only ModelQuad's compact part, for example
-`Codex 5h 30% used | Claude 5h 62% used`:
+`Codex 5h 70% left | Claude 5h 38% left`:
 
 - ccstatusline: add a Custom Command widget whose command is
   `modelquad usage-hook claude --segment`.

@@ -358,14 +358,17 @@ def _provider_view(status, thresholds, now, pace):
 
 
 def _window_text(window, now, *, name):
-    """"62% used" (with "(stale)"), or the plain-language state; never a made-up number."""
+    """"38% left" (with "(stale)"), or the plain-language state; never a made-up number.
+
+    The line says what is left, not what is used: "0% used" on a fresh
+    window read to the owner as nothing left (live test, 2026-10-25)."""
     if window is None or window.get("unknown") or _used(window) is None:
         return "unknown"
     resets = _moment(window.get("resets_at"))
     if resets is not None and resets <= now:
         # The reading describes a window that has reset.
         return NEXT_MESSAGE if name == "claude" else "unknown"
-    text = f"{_used(window):.0f}% used"
+    text = f"{min(100.0, max(0.0, 100.0 - _used(window))):.0f}% left"
     return f"{text} (stale)" if window.get("stale") else text
 
 
@@ -422,7 +425,7 @@ def statusline_text(statuses, thresholds, *, now, pace=None):
         five_window = windows.get("five_hour")
         five = _window_text(five_window, now, name=name)
         resets = _moment((five_window or {}).get("resets_at"))
-        if five.endswith(("used", "(stale)")) and resets is not None:
+        if five.endswith(("left", "(stale)")) and resets is not None:
             five += f", resets {local_clock(resets, now)}"
         if full is not None:
             five += f", at this pace full by about {local_clock(full, now)}"
@@ -433,7 +436,7 @@ def statusline_text(statuses, thresholds, *, now, pace=None):
 def statusline_segment(statuses, thresholds, *, now, pace=None):
     """The compact ModelQuad part for a status line the user already has.
 
-    For example "Codex 5h 30% used | Claude 5h 62% used": each provider's
+    For example "Codex 5h 70% left | Claude 5h 38% left": each provider's
     5-hour window (or its weekly one when the plan has no 5-hour limit), the
     same plain-language states as :func:`statusline_text`, and the handoff
     advice when it applies. Plain ASCII, so any status line can append it.

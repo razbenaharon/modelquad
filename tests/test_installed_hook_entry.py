@@ -133,8 +133,8 @@ def test_installed_status_line_writes_and_prints_what_the_full_cli_does(tmp_path
     # Both providers, "used" labels, and the handoff suffix -- the same line.
     assert entry["stdout"] == results["cli"]["stdout"]
     assert entry["stdout"].strip() == (
-        f"Claude 5h 85% used, resets {_resets_clock(now)} / 7d 40% used"
-        " | Codex 5h 30% used / 7d unknown | Claude is low: hand off to Codex?")
+        f"Claude 5h 15% left, resets {_resets_clock(now)} / 7d 60% left"
+        " | Codex 5h 70% left / 7d unknown | Claude is low: hand off to Codex?")
     # The import budget: the status line never pays for the full CLI.
     assert not set(_HEAVY) & set(entry["modules"])
 
@@ -152,7 +152,7 @@ def test_the_segment_runs_on_the_installed_path_and_matches_the_full_cli(tmp_pat
     assert files["entry"] == files["cli"]
     assert results["entry"]["stdout"] == results["cli"]["stdout"]
     assert results["entry"]["stdout"].strip() == (
-        "Codex 5h 30% used | Claude 5h 85% used | Claude is low: hand off to Codex?")
+        "Codex 5h 70% left | Claude 5h 15% left | Claude is low: hand off to Codex?")
     assert results["entry"]["stdout"].strip().isascii()
     assert not set(_HEAVY) & set(results["entry"]["modules"])
     written = json.loads((tmp_path / "entry" / ".claude" / "usage-claude.json").read_text(encoding="utf-8"))
@@ -178,8 +178,8 @@ def test_an_explicit_usage_directory_is_honoured_by_the_installed_entry(tmp_path
     home, chosen = tmp_path / "home", tmp_path / "chosen"
     result = _run(home, "entry", ["--usage-directory", str(chosen), "usage-hook", "claude"],
                   _status_payload())
-    assert result["stdout"].startswith("Claude 5h 85% used, resets ")
-    assert "/ 7d 40% used | Codex 5h unknown" in result["stdout"]
+    assert result["stdout"].startswith("Claude 5h 15% left, resets ")
+    assert "/ 7d 60% left | Codex 5h unknown" in result["stdout"]
     assert (chosen / "usage-claude.json").is_file()
     assert not (home / ".claude" / "usage-claude.json").exists()
 
