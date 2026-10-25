@@ -189,14 +189,22 @@ def _probe(path: str) -> str | None:
         return _version_cache[key]
     version = None
     try:
+        import tempfile
+
+        from .execution.codex import WORKER_ENV_VAR, worker_environment
         from .procutil import no_window_kwargs
 
-        completed = subprocess.run(  # noqa: S603 -- fixed argv, shell=False
-            [path, "--version"], capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=_VERSION_TIMEOUT_SECONDS, shell=False,
-            env=executable_resolution.safe_child_env(os.environ),
-            **no_window_kwargs(),
-        )
+        # The same environment and empty folder a Codex run gets: other
+        # services' secrets removed and the worker marker set.
+        env = worker_environment()
+        env[WORKER_ENV_VAR] = "1"
+        with tempfile.TemporaryDirectory(prefix="modelquad-probe-") as empty:
+            completed = subprocess.run(  # noqa: S603 -- fixed argv, shell=False
+                [path, "--version"], capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=_VERSION_TIMEOUT_SECONDS, shell=False,
+                cwd=empty, env=executable_resolution.safe_child_env(env),
+                **no_window_kwargs(),
+            )
         if completed.returncode == 0:
             match = _VERSION.search((completed.stdout or "").strip().splitlines()[0] if completed.stdout else "")
             version = match.group(0) if match else None

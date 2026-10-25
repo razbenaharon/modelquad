@@ -143,6 +143,25 @@ def test_probe_reads_the_version_line_and_caches(tmp_path, monkeypatch):
     assert calls == [[str(exe), "--version"]]
 
 
+def test_probe_runs_with_the_worker_environment_in_an_empty_folder(tmp_path, monkeypatch):
+    """The version probe gets the same environment a Codex run gets: other
+    services' secrets removed, the worker marker set, an empty folder."""
+    exe = tmp_path / "codex.exe"
+    exe.write_bytes(b"w")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_not_for_codex")
+    seen = {}
+
+    def run(argv, **kwargs):
+        seen.update(env=kwargs["env"], cwd=kwargs["cwd"], files=list(Path(kwargs["cwd"]).iterdir()))
+        return subprocess.CompletedProcess(argv, 0, "codex-cli 0.160.0\n", "")
+
+    monkeypatch.setattr(codexcli.subprocess, "run", run)
+    codexcli.clear_cache()
+    assert codexcli._probe(str(exe)) == "0.160.0"
+    assert "GITHUB_TOKEN" not in seen["env"] and seen["env"]["MODELQUAD_WORKER"] == "1"
+    assert seen["files"] == [] and Path(seen["cwd"]) != Path.cwd()
+
+
 @pytest.mark.parametrize("completed", [
     subprocess.CompletedProcess([], 1, "codex-cli 0.160.0", ""),
     subprocess.CompletedProcess([], 0, "", ""),
