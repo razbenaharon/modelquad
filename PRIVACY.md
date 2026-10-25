@@ -307,9 +307,14 @@ leave that file behind.
 | How ModelQuad runs | State folder |
 |---|---|
 | `MODELQUAD_STATE_ROOT` is set | That folder |
-| Plain (non-editable) `pip install` | `%LOCALAPPDATA%\ModelQuad\` |
+| Plain (non-editable) `pip install` | `%USERPROFILE%\.local\share\modelquad\` |
 | Editable install (`pip install -e`) from a checkout | `%USERPROFILE%\.modelquad\` |
-| `LOCALAPPDATA` is not set | `%USERPROFILE%\.modelquad\` |
+
+Before 2026-10-25 a plain install used `%LOCALAPPDATA%\ModelQuad\`. Windows
+redirects what the Claude desktop app and the programs it starts write under
+`AppData` to a private copy, so ModelQuad started there and ModelQuad started
+from a terminal kept two separate folders. ModelQuad no longer reads or writes
+the old folder; delete it once you no longer need its history.
 
 `modelquad privacy` and `modelquad state` print the folder in use. Stop the
 service (`modelquad service stop`) before you delete anything here.

@@ -36,6 +36,7 @@ from modelquad.statecontext import (
     STATE_ROOT_ENV_VAR,
     StateMode,
     StateSource,
+    installed_state_root,
     resolve_state_context,
 )
 
@@ -51,7 +52,7 @@ def force_installed(monkeypatch, local_appdata: Path) -> Path:
     monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: False)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
-    return local_appdata / "ModelQuad"
+    return installed_state_root()[0]
 
 
 def force_development(monkeypatch) -> None:
@@ -185,7 +186,7 @@ def test_an_explicit_mode_selects_that_modes_canonical_root(monkeypatch, tmp_pat
     context = resolve_state_context()
     assert context.mode is StateMode.INSTALLED
     assert context.source is StateSource.ENV_OVERRIDE
-    assert context.state_root == tmp_path / "AppData" / "Local" / "ModelQuad"
+    assert context.state_root == installed_state_root()[0]
 
 
 def test_an_unparseable_mode_override_falls_through_instead_of_breaking_startup(
@@ -369,7 +370,7 @@ def test_the_live_split_is_detected_as_mixed_state(monkeypatch, tmp_path):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     make_store(
-        local_appdata / "ModelQuad",
+        installed_state_root()[0],
         {"routing_mode": "automatic", "routing_paused": True, "telemetry_consent": False},
     )
     make_store(
@@ -393,7 +394,7 @@ def test_a_single_store_is_reported_consistent(monkeypatch, tmp_path):
     force_installed(monkeypatch, local_appdata)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
+    make_store(installed_state_root()[0], {"routing_mode": "automatic"})
 
     survey = statediag.survey_state(which=lambda _name: None)
     assert survey.consistent is True
@@ -414,7 +415,7 @@ def test_a_lazily_unwritten_setting_is_not_a_divergence(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
-    make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
+    make_store(installed_state_root()[0], {"routing_mode": "automatic"})
     make_store(tmp_path / ".modelquad", {"decision_mode": "deterministic"})
 
     survey = statediag.survey_state(which=lambda _name: None)
@@ -431,7 +432,7 @@ def test_surveying_never_creates_or_modifies_a_store(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
-    database = make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
+    database = make_store(installed_state_root()[0], {"routing_mode": "automatic"})
     before_bytes = database.read_bytes()
     dev_root = tmp_path / ".modelquad"
 
@@ -454,7 +455,7 @@ def test_doctor_reports_mixed_state_instead_of_passing_green(monkeypatch, tmp_pa
     force_installed(monkeypatch, local_appdata)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
+    make_store(installed_state_root()[0], {"routing_mode": "automatic"})
     make_store(tmp_path / ".modelquad", {"routing_mode": "manual"})
 
     from modelquad.doctor import CheckStatus, _state_consistency_check
@@ -469,7 +470,7 @@ def test_doctor_state_check_is_ok_for_a_single_store(monkeypatch, tmp_path):
     force_installed(monkeypatch, local_appdata)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    make_store(local_appdata / "ModelQuad", {"routing_mode": "automatic"})
+    make_store(installed_state_root()[0], {"routing_mode": "automatic"})
 
     from modelquad.doctor import CheckStatus, _state_consistency_check
 
@@ -576,7 +577,7 @@ def _survey_with(monkeypatch, tmp_path, *, installed=None, development=None):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     if installed is not None:
-        make_store(local_appdata / "ModelQuad", installed)
+        make_store(installed_state_root()[0], installed)
     if development is not None:
         make_store(tmp_path / ".modelquad", development)
     if installed is not None and development is not None:
@@ -608,7 +609,7 @@ def test_only_a_foreign_store_is_reported_and_never_adopted(monkeypatch, tmp_pat
     assert survey.coexistence is statediag.Coexistence.FOREIGN_ONLY
     # One store is not a split, so it is not a finding -- but the survey still
     # says which store this runtime owns, and it is not that one.
-    assert survey.context.state_root == tmp_path / "AppData" / "Local" / "ModelQuad"
+    assert survey.context.state_root == installed_state_root()[0]
     assert (tmp_path / ".modelquad" / "modelquad.db").is_file()
 
 
@@ -647,10 +648,9 @@ def test_preserved_stores_and_active_control_plane(monkeypatch, tmp_path, capsys
     from modelquad.cli import render_state_survey
     from modelquad.doctor import CheckStatus, _state_consistency_check
 
-    local = tmp_path / "Local"
-    root = force_installed(monkeypatch, local)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    root = force_installed(monkeypatch, tmp_path / "Local")
     databases = (
         make_store(root, {"routing_mode": "automatic"}),
         make_store(tmp_path / ".modelquad", {"routing_mode": "manual"}),
@@ -723,10 +723,9 @@ from conftest import no_window_kwargs
 def _two_stores_hosts_pinned(monkeypatch, tmp_path):
     """The two-store layout: installed store owned, dev store preserved, hosts canonical."""
 
-    local = tmp_path / "Local"
-    root = force_installed(monkeypatch, local)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    root = force_installed(monkeypatch, tmp_path / "Local")
     databases = (
         make_store(root, {"routing_mode": "automatic"}),
         make_store(tmp_path / ".modelquad", {"routing_mode": "manual"}),

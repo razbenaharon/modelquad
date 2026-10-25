@@ -1194,7 +1194,9 @@ def test_process_manager_defaults_state_dir_to_installed_state_root(monkeypatch)
     assert manager.pid_path == sentinel / "service.pid"
 
 
-def test_process_manager_default_state_dir_installed_windows_uses_localappdata(monkeypatch, tmp_path):
+def test_process_manager_default_state_dir_installed_windows_is_the_installed_root(monkeypatch, tmp_path):
+    from pathlib import Path
+
     from modelquad import paths
 
     monkeypatch.setattr(paths, "is_dev_checkout", lambda: False)
@@ -1202,7 +1204,7 @@ def test_process_manager_default_state_dir_installed_windows_uses_localappdata(m
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
 
     manager = ServiceProcessManager()
-    expected = tmp_path / "ModelQuad"
+    expected = Path.home() / ".local" / "share" / "modelquad"
     assert manager.state_dir == expected
     assert manager.pid_path == expected / "service.pid"
 

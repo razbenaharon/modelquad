@@ -563,7 +563,7 @@ def render_state_survey(survey) -> None:
     print(f"State root:    {context.state_root}")
     print(f"Database:      {context.database_path}")
     if context.fallback:
-        print("               (fallback path -- %LOCALAPPDATA% is unset)")
+        print("               (fallback path)")
     print()
 
     rows = []

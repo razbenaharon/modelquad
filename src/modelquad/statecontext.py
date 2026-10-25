@@ -131,15 +131,16 @@ def dev_state_root() -> Path:
 def installed_state_root() -> tuple[Path, bool]:
     """The installed product's state root, and whether it is a fallback.
 
-    ``%LOCALAPPDATA%\\ModelQuad`` on Windows.
+    ``~/.local/share/modelquad`` on every platform. On Windows it was
+    ``%LOCALAPPDATA%\\ModelQuad`` until 2026-10-25, but the Claude desktop app
+    is a packaged (MSIX) app, and Windows redirects what a packaged app and
+    its children write under ``AppData`` to a private copy. The ModelQuad
+    server the desktop app started and the one a terminal Claude Code started
+    then kept two different histories, answer stores and service secrets.
+    The user's home folder outside ``AppData`` is not redirected; Claude Code
+    keeps its own files there too (``~/.claude``, ``~/.local/bin``).
     """
 
-    if sys.platform == "win32":
-        local_appdata = os.environ.get("LOCALAPPDATA")
-        if local_appdata:
-            return Path(local_appdata) / APP_DIR_NAME, False
-        # Never silently produce an unusable path; fall back, but say so.
-        return dev_state_root(), True
     return Path.home() / ".local" / "share" / APP_DIR_NAME.lower(), False
 
 

@@ -137,7 +137,9 @@ To upgrade, close every Claude Code window first (in a terminal session, type
 program: the upgrade then fails halfway and leaves ModelQuad uninstalled until
 you run it again with Claude Code closed.
 
-A plain install keeps its state in `%LOCALAPPDATA%\ModelQuad`.
+A plain install keeps its state in `%USERPROFILE%\.local\share\modelquad`,
+outside `AppData`: Windows gives the Claude desktop app's programs a private
+copy of `AppData`, so a folder there would split in two.
 An editable install (`pip install -e`) is treated as a development checkout
 and keeps its state in `%USERPROFILE%\.modelquad` instead. `modelquad state`
 shows which folder is in use.

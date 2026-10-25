@@ -19,7 +19,7 @@ inference duplicated wherever someone needed the answer.
 ``service/db.py``'s ``DEFAULT_DB_PATH`` and ``service/lifecycle.py``'s
 ``ServiceProcessManager`` state root now resolve through this module (via
 ``db_path()`` / ``state_root()``), so an installed copy keeps its DB,
-pidfile and logs together under ``%LOCALAPPDATA%``. ``config.py``'s
+pidfile and logs together under ``~/.local/share/modelquad``. ``config.py``'s
 ``DEFAULT_SESSIONS_PATH`` is intentionally NOT wired here: ``sessions_path`` is
 config-file-driven (the packaged ``default.yaml`` sets an explicit
 ``~/.modelquad/sessions.json`` that wins the config merge), and
@@ -71,18 +71,9 @@ def state_root() -> Path:
 
     Dev checkout: unchanged from pre-v0.8 behavior, ``~/.modelquad/``.
 
-    Installed (a plain non-editable install) on Windows:
-    ``%LOCALAPPDATA%\\ModelQuad\\`` -- the conventional
-    per-user writable location for an installed Windows application's
-    mutable state, distinct from Program Files (read-only, admin-owned) and
-    from a dev checkout's home-directory dotfile convention. Falls back to
-    the dev-mode path if ``LOCALAPPDATA`` is unset (should not happen on a
-    real Windows install, but never silently produce an unusable path).
-
-    Non-Windows installed fallback: this product targets Windows first (see
-    the v0.8 progress report's productization roadmap); a minimal XDG-ish
-    fallback is provided so the function stays honest rather than raising,
-    but is not the focus of current productization work.
+    Installed (a plain non-editable install): ``~/.local/share/modelquad/``,
+    outside ``AppData``, where Windows redirects the writes of a packaged app
+    such as the Claude desktop app (see ``statecontext.installed_state_root``).
 
     The decision itself now lives in ``statecontext.resolve_state_context()``,
     which resolves the same paths from the same predicates but also records

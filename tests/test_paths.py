@@ -71,13 +71,17 @@ def test_logs_dir_is_under_state_root():
     assert logs_dir() == state_root() / "logs"
 
 
-def test_installed_copy_uses_local_appdata_on_windows(monkeypatch):
+def test_installed_copy_keeps_its_state_outside_appdata_on_windows(monkeypatch):
+    """Windows redirects what the Claude desktop app's programs write under
+    AppData to a private copy, so an installed copy's state lives in the home
+    folder instead, where the desktop app and a terminal see the same files."""
     monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: False)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Someone\AppData\Local")
 
-    assert state_root() == Path(r"C:\Users\Someone\AppData\Local") / "ModelQuad"
-    assert db_path() == Path(r"C:\Users\Someone\AppData\Local") / "ModelQuad" / "modelquad.db"
+    assert state_root() == Path.home() / ".local" / "share" / "modelquad"
+    assert db_path() == Path.home() / ".local" / "share" / "modelquad" / "modelquad.db"
+    assert "AppData" not in state_root().parts
 
 
 def test_non_editable_install_is_not_treated_as_dev_checkout(monkeypatch, tmp_path):
@@ -92,23 +96,21 @@ def test_non_editable_install_is_not_treated_as_dev_checkout(monkeypatch, tmp_pa
     assert is_dev_checkout() is False
 
 
-def test_installed_copy_falls_back_to_dev_path_when_localappdata_unset(monkeypatch):
+def test_installed_copy_does_not_need_localappdata(monkeypatch):
     monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: False)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
 
-    assert state_root() == Path.home() / ".modelquad"
+    assert state_root() == Path.home() / ".local" / "share" / "modelquad"
 
 
 def test_service_db_default_db_path_matches_paths_db_path():
     assert service_db.DEFAULT_DB_PATH == db_path()
 
 
-def test_simulated_installed_windows_db_path_resolves_under_localappdata(monkeypatch):
-    monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: False)
+def test_installed_and_development_state_never_share_a_folder(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Someone\AppData\Local")
-
-    expected_dir = Path(r"C:\Users\Someone\AppData\Local") / "ModelQuad"
-    assert db_path() == expected_dir / "modelquad.db"
-    assert state_root() == expected_dir
+    monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: False)
+    installed = state_root()
+    monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: True)
+    assert state_root() != installed

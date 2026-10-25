@@ -245,14 +245,12 @@ def isolate_worker_recursion_guard(monkeypatch):
     """
 
     monkeypatch.delenv(WORKER_ENV_VAR, raising=False)
-
-
-@pytest.fixture(autouse=True)
-def isolate_claude_code_entrypoint(monkeypatch):
-    """A suite run from the desktop app's Code tab inherits
-    ``CLAUDE_CODE_ENTRYPOINT=claude-desktop``, which makes the handoff take
-    Claude Code's approval card as the answer instead of asking with the form.
-    Cleared for every test; the tests of that path set it themselves."""
+    # Same reason, another variable: a suite run from the desktop app's Code
+    # tab inherits CLAUDE_CODE_ENTRYPOINT=claude-desktop, which makes the
+    # handoff take Claude Code's approval card as the answer instead of asking
+    # with the form. The tests of that path set it themselves. (Kept in this
+    # fixture: a new fixture requesting monkeypatch moves its teardown after
+    # tmp_path cleanup, which then runs with a test's patches still on.)
     monkeypatch.delenv("CLAUDE_CODE_ENTRYPOINT", raising=False)
 
 
@@ -283,15 +281,10 @@ def isolate_home_directory(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(fake_home))
     monkeypatch.setenv("USERPROFILE", str(fake_home))
     monkeypatch.setenv("APPDATA", str(fake_home / "AppData" / "Roaming"))
-    # LOCALAPPDATA matters as much as HOME. paths.state_root() reads it in
-    # *installed* mode, and whether the suite runs in installed mode is not a
-    # property of the test -- it is a property of how this package happened to
-    # be installed. Under an editable install `is_dev_checkout()` is True and
-    # everything resolves under HOME, which is why leaving this unset went
-    # unnoticed; under a non-editable install (what CI does, deliberately)
-    # state_root() escapes to the developer's real %LOCALAPPDATA%. Isolating it
-    # here makes this fixture's promise -- never resolve a real user directory
-    # -- true in both modes.
+    # LOCALAPPDATA is isolated too. The state folder no longer lives under it
+    # (statecontext.installed_state_root), but Codex discovery and the setup
+    # checks still read it, and this fixture's promise is that no test ever
+    # resolves a real user directory.
     monkeypatch.setenv("LOCALAPPDATA", str(fake_home / "AppData" / "Local"))
     # DEFAULT_DB_PATH is resolved from Path.home() once at import time (like
     # DEFAULT_SESSIONS_PATH and DEFAULT_USAGE_DIRECTORY elsewhere), so setting
