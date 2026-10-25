@@ -15,7 +15,10 @@ from modelquad.mcp import server as mcp
 
 
 @pytest.fixture(autouse=True)
-def fresh_widget_store():
+def fresh_widget_store(monkeypatch):
+    # The window path is switched off in the product (handoff_widget.ENABLED);
+    # these tests keep its behaviour honest for the day it is switched on.
+    monkeypatch.setattr(handoff_widget, "ENABLED", True)
     handoff_widget.reset()
     yield
     handoff_widget.reset()
@@ -113,11 +116,31 @@ def test_a_client_that_shows_no_widget_cannot_answer_for_the_user(tmp_path, star
     assert handoff_widget.take(key, 0.0) == ("waiting", None)
 
 
-def test_the_confirm_tool_is_for_the_page_only_and_the_handoff_names_the_page():
+def test_the_confirm_tool_is_for_the_page_only_and_the_handoff_draws_no_window_while_off():
+    """With the window off, the handoff tool carries no UI link, so the desktop
+    app draws no empty "Rendering widget" frame beside its approval card."""
     tools = {tool.name: tool for tool in asyncio.run(mcp.server.list_tools())}
     assert tools["modelquad_handoff_confirm"].meta["ui"]["visibility"] == ["app"]
-    assert tools["modelquad_handoff"].meta["ui"]["resourceUri"] == handoff_widget.URI
+    assert "ui" not in tools["modelquad_handoff"].meta
     assert not (tools["modelquad_handoff_wait"].meta or {}).get("ui")
+
+
+def test_while_the_window_is_off_a_client_that_renders_apps_gets_the_form(tmp_path, started, monkeypatch):
+    monkeypatch.setattr(handoff_widget, "ENABLED", False)
+    asked = []
+
+    async def form(context, params):
+        asked.append(params.message)
+        from mcp import types
+        return types.ElicitResult(action="decline")
+
+    async def run():
+        async with _apps_client(elicitation_callback=form) as client:
+            return (await _handoff(client, tmp_path)).structured_content
+
+    content = asyncio.run(run())
+    assert len(asked) == 1 and content["started"] is False and "pending_id" not in content
+    assert started == []
 
 
 def test_the_page_is_served_as_an_mcp_app():

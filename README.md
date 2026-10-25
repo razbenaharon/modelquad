@@ -92,12 +92,10 @@ Code tab, with differences found in testing (Claude Code 2.1.296, October
   your answer: that prompt lists the files, and only you can click it. If any
   other Claude Code cannot show the form, the handoff starts nothing and
   Claude falls back to asking you in the conversation.
-- **The handoff window.** A Claude Code that renders MCP Apps gets a ModelQuad
-  window instead of the form, with the files and Approve / Decline buttons;
-  Codex starts only after Approve. The desktop app renders the window, but in
-  testing (October 2026) its Approve press never reached ModelQuad, so there
-  the approval prompt stays the answer. `modelquad_doctor` (the MCP tool)
-  says how this session asks.
+- **A handoff window** (the files and Approve / Decline buttons, for a Claude
+  Code that renders MCP Apps) is built but switched off: in testing (October
+  2026) the desktop app drew it empty and its Approve press never reached
+  ModelQuad. `modelquad_doctor` (the MCP tool) says how this session asks.
 - **Progress while Codex works** shows where Claude Code displays MCP progress;
   it was not visible in the desktop app's Code tab.
 

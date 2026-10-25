@@ -28,6 +28,11 @@ import time
 from typing import Any
 
 URI = "ui://modelquad/handoff.html"
+#: Off until a host is shown to deliver the page's Approve press. With it off,
+#: modelquad_handoff carries no ``_meta.ui`` link, so no host draws a window
+#: for it: the desktop app drew an empty "Rendering widget" frame beside its
+#: approval card (live test, 2026-10-25), and its presses never arrived.
+ENABLED = False
 PENDING_SECONDS = 600.0
 MAX_PENDING = 16
 

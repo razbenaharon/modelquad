@@ -1677,7 +1677,7 @@ def _desktop_card_approves(ctx: Context | None) -> bool:
 
 def _shows_handoff_window(ctx: Context | None) -> bool:
     """Whether this session asks with the handoff window (see handoff_widget)."""
-    return _client_shows_apps(ctx) and not _desktop_card_approves(ctx)
+    return handoff_widget.ENABLED and _client_shows_apps(ctx) and not _desktop_card_approves(ctx)
 
 
 def _unseen_answer(answer: str, elapsed: float | None) -> str | None:
@@ -1825,7 +1825,8 @@ def _approval_answer(outcome: Any) -> str:
 
 
 @server.tool(title="Hand a task to Codex", annotations=STARTS_CODEX,
-             meta={"anthropic/requiresUserInteraction": True, "ui": {"resourceUri": handoff_widget.URI}})
+             meta={"anthropic/requiresUserInteraction": True,
+                   **({"ui": {"resourceUri": handoff_widget.URI}} if handoff_widget.ENABLED else {})})
 async def modelquad_handoff(
     task_type: str,
     prompt: str,
