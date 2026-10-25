@@ -186,3 +186,32 @@ def test_in_the_desktop_app_the_card_wins_even_where_the_window_renders(tmp_path
 def test_the_page_says_when_an_answer_did_not_arrive():
     # A refused or failed call is not "no longer open": the request may still be.
     assert "Your answer did not reach ModelQuad" in handoff_widget.HTML
+
+
+def test_approve_covers_the_contents_the_window_showed(tmp_path, monkeypatch):
+    """The delegate call runs after Approve, possibly minutes later; it carries
+    the digests taken when the window showed the files, not fresh ones."""
+    seen = []
+
+    async def fake_delegate(**kwargs):
+        seen.append(mcp._approved_digests.get())
+        return mcp._plain_result({"started": True})
+
+    monkeypatch.setattr(mcp, "modelquad_delegate", fake_delegate)
+    monkeypatch.setattr(mcp, "WIDGET_WAIT_SECONDS", 0.2)
+    (tmp_path / "notes.md").write_bytes(b"hello\n")
+
+    async def run():
+        async with _apps_client() as client:
+            held = (await _handoff(client, tmp_path)).structured_content
+            (tmp_path / "notes.md").write_bytes(b"changed\n")
+            await client.call_tool("modelquad_handoff_confirm",
+                                   {"pending_id": held["pending_id"], "approve": True})
+            return (await client.call_tool("modelquad_handoff_wait",
+                                           {"pending_id": held["pending_id"]})).structured_content
+
+    assert asyncio.run(run()) == {"started": True}
+    from modelquad.execution import noshell
+    (digests,) = seen
+    assert digests["notes.md"] == noshell.sent_entry("notes.md", "hello\n")["sha256"]
+    assert mcp._approved_digests.get() is None

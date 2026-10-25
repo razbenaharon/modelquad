@@ -355,6 +355,11 @@ class CodexExecutor(Executor):
                                                 diagnostics=diagnostics, report=report)
             except noshell.SuppliedContextRefused as refusal:
                 return refused(refusal.reason)
+            # The approval covers the contents as they were when the user
+            # approved; a background job or the handoff window reads later.
+            approved = request.metadata.get("approved_digests")
+            if type(approved) is dict and noshell.changed_since_approval(report, approved):
+                return refused("supplied_file_changed")
             # Only native executables can qualify; no batch launcher can bind a
             # digest to the executable whose feature listing was inspected.
             from ..executable_resolution import admit_executable

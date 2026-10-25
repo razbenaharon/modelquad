@@ -490,3 +490,64 @@ def test_reply_reports_sent_skipped_and_suggests_unsent_names(project):
     mcp._report_files(bare, 'Traceback: File "src/app.py", line 1; see missing/none.py', str(project), [])
     assert bare["suggested_files"] == ["src/app.py"]
     assert "not sent" in bare["suggested_files_note"]
+
+
+# --- The approval covers the contents the user approved ----------------------
+
+def _clean_executor(monkeypatch, synthetic_worker_binary):
+    noshell._QUALIFICATIONS.clear()
+    monkeypatch.setattr(codex, "_probe", lambda executable: "0.160.0")
+
+    def inventory(argv, cwd, env):
+        listing = "\n".join(f"{name} stable {'true' if name == 'unified_exec' else 'false'}"
+                            for name in noshell.DISABLED_FEATURES)
+        return subprocess.CompletedProcess(argv, 0, listing + "\n", "")
+
+    stream = "\n".join(json.dumps(event) for event in (
+        {"type": "thread.started"}, {"type": "turn.started"},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "ok"}},
+        {"type": "turn.completed"})) + "\n"
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stream, ""))
+    return run, codex.CodexExecutor(which=lambda _: synthetic_worker_binary("codex.exe"),
+                                    run=run, inventory=inventory)
+
+
+def _approved_request(project, digests):
+    return ExecutionRequest(
+        provider="codex", task_type=TaskType.REVIEW, working_directory=project, prompt="Review it.",
+        metadata={"supplied_files": ["src/app.py"], "approval": "delegate", "approved_digests": digests})
+
+
+def test_a_file_changed_after_approval_is_not_sent(project, monkeypatch, synthetic_worker_binary):
+    digests = noshell.approved_digests("Review it.", project, ["src/app.py"])
+    (project / "src" / "app.py").write_text("print('changed')\n", encoding="utf-8")
+    run, executor = _clean_executor(monkeypatch, synthetic_worker_binary)
+    result = executor.execute(_approved_request(project, digests))
+    run.assert_not_called()
+    assert result.task_status_reason == "supplied_file_changed"
+    assert "changed after the user approved" in result.error
+
+
+def test_an_unchanged_file_is_sent_as_approved(project, monkeypatch, synthetic_worker_binary):
+    digests = noshell.approved_digests("Review it.", project, ["src/app.py"])
+    run, executor = _clean_executor(monkeypatch, synthetic_worker_binary)
+    result = executor.execute(_approved_request(project, digests))
+    run.assert_called_once()
+    assert [item["sha256"] for item in result.metadata["file_audit"]["sent"]] == [digests["src/app.py"]]
+
+
+def test_a_file_the_approval_did_not_send_is_not_sent_later(project, monkeypatch, synthetic_worker_binary):
+    # At approval the file was withheld (an empty record); now it would be sent.
+    run, executor = _clean_executor(monkeypatch, synthetic_worker_binary)
+    result = executor.execute(_approved_request(project, {}))
+    run.assert_not_called()
+    assert result.task_status_reason == "supplied_file_changed"
+
+
+def test_approved_digests_match_the_audit_of_the_text_as_sent(project):
+    digests = noshell.approved_digests("task", project, ["src/app.py"])
+    report = {}
+    noshell.supplied_prompt("task", project, files=["src/app.py"], completion_protocol=True, report=report)
+    assert digests == {item["path"]: item["sha256"] for item in report["sent"]}
+    assert noshell.changed_since_approval(report, digests) is False
+    assert noshell.changed_since_approval(report, {"src/app.py": "0" * 16}) is True

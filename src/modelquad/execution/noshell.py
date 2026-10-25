@@ -132,6 +132,9 @@ REFUSAL_MESSAGES = {
     "codex_executable_unverified": (
         "The Codex executable could not be read, or it changed while ModelQuad was checking "
         "it. Try again."),
+    "supplied_file_changed": (
+        "A file changed after the user approved sending it, so nothing was sent. Ask again "
+        "to send the current version."),
     UNAVAILABLE: (
         "The no-shell worker could not be started within its time budget, or its event "
         "stream could not be verified as tool-free, so no answer was returned."),
@@ -1034,6 +1037,26 @@ def render_supplied(screened, pack, instruction, *, required=(), withheld=(),
         report["skipped"] = [{"path": name, "reason": reason}
                              for name, reason in (*withheld, *pack.skipped, *dropped)]
     return rendered
+
+
+def approved_digests(prompt, workspace, files):
+    """What the user approved, by content: {path: digest prefix} of each file a
+    run would send now, or None when the files cannot be sent at all (the run
+    refuses on its own then). The digest is :func:`sent_entry`'s, of the text
+    as sent, so it compares directly with the audit of the real run."""
+    report = {}
+    try:
+        supplied_prompt(prompt, workspace, files=files, completion_protocol=True, report=report)
+    except SuppliedContextRefused:
+        return None
+    return {item["path"]: item["sha256"] for item in report.get("sent", ())}
+
+
+def changed_since_approval(report, approved):
+    """True when the run would send a file it did not send at approval, or a
+    different text of one. A file now withheld by the rules sends less, which
+    the approval still covers."""
+    return any(approved.get(item["path"]) != item["sha256"] for item in report.get("sent", ()))
 
 
 def sent_entry(name, text):

@@ -1075,6 +1075,15 @@ def _delegate_after_policy(
         # prompt. The executor attaches exactly these and records what it sent.
         call_args["metadata"] = {"supplied_files": list(supplied_files),
                                  "approval": "handoff" if approval == "handoff" else "delegate"}
+        # Bind the approval to the contents as they are now, right after the
+        # user approved (or as the handoff window showed them). The executor
+        # refuses if a file it would send has changed since.
+        from ..execution import noshell
+        digests = _approved_digests.get()
+        if digests is None:
+            digests = noshell.approved_digests(effective_prompt, working_directory, list(supplied_files))
+        if digests is not None:
+            call_args["metadata"]["approved_digests"] = dict(digests)
     runner_enabled = service_history.get_job_runner_enabled(db_path)
     if runner_enabled:
         from ..jobs import service_client
@@ -1363,6 +1372,9 @@ def modelquad_status() -> dict:
 #: Which approval prompt led to a delegation: the handoff form sets it for
 #: the one delegate call it makes. Never a tool argument the model can set.
 _approval_route: ContextVar[str] = ContextVar("modelquad_approval_route", default="delegate")
+#: {path: digest} of the files as the handoff window showed them, when the
+#: approval came from the window; otherwise None and the call takes them itself.
+_approved_digests: ContextVar[dict | None] = ContextVar("modelquad_approved_digests", default=None)
 
 #: Codex plan types (the app-server quota read's ``planType``) by account kind.
 _PERSONAL_PLANS = frozenset({"free", "go", "plus", "pro", "prolite"})
@@ -1894,12 +1906,16 @@ WIDGET_WAIT_SECONDS = 120.0
 
 def _widget_pending(**arguments: Any) -> dict:
     """Hold a handoff for the approval page and say what Claude does next."""
+    from ..execution import noshell
     entries, skipped = _files_to_send(arguments["working_directory"], arguments["files"] or [])
+    # The window shows the files as they are now; Approve covers these contents.
+    digests = noshell.approved_digests(arguments["prompt"], arguments["working_directory"],
+                                       arguments["files"] or [])
     return {
         "started": False,
         "approved": False,
         "approval": "widget_pending",
-        "pending_id": handoff_widget.hold(arguments),
+        "pending_id": handoff_widget.hold({**arguments, "approved_digests": digests or {}}),
         "sent_files_preview": entries,
         "not_sent": skipped,
         "codex_account": _codex_account_line(),
@@ -1951,10 +1967,13 @@ async def modelquad_handoff_wait(pending_id: str, ctx: Context | None = None) ->
     refusal = _handoff_refusal(arguments["task_type"], arguments["capsule"], ctx)
     if refusal is not None:
         return _plain_result(refusal)
+    digests = arguments.pop("approved_digests", None)
     token = _approval_route.set("handoff")
+    bound = _approved_digests.set(digests if type(digests) is dict else {})
     try:
         return await modelquad_delegate(ctx=ctx, **arguments)
     finally:
+        _approved_digests.reset(bound)
         _approval_route.reset(token)
 
 

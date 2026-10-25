@@ -653,7 +653,7 @@ NOSHELL_PRELAUNCH_REFUSALS: frozenset[str] = frozenset({
     "task_text_secret", "supplied_file_secret", "supplied_file_missing",
     "supplied_files_over_limit", "supplied_file_unavailable", "relevant_files_ambiguous",
     "rendered_prompt_cap", "codex_shim_only", "codex_version_unsupported",
-    "codex_feature_unverified", "codex_executable_unverified",
+    "codex_feature_unverified", "codex_executable_unverified", "supplied_file_changed",
 })
 
 
