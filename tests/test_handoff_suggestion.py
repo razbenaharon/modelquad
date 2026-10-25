@@ -602,3 +602,12 @@ def test_a_client_that_declares_no_forms_gets_the_plain_fallback(low_claude_worl
     assert result.is_error is False
     assert content["started"] is False and content["approval"] == "unavailable"
     assert "could not show ModelQuad's handoff form" in content["next_step"]
+
+
+def test_the_handoff_form_lists_the_files_before_the_task(tmp_path):
+    """The Claude Code terminal folds a long form after its first lines (live
+    test, 2026-10-25), so what is sent must come before the task text."""
+    (tmp_path / "notes.md").write_bytes(b"hello\n")
+    lines = mcp._handoff_form_text("review", "word " * 200, str(tmp_path), ["notes.md"]).splitlines()
+    assert lines[:3] == ["Hand this task to Codex?", "Files to send (1, 6 bytes):", "- notes.md (6 bytes)"]
+    assert lines[3].startswith("Codex account:") and lines[-1].startswith("Task preview: ")

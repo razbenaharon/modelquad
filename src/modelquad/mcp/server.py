@@ -1702,16 +1702,19 @@ def _handoff_refusal(task_type: str, capsule: dict | None, ctx: Context | None) 
 def _handoff_form_text(task_type: str, prompt: str, working_directory: str, files: list[str]) -> str:
     """The handoff form's text. It must read the same on every round of a
     2026-07-28 call (a changed question is asked again), so it carries no
-    live quota numbers: the task, the files with sizes, and the account kind."""
+    live quota numbers: the files with sizes, the account kind, and the task.
+
+    The files come first: the Claude Code terminal shows only the first few
+    lines of a form and folds the rest behind "(+N more lines)"."""
     folder = Path(working_directory).name or working_directory
     preview = " ".join(prompt.split())[:300]
     return "\n".join((
         "Hand this task to Codex?",
+        _files_preview(working_directory, files),
+        _codex_account_line(),
         f"Task: {task_type} in {folder}. Codex runs it under your own login. "
         "Nothing starts unless you tick the box and accept.",
         f"Task preview: {preview}",
-        _files_preview(working_directory, files),
-        _codex_account_line(),
     ))
 
 

@@ -434,9 +434,9 @@ def test_handoff_form_lists_files_bytes_skips_and_account(project, isolate_usage
     size = (project / "src" / "app.py").stat().st_size
     assert f"Files to send (1, {size} bytes):\n- src/app.py ({size} bytes)" in message
     assert "Not sent: config/secrets.txt (denied_by_claude_settings)" in message
-    assert message.endswith("Codex account: personal ChatGPT plan. If this is work code, check you may "
-                            "send it to a personal account.")
-    assert "plus" not in message.split("Codex account:")[1]
+    assert ("Codex account: personal ChatGPT plan. If this is work code, check you may "
+            "send it to a personal account.") in message.splitlines()
+    assert "plus" not in message.split("Codex account:")[1].split("\nTask:")[0]
     assert SECRET not in message
 
 
