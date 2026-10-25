@@ -757,6 +757,26 @@ def _capability_matrix_check(plugin) -> DoctorCheck | None:
     return DoctorCheck(f"{plugin.id} worker capabilities", status, "; ".join(parts) + ".")
 
 
+def _codex_global_instructions_check() -> DoctorCheck:
+    """Whether Codex adds the user's own global instructions to every request.
+
+    Codex puts ``CODEX_HOME/AGENTS.md`` (or ``AGENTS.override.md``) into each
+    request, even under ``--ignore-user-config``, and no setting stops it
+    (local test with a recording server, Codex 0.164.0, 2026-10-25). Only the
+    file's existence is read, never its contents."""
+    from .codex_config import config_path
+
+    home = config_path().parent
+    present = [name for name in ("AGENTS.override.md", "AGENTS.md") if (home / name).is_file()]
+    name = "codex global instructions"
+    if not present:
+        return DoctorCheck(name, CheckStatus.OK, "No global Codex instructions file; none is added to requests.")
+    return DoctorCheck(
+        name, CheckStatus.WARN,
+        f"Codex adds your global instructions file ({present[0]} in your Codex folder) to every "
+        "request ModelQuad sends, so OpenAI receives it too. Remove anything there you do not want sent.")
+
+
 def _codex_shell_check(windows_path: str | None) -> DoctorCheck:
     """Structural (no subprocess spawn) Windows shell-availability check.
 
@@ -907,6 +927,7 @@ def run_doctor(
                 stale = _codex_stale_path_check(which)
                 if stale is not None:
                     worker_cli_checks.append(stale)
+                capability_checks.append(_codex_global_instructions_check())
         for host in plugin.host_adapters:
             configured_target = directory_overrides.get(host.id)
             if configured_target is None and not integrations_enabled:

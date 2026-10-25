@@ -159,7 +159,11 @@ starts the Codex CLI.
    stream shows a command, a file change, an MCP tool call or a collaboration
    call, the answer is withheld (`tests/test_noshell_workers.py`). A
    `codex exec` run carries Codex's own client identity; ModelQuad adds none.
-   What Codex stores on your computer is up to Codex.
+   What Codex stores on your computer is up to Codex. Codex also adds its own
+   instructions to the request, including your global instructions file
+   (`AGENTS.md` or `AGENTS.override.md` in your Codex folder) if you have one:
+   `--ignore-user-config` does not keep it out, and no setting does (tested
+   with Codex 0.164.0). `modelquad doctor` says whether you have one.
 11. **What you are told.** The reply lists `sent_files` (each path, its size
     and the first 16 hex characters of the SHA-256 of the text as sent, after
     redaction) and `skipped_files` with their reasons. The same metadata, and

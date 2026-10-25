@@ -587,3 +587,17 @@ def test_a_relative_pythonpath_entry_is_flagged(value, warned):
     assert (check is not None) is warned
     if warned:
         assert check.status is CheckStatus.WARN and "relative or empty" in check.detail
+
+
+def test_codex_global_instructions_are_reported_without_reading_them(tmp_path, monkeypatch):
+    """Codex adds CODEX_HOME/AGENTS.md to every request, even under
+    --ignore-user-config (local recording-server test, Codex 0.164.0), so the
+    doctor says when one exists. Only its existence is checked."""
+    from modelquad.doctor import CheckStatus, _codex_global_instructions_check
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    assert _codex_global_instructions_check().status is CheckStatus.OK
+    (tmp_path / "AGENTS.md").write_text("private: do not read me", encoding="utf-8")
+    check = _codex_global_instructions_check()
+    assert check.status is CheckStatus.WARN
+    assert "AGENTS.md" in check.detail and "private" not in check.detail
