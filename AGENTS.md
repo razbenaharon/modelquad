@@ -95,7 +95,11 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
    `modelquad_handoff` carry `anthropic/requiresUserInteraction`, so Claude
    Code shows its approval prompt for each call
    (`tests/test_oss_export_surface.py`). ModelQuad installs no permission rule
-   for its tools, and quota never starts work.
+   for its tools, and quota never starts work. `modelquad_handoff_wait` starts
+   Codex only after the handoff window's Approve button, whose tool
+   (`modelquad_handoff_confirm`) is app-only, so a host keeps it from the
+   model, and refuses in a client that renders no window
+   (`tests/test_handoff_widget.py`).
 8. **Codex stays read-only and tool-less.** Only review, exploration and
    architecture run. Codex runs in an empty temporary folder with
    `--sandbox read-only` and `--ignore-user-config` and its tools disabled;

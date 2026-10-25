@@ -14,9 +14,13 @@ def test_release_tools_are_small_and_delegation_requires_interaction():
         "modelquad_job_wait", "modelquad_job_acknowledge", "modelquad_job_stop",
         "modelquad_job_list_pending", "modelquad_doctor", "modelquad_usage_refresh",
         "modelquad_activity", "modelquad_activity_detail",
+        "modelquad_handoff_confirm", "modelquad_handoff_wait",
     }
     for name in ("modelquad_delegate", "modelquad_handoff"):
-        assert tools[name].meta == {"anthropic/requiresUserInteraction": True}
+        assert tools[name].meta["anthropic/requiresUserInteraction"] is True
+    # The wait tool starts Codex only after the approval page's button, which
+    # only the page can press: the confirm tool is kept from the model.
+    assert tools["modelquad_handoff_confirm"].meta["ui"]["visibility"] == ["app"]
 
 
 def test_every_tool_has_a_title_and_only_pure_reads_are_marked_read_only():
@@ -30,7 +34,7 @@ def test_every_tool_has_a_title_and_only_pure_reads_are_marked_read_only():
         "modelquad_job_list_pending",
     }
     # A retry of a Codex call would send the code again and spend usage.
-    for name in ("modelquad_delegate", "modelquad_handoff"):
+    for name in ("modelquad_delegate", "modelquad_handoff", "modelquad_handoff_wait"):
         hints = tools[name].annotations
         assert hints.read_only_hint is False and hints.idempotent_hint is False
         assert hints.open_world_hint is True

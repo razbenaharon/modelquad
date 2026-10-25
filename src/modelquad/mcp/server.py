@@ -127,8 +127,16 @@ READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_wo
 STARTS_CODEX = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
                                open_world_hint=True)
 
+from mcp.server.apps import Apps
+from . import handoff_widget
+
+# The handoff approval page, for a client that renders MCP Apps (see handoff_widget).
+_apps = Apps()
+_apps.add_html_resource(handoff_widget.URI, handoff_widget.HTML, name="modelquad-handoff",
+                        title="Hand a task to Codex")
+
 server = WorkerGuardMCPServer(MCP_SERVER_NAME, version=current_build_info().identity,
-                              instructions=_server_instructions())
+                              instructions=_server_instructions(), extensions=[_apps])
 
 # Where every tool reads its configuration and its quota snapshots. The model
 # names neither: a tool that took a settings file let the Host's
@@ -1407,8 +1415,9 @@ def _checked_files(files: Any) -> list[str]:
     return list(files)
 
 
-def _files_preview(working_directory: str, files: list[str]) -> str:
-    """The files a handoff would send, with sizes, for the approval form.
+def _files_to_send(working_directory: str, files: list[str]) -> tuple[list[dict], list[str]]:
+    """The files a handoff would send, as {path, bytes} (bytes None when not
+    found), and the names it would not send with why.
 
     Applies the same read rules as the worker (Claude Code Read deny rules,
     Git, ``.modelquadignore``) and reads only file sizes, never contents.
@@ -1416,8 +1425,6 @@ def _files_preview(working_directory: str, files: list[str]) -> str:
     from ..execution import file_rules, noshell
 
     names = noshell.explicit_names(files, working_directory)
-    if not names:
-        return "Files to send: none (only the task text)."
     valid, invalid = [], []
     for name in dict.fromkeys(names):
         try:
@@ -1426,18 +1433,27 @@ def _files_preview(working_directory: str, files: list[str]) -> str:
             invalid.append(name)
     allowed, withheld = file_rules.screen(working_directory, valid)
     root = Path(working_directory)
-    rows, total = [], 0
+    entries = []
     for name in allowed:
         try:
             size = root.joinpath(*name.split("/")).lstat().st_size
         except OSError:
-            rows.append(f"- {name} (not found)")
-            continue
-        total += size
-        rows.append(f"- {name} ({size} bytes)")
-    lines = [f"Files to send ({len(allowed)}, {total} bytes):", *rows]
+            size = None
+        entries.append({"path": name, "bytes": size})
     skipped = [f"{name} ({reason})" for name, reason in withheld]
     skipped += [f"{name[:80]} (invalid path)" for name in invalid]
+    return entries, skipped
+
+
+def _files_preview(working_directory: str, files: list[str]) -> str:
+    """The files a handoff would send, with sizes, for the approval form."""
+    entries, skipped = _files_to_send(working_directory, files)
+    if not entries and not skipped:
+        return "Files to send: none (only the task text)."
+    rows = [f"- {entry['path']} (not found)" if entry["bytes"] is None
+            else f"- {entry['path']} ({entry['bytes']} bytes)" for entry in entries]
+    total = sum(entry["bytes"] or 0 for entry in entries)
+    lines = [f"Files to send ({len(entries)}, {total} bytes):", *rows]
     if skipped:
         lines.append("Not sent: " + ", ".join(skipped))
     return "\n".join(lines)
@@ -1751,6 +1767,8 @@ def _handoff_question(task_type: str, prompt: str, working_directory: str, files
         checked = _checked_files(files)
     except ToolError:
         return "not_asked"
+    if _client_shows_apps(ctx):
+        return "widget"
     if _desktop_card_approves(ctx):
         return "card_approved"
     # A client that declared no forms cannot answer one; asking would end the
@@ -1773,7 +1791,8 @@ def _approval_answer(outcome: Any) -> str:
     return "decline" if action == "decline" else "cancel"
 
 
-@server.tool(title="Hand a task to Codex", annotations=STARTS_CODEX, meta={"anthropic/requiresUserInteraction": True})
+@server.tool(title="Hand a task to Codex", annotations=STARTS_CODEX,
+             meta={"anthropic/requiresUserInteraction": True, "ui": {"resourceUri": handoff_widget.URI}})
 async def modelquad_handoff(
     task_type: str,
     prompt: str,
@@ -1797,6 +1816,10 @@ async def modelquad_handoff(
         return _plain_result(refusal)
     files = _checked_files(files)
     _message, suggestion = _handoff_message(task_type, working_directory)
+    if getattr(approval, "data", None) == "widget" and _client_shows_apps(ctx):
+        return _plain_result(_widget_pending(
+            task_type=task_type, prompt=prompt, working_directory=working_directory, timeout=timeout,
+            model=model, reasoning_effort=reasoning_effort, capsule=capsule, files=files))
     # Only the framework's resolver can say so, and only when the check still
     # holds here: a direct call never passed Claude Code's approval card.
     card = getattr(approval, "data", None) == "card_approved" and _desktop_card_approves(ctx)
@@ -1840,6 +1863,70 @@ async def modelquad_handoff(
             capsule=capsule,
             files=files,
         )
+    finally:
+        _approval_route.reset(token)
+
+
+#: The longest one modelquad_handoff_wait call waits for the page's answer.
+WIDGET_WAIT_SECONDS = 120.0
+
+
+def _widget_pending(**arguments: Any) -> dict:
+    """Hold a handoff for the approval page and say what Claude does next."""
+    entries, skipped = _files_to_send(arguments["working_directory"], arguments["files"] or [])
+    return {
+        "started": False,
+        "approved": False,
+        "approval": "widget_pending",
+        "pending_id": handoff_widget.hold(arguments),
+        "sent_files_preview": entries,
+        "not_sent": skipped,
+        "codex_account": _codex_account_line(),
+        "task_preview": " ".join(arguments["prompt"].split())[:300],
+        "next_step": ("ModelQuad shows the user a window with the files and Approve / Decline buttons. "
+                      "Tell the user to answer there, then call modelquad_handoff_wait with this "
+                      "pending_id. Nothing starts unless the user presses Approve."),
+    }
+
+
+@server.tool(title="Answer a handoff", annotations=STARTS_CODEX,
+             meta={"ui": {"resourceUri": handoff_widget.URI, "visibility": ["app"]}})
+def modelquad_handoff_confirm(pending_id: str, approve: bool, ctx: Context | None = None) -> CallToolResult:
+    """The approval page's Approve or Decline button. Only the page calls this: its
+    visibility is ["app"], so a host keeps it out of the model's tools."""
+    if _worker_refused():
+        return _plain_result({"refused": True, "recorded": False,
+                              "reason": f"{_worker_refusal_prefix()} a delegated worker must never hand off work"})
+    if not _client_shows_apps(ctx):
+        # Only a client that renders the page also keeps this tool from the
+        # model. Anywhere else an answer here could be Claude's own.
+        return _plain_result({"recorded": False, "outcome": "client_shows_no_widget"})
+    outcome = handoff_widget.decide(pending_id, bool(approve))
+    return _plain_result({"recorded": outcome == "recorded", "outcome": outcome})
+
+
+@server.tool(title="Wait for a handoff answer", annotations=STARTS_CODEX)
+async def modelquad_handoff_wait(pending_id: str, ctx: Context | None = None) -> CallToolResult:
+    """After modelquad_handoff showed its approval window: wait for the user's answer and,
+    only if they pressed Approve, run the task in Codex and return its answer."""
+    if _worker_refused():
+        return _plain_result({"refused": True, "started": False,
+                              "reason": f"{_worker_refusal_prefix()} a delegated worker must never hand off work"})
+    decision, arguments = await anyio.to_thread.run_sync(
+        handoff_widget.take, pending_id, WIDGET_WAIT_SECONDS, abandon_on_cancel=True)
+    if decision == "waiting":
+        return _plain_result({"started": False, "approval": "waiting", "pending_id": pending_id,
+                              "next_step": "The user has not answered yet. Call modelquad_handoff_wait again."})
+    if decision != "approve" or arguments is None:
+        return _plain_result({"started": False, "approved": False, "approval": decision,
+                              "next_step": "Nothing started. Start nothing unless the user asks again."})
+    # The checks run again after the answer, as in modelquad_handoff.
+    refusal = _handoff_refusal(arguments["task_type"], arguments["capsule"], ctx)
+    if refusal is not None:
+        return _plain_result(refusal)
+    token = _approval_route.set("handoff")
+    try:
+        return await modelquad_delegate(ctx=ctx, **arguments)
     finally:
         _approval_route.reset(token)
 
@@ -2185,13 +2272,22 @@ def modelquad_delegation_status(
 
 
 @server.tool(title="ModelQuad health check", annotations=READ_ONLY)
-def modelquad_doctor() -> dict:
-    """Return the same diagnostic report as the CLI doctor command."""
+def modelquad_doctor(ctx: Context | None = None) -> dict:
+    """Return the same diagnostic report as the CLI doctor command, plus how this
+    session's Claude Code asks before a handoff."""
     config = load_config(CONFIG_PATH)
-    return run_doctor(
+    report = run_doctor(
         config,
         usage_directory=Path(USAGE_DIRECTORY) if USAGE_DIRECTORY else None,
     ).to_dict()
+    if _client_shows_apps(ctx):
+        approval = "window"  # the handoff window, with Approve / Decline
+    elif _desktop_card_approves(ctx):
+        approval = "approval_card"  # the desktop app: Claude Code's own prompt is the answer
+    else:
+        approval = "form"
+    report["this_session"] = {"handoff_window_shown": approval == "window", "handoff_approval": approval}
+    return report
 
 
 @server.tool(title="Refresh quota readings")
