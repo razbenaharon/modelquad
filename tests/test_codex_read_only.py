@@ -225,3 +225,21 @@ def test_an_interrupted_read_only_run_says_only_that_it_may_still_run(confirmed)
 
 def test_the_read_only_set_has_one_definition():
     assert codex_module.READ_ONLY_TASK_TYPES is base_module.READ_ONLY_TASK_TYPES
+
+
+@pytest.mark.parametrize("name", [
+    "NPM_TOKEN", "HF_TOKEN", "GITLAB_TOKEN", "SLACK_BOT_TOKEN", "DATABASE_URL", "POSTGRES_DATABASE_URL",
+    "SENTRY_DSN", "GOOGLE_APPLICATION_CREDENTIALS", "STRIPE_SECRET_KEY", "MY_SERVICE_PASSWORD",
+    "MAILGUN_API_KEY", "DEPLOY_PRIVATE_KEY", "VAULT_TOKEN_FILE", "SOME_APIKEY", "DB_PASSWD",
+])
+def test_secret_shaped_names_of_any_service_are_removed(name):
+    assert codex_module.worker_environment({name: "x"}) == {}
+
+
+@pytest.mark.parametrize("name", [
+    "OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY", "CODEX_HOME", "PATH", "SystemRoot", "TEMP",
+    "USERPROFILE", "LOCALAPPDATA", "HTTPS_PROXY", "NO_PROXY", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
+    "REQUESTS_CA_BUNDLE", "ComSpec", "LANG",
+])
+def test_what_codex_needs_still_passes(name):
+    assert codex_module.worker_environment({name: "x"}) == {name: "x"}

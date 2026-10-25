@@ -142,9 +142,15 @@ starts the Codex CLI.
    `CLAUDE_CODE_OAUTH_TOKEN` and other `CLAUDE_CODE_*TOKEN*` variables,
    `GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`,
    `GITHUB_ENTERPRISE_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
-   and `AZURE_*` secrets, passwords, keys, tokens and connection strings.
-   `OPENAI_API_KEY` and `CODEX_API_KEY` stay, because they are a way to sign
-   Codex itself in. ModelQuad adds `MODELQUAD_WORKER=1`.
+   `AZURE_*` secrets, passwords, keys, tokens and connection strings,
+   `GOOGLE_APPLICATION_CREDENTIALS`, `DATABASE_URL`, and any variable whose
+   name looks like a secret (it ends in `TOKEN`, `API_KEY` or `DSN`, or
+   contains `SECRET`, `PASSWORD`, `PRIVATE_KEY`, `ACCESS_KEY`, `CREDENTIALS`
+   or `CONNECTION_STRING`). Every `OPENAI_*` and `CODEX_*` variable stays,
+   because `OPENAI_API_KEY` and `CODEX_API_KEY` are a way to sign Codex itself
+   in. ModelQuad adds `MODELQUAD_WORKER=1`. The `codex --version` and
+   `codex features list` checks run with the same environment, in an empty
+   temporary folder.
 10. **Codex sends the input to OpenAI** under your account and returns its
    answer as a stream of JSON events. ModelQuad checks every event; if the
    stream shows a command, a file change, an MCP tool call or a collaboration

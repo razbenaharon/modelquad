@@ -50,16 +50,21 @@ from .base import (
 VALID_SANDBOX_MODES = frozenset({"read-only"})
 
 #: Credentials of other services, removed from the environment a Codex worker
-#: (and its feature probe) inherits. Everything else passes through: PATH,
-#: proxies, certificates, CODEX_HOME, locale. OPENAI_API_KEY and CODEX_API_KEY
-#: stay because they are how the user chose to sign Codex itself in.
-#: Patterns, matched case-insensitively as Windows names are.
+#: (and its probes) inherits: named services, then any name shaped like a
+#: secret. Everything else passes through: PATH, proxies, certificates,
+#: CODEX_HOME, locale. Patterns, matched case-insensitively as Windows names are.
 WORKER_ENV_EXCLUDED = (
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_*TOKEN*",
     "GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
     "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
     "AZURE_*SECRET*", "AZURE_*PASSWORD*", "AZURE_*KEY", "AZURE_*TOKEN*", "AZURE_*CONNECTION_STRING*",
+    "GOOGLE_APPLICATION_CREDENTIALS", "DATABASE_URL", "*_DATABASE_URL", "*_DSN",
+    "*TOKEN", "*TOKEN_*", "*SECRET*", "*PASSWORD*", "*PASSWD*", "*API_KEY", "*APIKEY",
+    "*PRIVATE_KEY*", "*ACCESS_KEY*", "*CREDENTIALS*", "*CONNECTION_STRING*",
 )
+#: Kept whatever the patterns above say: how the user chose to sign Codex
+#: itself in (OPENAI_API_KEY, CODEX_API_KEY) and Codex's own settings.
+WORKER_ENV_KEPT = ("OPENAI_*", "CODEX_*")
 
 
 def worker_environment(environ: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -67,7 +72,8 @@ def worker_environment(environ: Mapping[str, str] | None = None) -> dict[str, st
     source = os.environ if environ is None else environ
     return {
         key: value for key, value in source.items()
-        if not any(fnmatch.fnmatchcase(key.upper(), pattern) for pattern in WORKER_ENV_EXCLUDED)
+        if any(fnmatch.fnmatchcase(key.upper(), pattern) for pattern in WORKER_ENV_KEPT)
+        or not any(fnmatch.fnmatchcase(key.upper(), pattern) for pattern in WORKER_ENV_EXCLUDED)
     }
 
 
