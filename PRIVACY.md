@@ -107,14 +107,17 @@ starts the Codex CLI.
      2 seconds.
    - The whole input, task and files together, is capped at 192 KiB; if the
      listed files do not fit, the call is refused.
-5. **Credential files are skipped**, whatever the request says: names that
+5. **Credential files are never sent**, whatever the request says. Listing
+   one refuses the whole call before Codex starts; nothing is sent. This
+   covers names that
    start with `.env`, `auth.json`, `credentials`, `credentials.json`,
    `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pypirc`, `.netrc`, `_netrc`,
    `.git-credentials`, `pip.conf`, `pip.ini`, `nuget.config`, `kubeconfig`,
    `application_default_credentials.json`, files ending in `.pem`, `.key`,
    `.pfx` or `.p12`, anything inside a `.codex`, `.claude`, `.aws`, `.ssh`,
    `.agents`, `.azure`, `.kube` or `gcloud` folder, and paths that themselves
-   contain a credential. A file named `PROJECT_NOTES.md` is not sent either.
+   contain a credential. A file named `PROJECT_NOTES.md` is not sent either;
+   it is skipped and the call goes on without it.
 6. **Secrets inside files** are screened like the task text. A private key or
    a recognizable access token in a listed file refuses the call. Other secret-looking values become `<credential>`. In
    configuration and text files (`.json`, `.yaml`, `.toml`, `.ini`, `.md`,
@@ -163,6 +166,11 @@ starts the Codex CLI.
     whether you approved through the delegate prompt or the handoff form, is
     kept in the history (see [The history database](#the-history-database));
     never the contents.
+12. **What you approved is what is sent.** Right after you approve (or when
+    the handoff window shows the files), ModelQuad takes the same digest of
+    each file it would send. If, when Codex is about to start, a file's text
+    differs or a file not sent then would be sent now, the call is refused
+    and nothing is sent.
 
 #### Quota reads
 
