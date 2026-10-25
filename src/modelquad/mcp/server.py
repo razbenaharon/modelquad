@@ -1594,6 +1594,40 @@ def _plain_result(payload: dict) -> CallToolResult:
                           structured_content=payload)
 
 
+#: No person reads the handoff form, ticks its box and answers this fast. The
+#: desktop app's Code tab answers a form it never shows ("print mode") in
+#: about 0.1 s; such an answer is the client's, not the user's.
+MIN_HUMAN_ANSWER_SECONDS = 1.0
+
+#: When each request sent its form on a pre-2026-07-28 connection, keyed by
+#: request id. The resolver stamps it; the tool body pops it.
+_HANDOFF_ASKED_AT: dict[Any, float] = {}
+
+
+def _request_key(ctx: Context | None) -> Any:
+    """This request's id, or None outside a request (the SDK raises there)."""
+    try:
+        return ctx.request_id if ctx is not None else None
+    except (AttributeError, ValueError):
+        return None
+
+
+def _form_rounds(ctx: Context | None) -> bool:
+    """True when the form goes out as an input-required round (2026-07-28 and
+    later), which comes back in a later request, so no single request can
+    time the answer."""
+    version = getattr(ctx, "protocol_version", None) if ctx is not None else None
+    return isinstance(version, str) and version >= "2026-07-28"
+
+
+def _unseen_answer(answer: str, elapsed: float | None) -> str | None:
+    """Why an answer counts as the form never shown, or None when it stands."""
+    if answer in ("accept", "decline", "cancel") and elapsed is not None \
+            and elapsed < MIN_HUMAN_ANSWER_SECONDS:
+        return "answered_without_user"
+    return None
+
+
 async def _elicit_handoff(ctx: Context | None, message: str) -> tuple[str, str | None]:
     """Ask the user through MCP elicitation (form mode).
 
@@ -1605,6 +1639,7 @@ async def _elicit_handoff(ctx: Context | None, message: str) -> tuple[str, str |
     """
     if ctx is None:
         return "unavailable", "no_request_context"
+    asked = time.monotonic()
     try:
         answer = await ctx.elicit(message=message, schema=HandoffApproval)
     except Exception as error:  # noqa: BLE001 - a client without elicitation, or a malformed answer
@@ -1612,8 +1647,11 @@ async def _elicit_handoff(ctx: Context | None, message: str) -> tuple[str, str |
     action = getattr(answer, "action", None)
     if action == "accept":
         data = getattr(answer, "data", None)
-        return ("accept" if getattr(data, "hand_off", False) is True else "decline"), None
-    return ("decline" if action == "decline" else "cancel"), None
+        result = "accept" if getattr(data, "hand_off", False) is True else "decline"
+    else:
+        result = "decline" if action == "decline" else "cancel"
+    unseen = _unseen_answer(result, time.monotonic() - asked)
+    return ("unavailable", unseen) if unseen else (result, None)
 
 
 async def _ask_handoff_approval(ctx: Context | None, message: str) -> str:
@@ -1694,6 +1732,9 @@ def _handoff_question(task_type: str, prompt: str, working_directory: str, files
     capabilities = getattr(ctx, "client_capabilities", None)
     if getattr(capabilities, "elicitation", None) is None:
         return "not_asked"
+    if not _form_rounds(ctx):
+        # The framework sends the form right after this returns.
+        _HANDOFF_ASKED_AT[_request_key(ctx)] = time.monotonic()
     return Elicit(_handoff_form_text(task_type, prompt, working_directory, checked), HandoffApproval)
 
 
@@ -1722,6 +1763,7 @@ async def modelquad_handoff(
     """Ask the user, in a form listing the files and their total size, before handing a
     read-only task to Codex. Only the files in `files` (paths relative to working_directory,
     at most 32) are sent; a path named only in the task text is not."""
+    asked_at = _HANDOFF_ASKED_AT.pop(_request_key(ctx), None)
     # The checks run again here, after the user answered: an answer never
     # outlives a pause, a disconnect or a refusal that arrived meanwhile.
     refusal = _handoff_refusal(task_type, capsule, ctx)
@@ -1732,6 +1774,9 @@ async def modelquad_handoff(
     if approval is not None and not isinstance(getattr(approval, "data", None), str):
         # Asked by the framework before this body ran (an MCP client on any protocol).
         answer, why = _approval_answer(approval), None
+        unseen = _unseen_answer(answer, None if asked_at is None else time.monotonic() - asked_at)
+        if unseen:
+            answer, why = "unavailable", unseen
     else:
         # Called directly, without the framework's resolver: ask here.
         answer, why = await _elicit_handoff(

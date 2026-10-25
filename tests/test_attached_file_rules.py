@@ -456,6 +456,7 @@ def test_accepted_handoff_delegates_the_files_as_a_handoff(project, monkeypatch)
         return {"job_id": "job-1", "status": "running"}
 
     monkeypatch.setattr(mcp, "_delegate_payload", fake_payload)
+    monkeypatch.setattr(mcp, "MIN_HUMAN_ANSWER_SECONDS", 0.0)  # a person's answer
     ctx = _Ctx(SimpleNamespace(action="accept", data=SimpleNamespace(hand_off=True)))
     result = asyncio.run(mcp.modelquad_handoff("review", "task", str(project), ctx=ctx,
                                                timeout=60.0, files=["src/app.py"]))

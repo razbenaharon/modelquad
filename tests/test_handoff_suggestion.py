@@ -419,6 +419,7 @@ class _Ctx:
     (None, "unavailable"),
 ])
 def test_handoff_starts_nothing_without_an_accepted_prompt(low_claude_world, monkeypatch, answer, expected):
+    monkeypatch.setattr(mcp, "MIN_HUMAN_ANSWER_SECONDS", 0.0)  # these answers are a person's
     delegated = []
 
     async def fake_delegate(**kwargs):
@@ -441,6 +442,7 @@ def test_handoff_starts_nothing_without_an_accepted_prompt(low_claude_world, mon
 
 
 def test_an_accepted_prompt_starts_exactly_one_codex_delegation(low_claude_world, monkeypatch):
+    monkeypatch.setattr(mcp, "MIN_HUMAN_ANSWER_SECONDS", 0.0)  # a person's answer
     delegated = []
 
     async def fake_delegate(**kwargs):
@@ -513,6 +515,8 @@ def test_the_handoff_form_reaches_a_real_client_on_both_protocols(low_claude_wor
     from mcp import types
     from mcp.client import Client
 
+    monkeypatch.setattr(mcp, "MIN_HUMAN_ANSWER_SECONDS", 0.0)  # the scripted replies are a person's
+
     (tmp_path / "notes.md").write_bytes(b"hello\n")
     delegated, asked = [], []
 
@@ -542,6 +546,44 @@ def test_the_handoff_form_reaches_a_real_client_on_both_protocols(low_claude_wor
     else:
         assert delegated == []
         assert result.structured_content["started"] is False
+
+
+@pytest.mark.parametrize(("reply", "elicited"), [
+    ({"action": "decline"}, "decline"),
+    ({"action": "cancel"}, "cancel"),
+    ({"action": "accept", "content": {"hand_off": True}}, "accept"),
+])
+def test_an_instant_answer_on_a_legacy_connection_counts_as_the_form_not_shown(
+        low_claude_world, monkeypatch, tmp_path, reply, elicited):
+    """The desktop app's Code tab answers a form it never shows in about 0.1 s
+    (live test, 2026-10-25). That is not the user saying no, and never a yes:
+    nothing starts, and Claude is told the form could not be shown."""
+    from mcp import types
+    from mcp.client import Client
+
+    monkeypatch.setattr(mcp, "modelquad_delegate", lambda **kwargs: pytest.fail("started"))
+
+    async def answer(context, params):
+        return types.ElicitResult(**reply)
+
+    async def run():
+        async with Client(mcp.server, mode="legacy", elicitation_callback=answer) as client:
+            return await client.call_tool("modelquad_handoff", {
+                "task_type": "review", "prompt": "check it", "working_directory": str(tmp_path)})
+
+    content = asyncio.run(run()).structured_content
+    assert content["started"] is False and content["approved"] is False
+    assert content["approval"] == "unavailable"
+    assert content["form_unavailable_reason"] == "answered_without_user"
+    assert content["next_step"] == mcp._FORM_UNAVAILABLE_STEP
+    assert low_claude_world == [] and mcp._HANDOFF_ASKED_AT == {}
+
+
+def test_an_instant_answer_to_a_direct_call_counts_as_the_form_not_shown(low_claude_world, monkeypatch):
+    monkeypatch.setattr(mcp, "modelquad_delegate", lambda **kwargs: pytest.fail("started"))
+    ctx = _Ctx(SimpleNamespace(action="accept", data=SimpleNamespace(hand_off=True)))
+    content = asyncio.run(mcp.modelquad_handoff("review", "task", "C:/work/app", ctx=ctx)).structured_content
+    assert (content["approval"], content["form_unavailable_reason"]) == ("unavailable", "answered_without_user")
 
 
 @pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
