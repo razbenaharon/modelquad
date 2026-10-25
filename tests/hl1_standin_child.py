@@ -135,12 +135,12 @@ def main():
     elif role == 'collect':
         from modelquad.mcp import jobs_tools
         job_id = sys.argv[3]
-        collected = jobs_tools.modelquad_job_collect(job_id)
+        collected = jobs_tools.modelquad_job_collect(job_id, str(root))
         assert collected['output'] == ANSWER, collected
         assert collected['job_status'] == 'finished', collected
-        acknowledged = jobs_tools.modelquad_job_acknowledge(job_id, collected['receipt'])
+        acknowledged = jobs_tools.modelquad_job_acknowledge(job_id, collected['receipt'], str(root))
         assert acknowledged['acknowledged'], acknowledged
-        assert jobs_tools.modelquad_job_list_pending()['jobs'] == []
+        assert jobs_tools.modelquad_job_list_pending(str(root))['jobs'] == []
         emit({'pid': os.getpid(), 'collected': True, 'acknowledged': True, 'pending_empty': True})
     else:
         raise ValueError(role)

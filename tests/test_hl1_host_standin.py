@@ -20,7 +20,7 @@ import pytest
 from modelquad import procutil
 from modelquad.jobs import handle
 from modelquad.jobs.store import default_store
-from modelquad.service import history
+from modelquad.service import auth, history
 from test_jobs_runner import product_import_paths
 
 native = pytest.mark.skipif(os.name != 'nt', reason='Windows Job Object Host stand-in')
@@ -164,10 +164,14 @@ def next_message(messages):
     return json.loads(line)
 
 
-def health(port):
+def health(port, state_root):
+    # Every route but the listener proof needs the secret the service creates.
+    secret = auth.read_service_secret(state_root)
+    if secret is None:
+        return None
     connection = http.client.HTTPConnection('127.0.0.1', port, timeout=.5)
     try:
-        connection.request('GET', '/api/health')
+        connection.request('GET', '/api/health', headers={auth.TOKEN_HEADER: secret})
         response = connection.getresponse()
         return json.loads(response.read()) if response.status == 200 else None
     except (OSError, http.client.HTTPException):
@@ -218,7 +222,7 @@ def test_host_job_termination(tmp_path, monkeypatch, service_running):
                 reservation.close()
                 service = launch('service', tmp_path, env, port, stderr=stderr)
                 evidence['pids']['service'] = service.pid
-                payload = wait_for(lambda: health(port))
+                payload = wait_for(lambda: health(port, state))
                 observation = json.loads((tmp_path / 'service-observation.json').read_text(encoding='utf-8'))
                 evidence['service_observation'] = observation
                 evidence['verdict_patched'] = observation['verdict_patched']
