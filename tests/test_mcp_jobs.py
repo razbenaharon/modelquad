@@ -93,7 +93,10 @@ def synthetic(tmp_path, monkeypatch):
     # the Host and detached runner; no real user configuration is read/written.
     monkeypatch.setenv('MODELQUAD_STATE_ROOT', str(tmp_path / 'state'))
     monkeypatch.setenv('MODELQUAD_STATE_MODE', 'dev')
-    monkeypatch.setattr(mcp, 'JOB_WAIT_SECONDS', 8.0)
+    # The product's own inline wait: a loaded machine can take more than a few
+    # seconds to finish the threaded runner, and a passing call returns as soon
+    # as it is done. Tests that need "starting" set this to 0 themselves.
+    monkeypatch.setattr(mcp, 'JOB_WAIT_SECONDS', 45.0)
     history.put_job_runner_enabled(database, True)
     # The simulated service runner is a separate logical process. Caller
     # containment mocks must not become that runner's observations merely
@@ -942,6 +945,7 @@ def test_private_spec_protected_before_prompt_and_deleted_on_read(synthetic, tmp
     assert not path.exists()
 
 
+@pytest.mark.serial_timing
 def test_prepared_runner_in_fresh_process_kills_worker_tree_on_close(synthetic, tmp_path, monkeypatch,
                                                                   non_killing_runner_spawn):
     # An explicitly driven synthetic runner process, not start_job or proof
@@ -969,6 +973,10 @@ try:
         'plugin': os.environ.get('MODELQUAD_TEST_EXECUTOR_PLUGIN'),
         'plugin_opt_in': os.environ.get('MODELQUAD_TEST_EXECUTOR_OK'),
     }), flush=True)
+    # A loaded machine can take longer than the product's 15 s to import and
+    # register a fresh runner (tests/test_jobs_runner.py raises it the same way).
+    import modelquad.jobs.handle as _handle
+    _handle.STARTUP_SECONDS = 60.0
     runpy.run_module('modelquad.jobs.runner', run_name='__main__')
 finally:
     faulthandler.cancel_dump_traceback_later()

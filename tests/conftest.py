@@ -23,6 +23,10 @@ if sys.platform == "win32":
     _ctypes.WinDLL("kernel32").SetErrorMode(0x0001 | 0x0002 | 0x8000)
 from modelquad.execution.base import WORKER_ENV_VAR
 from modelquad.service import db as service_db
+# adapters.registry fixes CLIENT_NAMES when first imported. Import it here,
+# before any test sets MODELQUAD_TEST_EXECUTOR_PLUGIN, so a test subset does
+# not freeze it empty and fail tests that never asked for the plugin.
+import modelquad.adapters.registry  # noqa: E402,F401
 
 #: Set to run the ``ci_only`` tests locally; CI (``CI=true``) always runs them.
 FULL_SUITE_ENV_VAR = "MODELQUAD_FULL_SUITE"
@@ -198,9 +202,13 @@ def _loaded_runner_git_headroom():
     budgets set their own values with monkeypatch, which wins. This fixture
     saves and restores by itself instead of requesting monkeypatch, so it does
     not move monkeypatch's teardown ahead of other fixtures' teardown."""
+    from modelquad import procutil
     from modelquad.jobs import changes
-    saved = [(changes, "GIT_SECONDS", changes.GIT_SECONDS)]  # _git clamps to its own module value
+    saved = [(changes, "GIT_SECONDS", changes.GIT_SECONDS),  # _git clamps to its own module value
+             (procutil, "IMAGE_NAME_SECONDS", procutil.IMAGE_NAME_SECONDS)]
     changes.GIT_SECONDS = 60
+    # tasklist took 17 s under load, so a live service read as unverified.
+    procutil.IMAGE_NAME_SECONDS = 60
     try:
         yield
     finally:

@@ -490,6 +490,11 @@ def pid_state(pid: int) -> str:
         return "unknown"
 
 
+#: How long the tasklist/ps image-name probe may take before the image reads
+#: as unknown. Tests on a loaded machine raise it (tests/conftest.py).
+IMAGE_NAME_SECONDS = 15.0
+
+
 def process_image_name(pid: int, *, run=subprocess.run) -> str | None:
     """The executable image name the OS reports for ``pid``, or None.
 
@@ -521,7 +526,7 @@ def process_image_name(pid: int, *, run=subprocess.run) -> str | None:
         argv = [executable.path, "-p", str(numeric), "-o", "comm="]
     try:
         completed = run(
-            argv, capture_output=True, text=True, shell=False, timeout=15.0, **no_window_kwargs()
+            argv, capture_output=True, text=True, shell=False, timeout=IMAGE_NAME_SECONDS, **no_window_kwargs()
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return None

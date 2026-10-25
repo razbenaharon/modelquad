@@ -99,7 +99,7 @@ def test_ps_launches_only_the_admitted_absolute_path(site, posix, search):
     for _, kwargs in runner.calls:
         assert kwargs["shell"] is False
         assert kwargs["stdin"] == subprocess.DEVNULL
-        assert kwargs["timeout"] == 15.0
+        assert kwargs["timeout"] == (procutil.IMAGE_NAME_SECONDS if site == "process_image_name" else 15.0)
         assert "creationflags" not in kwargs
         if site != "process_image_name":
             assert kwargs["env"]["LC_ALL"] == "C"

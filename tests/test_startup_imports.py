@@ -24,7 +24,7 @@ def _fresh(code):
     result = subprocess.run(
         [sys.executable, "-c", code],
         env={**os.environ, "PYTHONPATH": str(import_root)},
-        capture_output=True, text=True, timeout=30, **no_window_kwargs(),
+        capture_output=True, text=True, timeout=120, **no_window_kwargs(),
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout

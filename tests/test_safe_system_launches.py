@@ -313,7 +313,7 @@ def test_tasklist_and_taskkill_come_from_the_system_directory(utility, monkeypat
     assert _canonical(argv[0]) == _canonical(synthetic_system / (utility + ".exe"))
     arguments = ["/FI", "PID eq 4242", "/FO", "CSV", "/NH"] if utility == "tasklist" else ["/PID", "4242", "/T", "/F"]
     assert argv[1:] == arguments
-    expected = {"capture_output": True, "timeout": 15.0 if utility == "tasklist" else 10.0,
+    expected = {"capture_output": True, "timeout": procutil.IMAGE_NAME_SECONDS if utility == "tasklist" else 10.0,
                 **procutil.no_window_kwargs()}
     if utility == "tasklist":
         expected.update(text=True, shell=False)

@@ -190,7 +190,9 @@ def test_the_timeout_carries_what_became_of_the_worker(tmp_path):
 # -- the executors -----------------------------------------------------------------
 
 
-def _request(tmp_path, timeout=1.0):
+def _request(tmp_path, timeout=60.0):
+    # The test doubles carry their own short timeouts; this budget only bounds
+    # the checks before launch, which a loaded machine can stretch past 1 s.
     return ExecutionRequest(provider="codex", task_type=TaskType.REVIEW, prompt="do",
                             working_directory=tmp_path, timeout=timeout)
 
@@ -370,11 +372,17 @@ def test_a_worker_the_runner_said_nothing_about_adds_nothing_to_the_row(delegati
 # -- the caller already left: account for the worker, do not assume its fate ----------
 
 
+#: Exited children kept referenced, so Windows does not hand their pid to a
+#: new process while a test still treats it as dead.
+_EXITED = []
+
+
 def _dead_pid():
     """A pid that belonged to a real process which has since exited."""
 
     proc = subprocess.Popen([sys.executable, "-c", "pass"], **no_window_kwargs())
     proc.wait()
+    _EXITED.append(proc)
     return proc.pid
 
 
