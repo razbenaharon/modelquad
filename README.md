@@ -9,7 +9,9 @@ A second opinion from Codex inside Claude Code, on Windows.
 ModelQuad is a local MCP server for Claude Code. It lets Claude ask your own
 OpenAI Codex CLI for a read-only review, exploration or architecture opinion,
 and it shows Claude's and Codex's usage side by side. ModelQuad and the CLIs
-it drives run on your computer, under your own logins.
+it drives run on your computer, under your own logins. It works alongside
+OpenAI's official Codex plugin for Claude Code: the plugin for when you want
+Codex to change code, ModelQuad for a locked-down second opinion.
 
 Status: early, source-only release. Windows only.
 
@@ -19,6 +21,9 @@ Status: early, source-only release. Windows only.
   review, exploration or architecture question. ModelQuad reads the files the
   request names and passes their text to Codex with the task. Codex runs in an
   empty temporary folder, read-only, without file, command, web or MCP tools.
+  When Codex says other files would have helped, the reply lists them (only
+  existing files that ModelQuad's rules would send), and Claude can offer you
+  a follow-up call with them. Nothing is sent until you approve that call.
 - **Progress phases while Codex works.** Claude Code shows packing, start,
   periodic working-time and answer/withheld phases without task or file content.
 - **Both quotas in the status line.** Claude's and Codex's 5-hour and weekly
@@ -313,9 +318,9 @@ files, employer code), see
 ## ModelQuad and OpenAI's Codex plugin
 
 OpenAI publishes an official Codex plugin for Claude Code
-([openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc)). You can
-use both. The plugin lets Codex write code and offers its own reviews.
-ModelQuad adds:
+([openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc)).
+ModelQuad works alongside it, and you can use both. The plugin lets Codex
+write code and offers its own reviews. ModelQuad adds:
 
 - both quotas in the Claude Code status line;
 - a low-quota handoff suggestion;
