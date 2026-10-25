@@ -442,9 +442,13 @@ delete history.
      Code. (`modelquad integrations off` does the same and keeps it off.)
   3. Close the Claude Code sessions that use ModelQuad, then delete the state
      folder that `modelquad privacy` names.
-  4. Delete `usage-claude.json`, `usage-codex.json` and the `*.lock` files in
-     `%USERPROFILE%\.claude`, and the `*.modelquad-backup-*` files. Check the
-     backups first: they can contain secrets you put in your configuration.
+  4. Delete `usage-claude.json`, `usage-codex.json`, `quota-pace.json`,
+     `usage-claude.json.lock`, `usage-codex.json.lock`,
+     `usage-refresh-claude.lock` and `usage-refresh-codex.lock` in
+     `%USERPROFILE%\.claude`, by those exact names: other `.lock` files there,
+     such as `daemon.lock`, belong to Claude Code. Then delete the
+     `*.modelquad-backup-*` files. Check the backups first: they can contain
+     secrets you put in your configuration.
 
 Deleting files is ordinary file deletion. ModelQuad does not securely erase
 disk blocks.

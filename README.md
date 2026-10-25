@@ -253,9 +253,14 @@ the file.
    `modelquad integrations off` removes the same wiring without putting back
    an earlier entry, and refuses later installs until
    `modelquad integrations on`.
-3. Delete what uninstall leaves: the `usage-*.json`, `quota-pace.json` and
-   `*.lock` files in `%USERPROFILE%\.claude`, and the `*.modelquad-backup-*`
-   files.
+3. Delete what uninstall leaves in `%USERPROFILE%\.claude`, by these exact
+   names: `usage-claude.json`, `usage-codex.json`, `quota-pace.json`,
+   `usage-claude.json.lock`, `usage-codex.json.lock`,
+   `usage-refresh-claude.lock` and `usage-refresh-codex.lock`. Do not delete
+   other `.lock` or `usage-*.json` files there: Claude Code and other tools
+   keep their own files in the same folder (`daemon.lock` is Claude Code's).
+   Also delete the `*.modelquad-backup-*` files, which install left beside
+   each file it changed.
 4. Delete the state folder (`modelquad state` shows it).
 5. If you used `tools --fix-path`, remove the added folder from your user PATH.
    If you added `modelquad usage-hook claude --segment` or `--quiet` to your
