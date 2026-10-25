@@ -201,7 +201,7 @@ def test_crafted_spec_and_row_not_launchable(service, tmp_path, change):
                 table = 'jobs' if change == 'row_decision' else 'delegation_attempts'
                 conn.execute('UPDATE ' + table + " SET decision_id='other'")
             elif change == 'row_old':
-                conn.execute('UPDATE jobs SET created_at=?', ((datetime.now(timezone.utc) - timedelta(seconds=11)).isoformat(),))
+                conn.execute('UPDATE jobs SET created_at=?', ((datetime.now(timezone.utc) - timedelta(seconds=handle.STARTUP_SECONDS - 4)).isoformat(),))
             elif change == 'attempt_ended':
                 conn.execute("UPDATE delegation_attempts SET status='completed', resolved_at=?", (datetime.now(timezone.utc).isoformat(),))
             else:

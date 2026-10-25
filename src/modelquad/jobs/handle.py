@@ -24,8 +24,10 @@ from modelquad.jobs.seam import JobRef
 from modelquad.service import history
 
 
-# Provisional, to be measured later.
-STARTUP_SECONDS = 15.0
+# A runner must register within this many seconds of its reservation. On a
+# PC busy with a backup or antivirus scan, a fresh runner's imports alone have
+# taken more than 18 s, so 15 s turned a slow start into failed_to_start.
+STARTUP_SECONDS = 45.0
 RUNNER_LOG_MAX_BYTES = 1024 * 1024  # Provisional; keep one previous file.
 
 
