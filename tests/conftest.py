@@ -248,6 +248,15 @@ def isolate_worker_recursion_guard(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolate_claude_code_entrypoint(monkeypatch):
+    """A suite run from the desktop app's Code tab inherits
+    ``CLAUDE_CODE_ENTRYPOINT=claude-desktop``, which makes the handoff take
+    Claude Code's approval card as the answer instead of asking with the form.
+    Cleared for every test; the tests of that path set it themselves."""
+    monkeypatch.delenv("CLAUDE_CODE_ENTRYPOINT", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def isolate_loopback_guard():
     """No test inherits the loopback guard another test's entry point turned on.
 

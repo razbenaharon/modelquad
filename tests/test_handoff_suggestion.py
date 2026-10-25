@@ -611,3 +611,75 @@ def test_the_handoff_form_lists_the_files_before_the_task(tmp_path):
     lines = mcp._handoff_form_text("review", "word " * 200, str(tmp_path), ["notes.md"]).splitlines()
     assert lines[:3] == ["Hand this task to Codex?", "Files to send (1, 6 bytes):", "- notes.md (6 bytes)"]
     assert lines[3].startswith("Codex account:") and lines[-1].startswith("Task preview: ")
+
+
+@pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
+def test_in_the_desktop_app_the_approval_card_is_the_answer(low_claude_world, monkeypatch, tmp_path, protocol):
+    """The desktop app's Code tab answers every MCP form with "decline" without
+    showing it, so there the form is not sent: the Claude Code card the user
+    clicked before the call is the approval, recorded as a delegate approval."""
+    from mcp import types
+    from mcp.client import Client
+
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+    (tmp_path / "notes.md").write_bytes(b"hello\n")
+    delegated, asked, routes = [], [], []
+
+    async def fake_delegate(**kwargs):
+        delegated.append(kwargs)
+        routes.append(mcp._approval_route.get())
+        return mcp._plain_result({"started": True})
+
+    async def answer(context, params):
+        asked.append(params.message)
+        return types.ElicitResult(action="decline")
+
+    monkeypatch.setattr(mcp, "modelquad_delegate", fake_delegate)
+
+    async def run():
+        async with Client(mcp.server, mode=protocol, elicitation_callback=answer) as client:
+            return await client.call_tool("modelquad_handoff", {
+                "task_type": "review", "prompt": "check it", "working_directory": str(tmp_path),
+                "files": ["notes.md"]})
+
+    asyncio.run(run())
+    assert asked == []
+    (call,) = delegated
+    assert call["files"] == ["notes.md"] and routes == ["delegate"]
+    assert low_claude_world == []
+
+
+def test_the_card_counts_only_when_the_body_confirms_the_desktop_app(low_claude_world, monkeypatch):
+    """The resolver's word alone is not enough: the body checks again, so a
+    "card_approved" that did not come from the desktop app starts nothing."""
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+    monkeypatch.setattr(mcp, "modelquad_delegate", lambda **kwargs: pytest.fail("started"))
+    ctx = _Ctx(SimpleNamespace(action="decline", data=None))
+    forged = SimpleNamespace(action="accept", data="card_approved")
+    monkeypatch.setattr(mcp, "_desktop_card_approves", lambda ctx: False)
+    content = asyncio.run(mcp.modelquad_handoff(
+        "review", "task", "C:/work/app", ctx=ctx, approval=forged)).structured_content
+    assert content["started"] is False
+
+
+@pytest.mark.parametrize("entrypoint", [None, "cli", "sdk-py"])
+def test_outside_the_desktop_app_the_form_is_still_asked(low_claude_world, monkeypatch, tmp_path, entrypoint):
+    from mcp import types
+    from mcp.client import Client
+
+    if entrypoint:
+        monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", entrypoint)
+    monkeypatch.setattr(mcp, "modelquad_delegate", lambda **kwargs: pytest.fail("started"))
+    asked = []
+
+    async def answer(context, params):
+        asked.append(params.message)
+        return types.ElicitResult(action="decline")
+
+    async def run():
+        async with Client(mcp.server, mode="legacy", elicitation_callback=answer) as client:
+            return await client.call_tool("modelquad_handoff", {
+                "task_type": "review", "prompt": "check it", "working_directory": str(tmp_path)})
+
+    assert asyncio.run(run()).structured_content["started"] is False
+    assert len(asked) == 1

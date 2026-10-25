@@ -1620,6 +1620,27 @@ def _form_rounds(ctx: Context | None) -> bool:
     return isinstance(version, str) and version >= "2026-07-28"
 
 
+def _client_shows_apps(ctx: Context | None) -> bool:
+    """Whether this client renders MCP Apps (``ui://`` widgets)."""
+    from mcp.server.apps import client_supports_apps
+    try:
+        return ctx is not None and client_supports_apps(ctx)
+    except Exception:  # noqa: BLE001 - outside a request, or a client that sent no capabilities
+        return False
+
+
+def _desktop_card_approves(ctx: Context | None) -> bool:
+    """True when Claude Code's own approval card is the user's whole answer.
+
+    The desktop app's Code tab never shows an MCP form: its host answers every
+    one with "decline" (Claude 3.6556, read from its app.asar on 2026-10-25).
+    Claude Code sets ``CLAUDE_CODE_ENTRYPOINT=claude-desktop`` for the servers
+    it starts there. The card it shows before this tool runs
+    (``anthropic/requiresUserInteraction``) is a click Claude cannot make, the
+    same approval ``modelquad_delegate`` rests on."""
+    return os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "claude-desktop" and not _client_shows_apps(ctx)
+
+
 def _unseen_answer(answer: str, elapsed: float | None) -> str | None:
     """Why an answer counts as the form never shown, or None when it stands."""
     if answer in ("accept", "decline", "cancel") and elapsed is not None \
@@ -1730,6 +1751,8 @@ def _handoff_question(task_type: str, prompt: str, working_directory: str, files
         checked = _checked_files(files)
     except ToolError:
         return "not_asked"
+    if _desktop_card_approves(ctx):
+        return "card_approved"
     # A client that declared no forms cannot answer one; asking would end the
     # call in a protocol error. The body then reports the form as unavailable.
     capabilities = getattr(ctx, "client_capabilities", None)
@@ -1774,7 +1797,12 @@ async def modelquad_handoff(
         return _plain_result(refusal)
     files = _checked_files(files)
     _message, suggestion = _handoff_message(task_type, working_directory)
-    if approval is not None and not isinstance(getattr(approval, "data", None), str):
+    # Only the framework's resolver can say so, and only when the check still
+    # holds here: a direct call never passed Claude Code's approval card.
+    card = getattr(approval, "data", None) == "card_approved" and _desktop_card_approves(ctx)
+    if card:
+        answer, why = "accept", None
+    elif approval is not None and not isinstance(getattr(approval, "data", None), str):
         # Asked by the framework before this body ran (an MCP client on any protocol).
         answer, why = _approval_answer(approval), None
         unseen = _unseen_answer(answer, None if asked_at is None else time.monotonic() - asked_at)
@@ -1798,7 +1826,8 @@ async def modelquad_handoff(
             refusal["files_preview"] = _files_preview(working_directory, files)
             refusal["next_step"] = _FORM_UNAVAILABLE_STEP
         return _plain_result(refusal)
-    token = _approval_route.set("handoff")
+    # The card is the same approval as modelquad_delegate's, so it is recorded as one.
+    token = _approval_route.set("delegate" if card else "handoff")
     try:
         return await modelquad_delegate(
             task_type=task_type,

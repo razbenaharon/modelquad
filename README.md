@@ -86,9 +86,12 @@ Code tab, with differences found in testing (Claude Code 2.1.296, October
   for example with `/modelquad-quota`.
 - **The approval prompt before each Codex call appears in both,** also in auto
   mode.
-- **The handoff form** reaches Claude Code through MCP's form support. If a
-  Claude Code cannot show it, the handoff starts nothing and Claude falls back
-  to asking you in the conversation.
+- **The handoff form** appears in a terminal session. The desktop app's Code
+  tab never shows MCP forms (it answers each one "decline" without showing
+  it), so there `/modelquad-handoff` takes Claude Code's approval prompt as
+  your answer: that prompt lists the files, and only you can click it. If any
+  other Claude Code cannot show the form, the handoff starts nothing and
+  Claude falls back to asking you in the conversation.
 - **Progress while Codex works** shows where Claude Code displays MCP progress;
   it was not visible in the desktop app's Code tab.
 
