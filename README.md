@@ -2,6 +2,12 @@
   <img src="docs/images/modelquad-logo.png" alt="ModelQuad" width="180">
 </p>
 
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/platform-Windows-0078D6" alt="Platform: Windows">
+</p>
+
 # ModelQuad
 
 A second opinion from Codex inside Claude Code, on Windows.
