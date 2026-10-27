@@ -22,6 +22,18 @@ up, and nothing here is published to any plugin directory.
   same one the installer adds. It only reports retained answers; it never
   blocks or approves anything.
 
+- **A quota band** (`plugin/hooks/quota-band.tsx`, a Claude Code hooks
+  module; experimental). Where no status line is drawn (the desktop app's
+  Code tab, an IDE, a phone), it shows Claude's and Codex's 5-hour and
+  weekly windows above the prompt, worded as the status line words them.
+  Claude's figures are the ones Claude Code measures itself; Codex's are the
+  reading ModelQuad's server keeps in `~/.claude/usage-codex.json`, re-read
+  every minute and marked "(as of ...)" when older than 15 minutes. It draws
+  nothing in the terminal, which has the status line. It only displays: it
+  hooks no tool call, prompt or approval and starts nothing
+  (`tests/test_plugin_prototype.py`); `claude plugin test plugin` runs its
+  own tests.
+
 `python scripts/sync_plugin.py` copies the skills and the server entry from
 the templates; `tests/test_plugin_prototype.py` fails while a copy differs.
 

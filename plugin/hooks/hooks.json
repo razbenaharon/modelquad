@@ -7,11 +7,17 @@
           {
             "type": "command",
             "command": "modelquad",
-            "args": ["hook-pending", "claude"],
+            "args": [
+              "hook-pending",
+              "claude"
+            ],
             "timeout": 3
           }
         ]
       }
     ]
-  }
+  },
+  "modules": [
+    "./quota-band.tsx"
+  ]
 }

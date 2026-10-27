@@ -4,6 +4,7 @@
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 from modelquad import __version__
@@ -57,9 +58,24 @@ def test_plugin_ships_no_permissions_and_only_the_reminder_hook():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert not {"mcpServers", "settings", "agents", "outputStyles"} & set(manifest)
     assert not (PLUGIN / "agents").exists() and not (PLUGIN / "bin").exists()
-    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    config = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    assert config["modules"] == ["./quota-band.tsx"]
+    hooks = config["hooks"]
     assert set(hooks) == {"SessionStart"}
     (entry,) = hooks["SessionStart"]
     (hook,) = entry["hooks"]
     assert hook["command"] == "modelquad" and hook["args"] == ["hook-pending", "claude"]
     assert "permissions" not in json.dumps(manifest)
+
+
+def test_the_quota_band_only_displays():
+    # The band draws quotas above the prompt where no status line does. It
+    # must never block, approve or rewrite anything (AGENTS.md invariant 6
+    # holds for ModelQuad's hooks of every kind), nor start a process.
+    source = (PLUGIN / "hooks" / "quota-band.tsx").read_text(encoding="utf-8")
+    events = set(re.findall(r"""\bon\(\s*['"]([\w.]+)['"]""", source))
+    assert events == {"session.start", "session.measure", "ui.render"}
+    for forbidden in ("$.process", "$.tool", "$.model", "$.agent", "$.session.append",
+                      "$.fs.write", "$.env.set", "deny"):
+        assert forbidden not in source, forbidden
+    assert "usage-codex.json" in source
