@@ -39,10 +39,21 @@ def test_plugin_skills_are_the_packaged_templates():
             f"plugin/skills/{name} is stale: run python scripts/sync_plugin.py")
 
 
-def test_plugin_ships_no_server_no_permissions_and_only_the_reminder_hook():
-    # The MCP server stays CLI-installed, so tool names and deny rules keep
-    # their meaning, and every Codex call keeps its approval prompt.
-    assert not (PLUGIN / ".mcp.json").exists()
+def test_plugin_server_is_the_packaged_entry():
+    # The same entry `modelquad install claude` writes: the bare command pip
+    # puts on PATH, no absolute path, no env, and the same tool timeout.
+    sync = _sync_module()
+    assert (PLUGIN / ".mcp.json").read_bytes() == sync.MCP_TEMPLATE.read_bytes(), (
+        "plugin/.mcp.json is stale: run python scripts/sync_plugin.py")
+    servers = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+    assert list(servers) == ["modelquad"]
+    assert servers["modelquad"]["command"] == "modelquad-mcp"
+    assert "env" not in servers["modelquad"]
+
+
+def test_plugin_ships_no_permissions_and_only_the_reminder_hook():
+    # A plugin's server tools are approved like any other: every Codex call
+    # keeps Claude Code's approval prompt, and nothing here pre-approves one.
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert not {"mcpServers", "settings", "agents", "outputStyles"} & set(manifest)
     assert not (PLUGIN / "agents").exists() and not (PLUGIN / "bin").exists()
