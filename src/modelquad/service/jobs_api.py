@@ -95,7 +95,6 @@ def _read_private_spec(path: Path) -> bytes:
         if not k32.GetFileInformationByHandle(native, ctypes.byref(info)):
             raise OSError('invalid_spec')
         size = (info.nFileSizeHigh << 32) | info.nFileSizeLow
-        index = (info.nFileIndexHigh << 32) | info.nFileIndexLow
         if info.dwFileAttributes & (0x400 | 0x10) or size > SPEC_MAX_BYTES:
             raise ValueError('invalid_spec')
         # A protected DACL granting only this user (and SYSTEM), and an owner
@@ -110,8 +109,13 @@ def _read_private_spec(path: Path) -> bytes:
             raise ValueError('invalid_spec')
         fd = msvcrt.open_osfhandle(native, os.O_RDONLY)
         native = None  # fd owns the native handle from here.
+        # The identity check compares the lstat with an fstat of this same
+        # handle, never with the handle's 64-bit nFileIndex: from 3.12, where
+        # the volume supplies a 128-bit file ID (ReFS, so a Dev Drive), st_ino
+        # carries all of it and no longer equals the 64-bit index, which
+        # refused every genuine spec there.
         opened = os.fstat(fd)
-        if (not stat.S_ISREG(opened.st_mode) or before.st_ino != index
+        if (not stat.S_ISREG(opened.st_mode) or before.st_ino != opened.st_ino
                 or before.st_dev != opened.st_dev):
             raise ValueError('invalid_spec')
         with os.fdopen(fd, 'rb') as stream:

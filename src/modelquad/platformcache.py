@@ -32,6 +32,13 @@ popup is traded away, and nothing else is. The kernel version comes from
 ``RtlGetVersion`` (:func:`_windows_facts`), which reads the same thing ``ver``
 reports and is not subject to the manifest compatibility shim.
 
+**3.12 and later.** CPython asks WMI first there and reaches ``cmd /c ver``
+only when the WMI query fails, so the popup is the fallback path rather than
+the usual one -- but it is still reachable, and the seed still closes it. The
+release tables also became lists keyed by full build number in 3.12 (Windows
+11 is "11", not "10"); :func:`_release_for` reads each shape the way its own
+interpreter does.
+
 **Two edges, closed after review.** A ``sys.getwindowsversion()``
 read that fails seeds *nothing*: the client/server distinction decides which
 release table CPython consults, and guessing "client" would cache a client
@@ -107,22 +114,49 @@ def _windows_facts() -> tuple[str, str | None, str | None]:
     return "Windows", version, (arch or None)
 
 
-def _release_for(major: int, minor: int, *, server: bool) -> str:
+def _release_for(major: int, minor: int, build: int, *, product_type: int | None) -> str | None:
     """CPython's own release string for this version, via its own tables.
 
     Reused rather than reimplemented: a second copy of the mapping would be a
     second answer to "what does `platform` call this Windows", and the point of
-    this module is that the answer does not change. Windows 11 reports major 10
-    and CPython therefore calls it "10"; that is CPython's behaviour and
-    reproducing it faithfully is the requirement, not correcting it.
+    this module is that the answer does not change. The tables changed shape
+    between versions, and so did the lookup, so each shape is read the way the
+    interpreter that defines it reads it:
+
+    - 3.11: dicts keyed ``(major, minor)`` with a ``(major, None)`` fallback;
+      the server table applies only when ``product_type`` is
+      ``VER_NT_SERVER`` (3), and falls back to the client name. Windows 11
+      reports major 10, so 3.11 calls it "10".
+    - 3.12+: lists of ``((major, minor, build), name)``, newest first; the
+      first entry not above the running version wins, and the server list
+      applies whenever the product type is not ``VER_NT_WORKSTATION`` (1),
+      a missing one counting as 1. Windows 11 is "11" here.
+
+    Reproducing each faithfully is the requirement, not correcting either.
+    ``None`` for a shape this does not recognise: a guessed release would be
+    cached and believed, so the caller seeds nothing (``AGENTS.md``
+    invariant 4). ``""`` is different -- it is CPython's own answer for a
+    version its tables do not name.
     """
 
-    client = getattr(platform, "_WIN32_CLIENT_RELEASES", {})
-    release = client.get((major, minor)) or client.get((major, None)) or ""
-    if server:
-        table = getattr(platform, "_WIN32_SERVER_RELEASES", {})
-        release = table.get((major, minor)) or table.get((major, None)) or release
-    return release
+    client = getattr(platform, "_WIN32_CLIENT_RELEASES", None)
+    server = getattr(platform, "_WIN32_SERVER_RELEASES", None)
+    try:
+        if isinstance(client, dict) and isinstance(server, dict):
+            release = client.get((major, minor)) or client.get((major, None)) or ""
+            if product_type == 3:
+                release = server.get((major, minor)) or server.get((major, None)) or release
+            return release
+        if isinstance(client, list) and isinstance(server, list):
+            is_client = (1 if product_type is None else product_type) == 1
+            running = (major, minor, build)
+            return next(
+                (name for version, name in (client if is_client else server) if version <= running),
+                "",
+            )
+    except (TypeError, ValueError):
+        return None
+    return None
 
 
 def _unknown_as_blank(value: str) -> str:
@@ -148,7 +182,8 @@ def windows_uname_result() -> platform.uname_result | None:
 
     ``None`` when this is not Windows, when the kernel version could not be
     read, or when ``sys.getwindowsversion()`` -- which decides whether the
-    client or the server release table applies -- could not be read. An
+    client or the server release table applies -- could not be read, or when
+    CPython's release tables have a shape this does not recognise. An
     incomplete or guessed cache is worse than none, because it would be
     believed. Unknown stays unknown (``AGENTS.md`` invariant 4).
     """
@@ -161,14 +196,15 @@ def windows_uname_result() -> platform.uname_result | None:
         return None
 
     try:
-        major, minor, _build = (int(part) for part in version.split(".", 2))
+        major, minor, build = (int(part) for part in version.split(".", 2))
     except (TypeError, ValueError):
         return None
 
     try:
-        # VER_NT_SERVER is 3, the same test `win32_ver()` makes. A pure
-        # attribute read of an already-populated structure; no process.
-        server = getattr(sys.getwindowsversion(), "product_type", None) == 3
+        # The field `win32_ver()` reads to pick the release table; how it is
+        # read differs by version (`_release_for`). A pure attribute read of
+        # an already-populated structure; no process.
+        product_type = getattr(sys.getwindowsversion(), "product_type", None)
     except Exception:
         # Fail closed. `product_type` selects the release table,
         # and assuming "client" here would cache a client release string on a
@@ -181,7 +217,8 @@ def windows_uname_result() -> platform.uname_result | None:
     except OSError:
         node = ""
 
-    # `_get_machine_win32()` is two environment reads. Preferred over the value
+    # `_get_machine_win32()` is two environment reads (on 3.12+ preceded by an
+    # in-process WMI query, which starts no process). Preferred over the value
     # `_windows_facts()` returns only because it is *the same function*
     # `uname()` would have called, so nothing downstream can observe a
     # difference between a seeded cache and an earned one.
@@ -191,12 +228,16 @@ def windows_uname_result() -> platform.uname_result | None:
     else:  # pragma: no cover - only if CPython renames the private helper
         machine = machine or os.environ.get("PROCESSOR_ARCHITECTURE", "") or ""
 
+    release = _release_for(major, minor, build, product_type=product_type)
+    if release is None:
+        return None
+
     # The same final step `uname()` applies to its own tuple: a literal
     # "unknown" in any field becomes "".
     values = (
         family or "Windows",
         node or "",
-        _release_for(major, minor, server=server),
+        release,
         version,
         machine or "",
     )

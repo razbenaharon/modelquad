@@ -692,6 +692,15 @@ def workspace_identity(path: str | Path | None) -> tuple[str | None, str | None]
         # RuntimeError is in here for the symlink loop `Path.resolve` raises on
         # Python 3.10-3.12. A probe that cannot answer must return the absence,
         # not take the caller's query down with it.
+        #
+        # An embedded NUL names no file on any filesystem. Up to 3.12 the
+        # non-strict `Path.resolve` raised ValueError for one; from 3.13 it
+        # goes through `os.path.realpath`, which swallows the error and hands
+        # back the lexical path, so the absence turned into an identity that
+        # matched nothing and a liveness question read as a clean "no
+        # delegation" instead of unknown. Refused here, on every version.
+        if "\x00" in os.fspath(path):
+            return None, None
         resolved = Path(path).resolve()
         ancestors = [_workspace_hash(parent) for parent in resolved.parents]
         return _workspace_hash(resolved), json.dumps(ancestors)
