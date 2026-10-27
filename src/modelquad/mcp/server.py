@@ -1549,6 +1549,9 @@ async def modelquad_delegate(
     if isinstance(capsule, dict) and "action_authority" in capsule:
         raise ToolError("capsule action authority is not accepted")
     files = _checked_files(files)
+    first = _notice_first()
+    if first is not None:
+        return first
     approval = _approval_route.get()
     # Everything that reads the request context is read BEFORE the await:
     # once the caller has gone, the context it came in on has gone with it,
@@ -1633,6 +1636,34 @@ class HandoffApproval(BaseModel):
 def _plain_result(payload: dict) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload))],
                           structured_content=payload)
+
+
+NOTICE_FIRST_NEXT = (
+    "Codex was not started. Show the user the notice above in full, as written: it is "
+    "what ModelQuad sends where, and it is shown once, before the first Codex call. If "
+    "the user wants to go ahead, call the same tool again; Claude Code asks them again."
+)
+
+
+def _notice_first() -> CallToolResult | None:
+    """The data-flow notice in place of the first Codex call, or None once it was shown.
+
+    ``modelquad onboard`` and ``modelquad install`` print the notice, but the
+    plugin can put ModelQuad in front of someone who ran neither. Their first
+    call that would start Codex returns the notice instead, once.
+    """
+
+    from ..disclosure import DATA_FLOW, notice_shown, record_notice_shown
+
+    if notice_shown():
+        return None
+    payload: dict[str, Any] = {"status": "notice_first", "codex_started": False,
+                               "notice": list(DATA_FLOW), "next": NOTICE_FIRST_NEXT}
+    try:
+        record_notice_shown("first_call")
+    except OSError:
+        payload["note"] = "ModelQuad could not record that the notice was shown, so it shows it again."
+    return _plain_result(payload)
 
 
 #: No person reads the handoff form, ticks its box and answers this fast. The
@@ -1862,6 +1893,9 @@ async def modelquad_handoff(
     if refusal is not None:
         return _plain_result(refusal)
     files = _checked_files(files)
+    first = _notice_first()
+    if first is not None:
+        return first
     _message, suggestion = _handoff_message(task_type, working_directory)
     if getattr(approval, "data", None) == "widget" and _shows_handoff_window(ctx):
         return _plain_result(_widget_pending(

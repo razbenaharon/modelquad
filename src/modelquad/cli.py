@@ -384,6 +384,23 @@ def _adapter_for(client: str, args: argparse.Namespace, factory=None) -> object:
     return factory() if factory is not None else get_adapter(client)
 
 
+def _note_notice_shown(args: argparse.Namespace, notices: dict, reports: list) -> None:
+    """Record that an install showed the data-flow notice, so Codex calls need not.
+
+    Only a real install that showed it and wrote something counts; a dry run,
+    or an install refused before writing, does not.
+    """
+
+    if args.dry_run or "data_flow_notice" not in notices or not reports:
+        return
+    from .disclosure import record_notice_shown
+
+    try:
+        record_notice_shown("install")
+    except OSError:
+        pass  # The first Codex call then shows the notice instead.
+
+
 def _remember_plugin_choice(args: argparse.Namespace) -> None:
     """Save ``--plugin`` / ``--no-plugin`` once an install has used it, so a repair keeps it."""
 
@@ -518,6 +535,8 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
             }
         )
 
+    if method_name == "install":
+        _note_notice_shown(args, notices, [result for result in results if result.get("report")])
     incomplete: list[dict[str, str]] = []
     if integrations_off:
         from .adapters.report import ActionKind
@@ -892,6 +911,8 @@ def _run_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             skipped = _mcp_registration_skipped(client, target_dir, report, adapter)
             if skipped is not None:
                 errors.append({"client": client, "error": f"Not registered: {skipped}"})
+    if method_name == "install":
+        _note_notice_shown(args, notices, reports)
     if args.as_json:
         if args.all_clients:
             print(

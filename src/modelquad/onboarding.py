@@ -712,9 +712,13 @@ def run_onboarding(
     print_fn("==========================================")
     print_fn("Welcome! Let's get your AI coding assistants connected.")
     print_fn("")
-    from .disclosure import DATA_FLOW, print_lines
+    from .disclosure import DATA_FLOW, print_lines, record_notice_shown
     print_lines(DATA_FLOW, print_fn)
     print_fn("")
+    try:
+        record_notice_shown("onboard")
+    except OSError:
+        pass  # The first Codex call then shows the notice instead.
     config_dir_warning = hostruntime.claude_config_dir_warning()
     if config_dir_warning is not None:
         print_fn(f"Warning: {config_dir_warning}")

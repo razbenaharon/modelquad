@@ -56,6 +56,16 @@ Claude Code would then run the server, the commands and the reminder twice.
 Claude Code does not document that file as stable, so an unreadable record
 reads as unknown, never as installed.
 
+## The notice before first use
+
+`modelquad onboard` and `modelquad install` print what ModelQuad sends where
+before they write anything. Someone who installs only the plugin runs
+neither, so their first call that would start Codex (`modelquad_delegate` or
+`modelquad_handoff`) returns that notice instead, and Codex does not start;
+calling again, after Claude Code asks again, runs normally. The background
+Codex quota read the notice describes waits for it too. An install that
+printed the notice, including any 0.3.0 install, counts as shown.
+
 ## Keeping ModelQuad out of a project
 
 The plugin's tool names differ, so a deny rule needs both forms:
@@ -64,13 +74,11 @@ The plugin's tool names differ, so a deny rule needs both forms:
 
 ## Before this becomes a supported install
 
-- A live test: the plugin's server, commands and reminder behave as the
-  installed ones; the approval prompt appears before every Codex call; both
-  deny rules hold; `modelquad install claude --plugin` leaves exactly one
-  copy of each.
-- The notice of what ModelQuad sends where, which `modelquad onboard` shows,
-  has to reach a user who installs only the plugin before the first Codex
-  call. Not decided yet.
+- Live test round 5 (2026-10-27) passed: one server and one copy of each
+  command, the approval prompt in the terminal and in the desktop app, a
+  real Codex answer, both deny rules, and `modelquad install claude --plugin`
+  leaving one copy of each. Still to see live: the status line, the
+  SessionStart reminder, and the notice on a first call.
 - Keep `plugin/.claude-plugin/plugin.json`'s `version` equal to the package
   version (`tests/test_plugin_prototype.py` checks it).
 - Validate with `claude plugin validate plugin --strict` and

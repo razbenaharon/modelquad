@@ -21,8 +21,10 @@ if sys.platform == "win32":
     import ctypes as _ctypes
 
     _ctypes.WinDLL("kernel32").SetErrorMode(0x0001 | 0x0002 | 0x8000)
+from modelquad import disclosure
 from modelquad.execution.base import WORKER_ENV_VAR
 from modelquad.service import db as service_db
+from modelquad.usage import background as usage_background
 # adapters.registry fixes CLIENT_NAMES when first imported. Import it here,
 # before any test sets MODELQUAD_TEST_EXECUTOR_PLUGIN, so a test subset does
 # not freeze it empty and fail tests that never asked for the plugin.
@@ -299,7 +301,16 @@ def isolate_home_directory(tmp_path, monkeypatch):
     # tied the whole suite to dev mode; on the dev machine the two happened to
     # coincide, so the coupling was invisible until CI installed non-editable.
     monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", paths.db_path())
+    # A fresh home has never seen the data-flow notice, so every Codex call
+    # would return the notice instead. The suite tests calls, not the notice:
+    # treat it as shown. tests/test_first_use_notice.py restores the real check.
+    monkeypatch.setattr(disclosure, "notice_shown", _notice_already_shown)
+    monkeypatch.setattr(usage_background, "notice_shown", _notice_already_shown)
     return fake_home
+
+
+def _notice_already_shown() -> bool:
+    return True
 
 
 @pytest.fixture

@@ -68,3 +68,47 @@ BACKGROUND_CONSENT_ANSWER = "yes"
 def print_lines(lines: tuple[str, ...], print_fn: Callable[..., None] = print) -> None:
     for line in lines:
         print_fn(line)
+
+
+#: Where this installation records that ``DATA_FLOW`` reached the user.
+NOTICE_RECORD_NAME = "data-flow-notice.json"
+#: Written by every install that wrote the Claude Code integration, which
+#: printed ``DATA_FLOW`` since 0.3.0: an installation that has it has shown it.
+_INSTALL_EVIDENCE_NAME = "host-registration-backup.json"
+
+
+def _state_root():
+    from .paths import state_root
+
+    return state_root()
+
+
+def notice_shown() -> bool:
+    """Whether ``DATA_FLOW`` has reached the user of this installation.
+
+    The plugin can put ModelQuad in front of someone who never ran
+    ``modelquad onboard`` or ``modelquad install``, where the notice is
+    printed. Unreadable state reads as not shown: the cost is one extra
+    showing of the notice, never a Codex call before it.
+    """
+
+    try:
+        root = _state_root()
+        return (root / NOTICE_RECORD_NAME).is_file() or (root / _INSTALL_EVIDENCE_NAME).is_file()
+    except Exception:  # noqa: BLE001 -- unknown state means show the notice
+        return False
+
+
+def record_notice_shown(via: str) -> None:
+    """Remember that the notice was shown (``via``: where), so it is shown once."""
+
+    import json
+    from datetime import datetime, timezone
+
+    from .adapters.atomicwrite import atomic_write
+
+    target = _state_root() / NOTICE_RECORD_NAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(target, json.dumps({
+        "schema": 1, "via": via, "shown_at": datetime.now(timezone.utc).isoformat(),
+    }, indent=2) + "\n")
