@@ -81,7 +81,9 @@ def test_installed_copy_keeps_its_state_outside_appdata_on_windows(monkeypatch):
 
     assert state_root() == Path.home() / ".local" / "share" / "modelquad"
     assert db_path() == Path.home() / ".local" / "share" / "modelquad" / "modelquad.db"
-    assert "AppData" not in state_root().parts
+    # Relative to the home folder: the test's isolated home may itself sit
+    # under AppData (a CI runner's temp folder does).
+    assert "AppData" not in state_root().relative_to(Path.home()).parts
 
 
 def test_non_editable_install_is_not_treated_as_dev_checkout(monkeypatch, tmp_path):

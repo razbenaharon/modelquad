@@ -122,10 +122,10 @@ def test_installed_status_line_writes_and_prints_what_the_full_cli_does(tmp_path
     assert Path(entry["usage_directory"]) == home / ".claude"
     assert (home / ".claude" / "usage-claude.json").is_file()
     # A development checkout keeps state in ~/.modelquad, an installed wheel in
-    # %LOCALAPPDATA%\ModelQuad (CI runs the installed one); the light entry
+    # ~/.local/share/modelquad (CI runs the installed one); the light entry
     # must pick the same one the full CLI does.
     state_root = Path(entry["state_root"])
-    assert state_root in {home / ".modelquad", home / "AppData" / "Local" / "ModelQuad"}
+    assert state_root in {home / ".modelquad", home / ".local" / "share" / "modelquad"}
     assert state_root.relative_to(home) == Path(results["cli"]["state_root"]).relative_to(tmp_path / "cli")
     # The host observation the MCP server reads.
     assert (Path(entry["state_root"]) / "host-observation-claude.json").is_file()
