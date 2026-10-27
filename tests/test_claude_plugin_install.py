@@ -74,6 +74,7 @@ def test_installing_for_the_plugin_takes_back_the_regular_copies(state_root, cla
     removed = [action for action in report.actions if action.kind is ActionKind.REMOVED]
     assert removed and all(action.backup_path is not None for action in removed)
     assert any("plugin supplies the server" in (action.detail or "") for action in report.actions)
+    assert any("plugin runs it" in (action.detail or "") for action in report.actions)
 
 
 def test_a_server_entry_install_did_not_write_stays_and_is_reported(state_root, claude_home):

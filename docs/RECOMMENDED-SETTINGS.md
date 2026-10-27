@@ -34,6 +34,29 @@ applies to everyone who opens the repository, or put the same rule in
 `.claude/settings.local.json` to apply it only on your computer. Other
 projects keep ModelQuad.
 
+These rules block ModelQuad, not Codex. Once ModelQuad's tools are gone,
+Claude may offer to run the Codex CLI itself from a shell (it asks first),
+and that run has none of ModelQuad's limits: Codex's own tools and sandbox
+settings apply. To keep Claude from starting Codex in that project too, add
+shell rules next to the others:
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "mcp__modelquad", "mcp__plugin_modelquad_modelquad__*",
+      "Bash(codex *)", "PowerShell(codex *)"
+    ]
+  }
+}
+```
+
+Claude Code matches a shell rule against the command as Claude writes it,
+so it stops `codex ...` but not Codex started by a full path or from inside
+another shell; Claude Code's documentation says such a rule is not a
+security boundary. If the code must never reach OpenAI, do not run Codex
+in that folder yourself either.
+
 ## Block secret files with Read deny rules
 
 Tell Claude Code which files it must not read:

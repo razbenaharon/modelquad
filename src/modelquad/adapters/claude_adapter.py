@@ -91,6 +91,7 @@ _REMOVED_GATE = (
     "ModelQuad's guidance now comes from its MCP server."
 )
 _LEFT_TO_PLUGIN = "Removed ModelQuad's server entry; the ModelQuad plugin supplies the server."
+_REMINDER_TO_PLUGIN = "Removed ModelQuad's SessionStart reminder; the ModelQuad plugin runs it."
 _FOREIGN_SERVER = (
     "A modelquad server entry that ModelQuad's install did not write was left in place. "
     "Claude Code starts it next to the plugin's server; remove it yourself to keep one."
@@ -512,6 +513,8 @@ class ClaudeAdapter:
             gates = _plan_remove_gates(payload)
             timeout_change, retire = _plan_remove_tool_timeout(settings)
             pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run, remove=True)
+            if pending_change.changes_file:
+                pending_change = Change(pending_change.kind, _REMINDER_TO_PLUGIN)
 
         skills = {_SKILL_DIR: _remove_owned_file(destination / "skills" / _SKILL_DIR / "SKILL.md",
                                                  dry_run=dry_run)}
