@@ -18,6 +18,7 @@ from .host_integrations import OFF_DETAIL, global_integrations_enabled
 from .executable_resolution import resolve_executable
 from .branding import (
     CLI_COMMAND,
+    MCP_COMMAND,
     MCP_SERVER_NAME,
     PRODUCT_NAME,
     PRODUCT_SLUG,
@@ -204,6 +205,8 @@ def _mcp_registration_check(host_id: str, target_dir: Path) -> DoctorCheck:
 
     name = f"{host_id} MCP registered"
     install_command = f"{CLI_COMMAND} install {host_id}"
+    if host_id == "claude" and _claude_via_plugin():
+        return _claude_plugin_check(name, target_dir)
     if host_id == "claude":
         config_path = hostruntime.json_mcp_config_path(host_id, target_dir)
         try:
@@ -224,6 +227,71 @@ def _mcp_registration_check(host_id: str, target_dir: Path) -> DoctorCheck:
         )
 
     raise ValueError(f"No verified MCP-registration check is defined for {host_id!r}")
+
+
+_PLUGIN_INSTALL = "claude plugin install modelquad --marketplace razbenaharon/modelquad"
+
+
+def _claude_via_plugin() -> bool:
+    from .adapters.server_instructions import read_claude_plugin
+
+    return read_claude_plugin()
+
+
+def _claude_plugin_check(name: str, target_dir: Path) -> DoctorCheck:
+    """Beside the plugin, the registration is the plugin's, as Claude Code records it."""
+
+    from .adapters.claude_adapter import plugin_recorded
+
+    recorded = plugin_recorded(target_dir)
+    if recorded is True:
+        return DoctorCheck(name, CheckStatus.OK, "Supplied by the ModelQuad plugin.")
+    back = f"or run {CLI_COMMAND} install claude --no-plugin to install the server directly"
+    if recorded is False:
+        return DoctorCheck(
+            name, CheckStatus.WARN,
+            f"ModelQuad was installed for the plugin, but Claude Code does not list the "
+            f"ModelQuad plugin. Install it with {_PLUGIN_INSTALL}, {back}.",
+        )
+    return DoctorCheck(
+        name, CheckStatus.WARN,
+        f"ModelQuad was installed for the plugin, but Claude Code's plugin record could "
+        f"not be read, so whether the plugin is installed is unknown. Check with "
+        f"claude plugin list, {back}.",
+    )
+
+
+def _claude_duplicates_check(target_dir: Path) -> DoctorCheck | None:
+    """The plugin and the regular install side by side: Claude Code runs both copies.
+
+    ``None`` when there is no evidence of both. An unreadable plugin record is
+    not evidence, so it reports nothing rather than a guess.
+    """
+
+    from .adapters.claude_adapter import plugin_recorded
+
+    name = "claude installed once"
+    try:
+        registered = hostruntime.read_registered_command("claude", target_dir) is not None
+    except (OSError, ValueError):
+        return None
+    if _claude_via_plugin():
+        if not registered:
+            return None
+        return DoctorCheck(
+            name, CheckStatus.WARN,
+            "A modelquad server entry is still registered next to the plugin's server, so "
+            "Claude Code starts both. Remove the entry from ~/.claude.json, or run "
+            f"{CLI_COMMAND} install claude --no-plugin and uninstall the plugin.",
+        )
+    if plugin_recorded(target_dir) is not True or not registered:
+        return None
+    return DoctorCheck(
+        name, CheckStatus.WARN,
+        "The ModelQuad plugin is installed, and so are the server, commands and reminder "
+        "from the regular install, so Claude Code runs each twice. Run "
+        f"{CLI_COMMAND} install claude --plugin to keep the plugin's, or uninstall the plugin.",
+    )
 
 
 def _mcp_runtime_check(
@@ -251,6 +319,9 @@ def _mcp_runtime_check(
         command = read_registered_command(host_id, target_dir)
     except (OSError, ValueError) as exc:
         return DoctorCheck(name, CheckStatus.WARN, f"Could not inspect the registration: {exc}")
+    if command is None and host_id == "claude" and _claude_via_plugin():
+        # The plugin's server launches the bare command, as the entry would.
+        command = MCP_COMMAND
     if command is None:
         return None
     verdict = classify_registration(command, which=which)
@@ -965,6 +1036,9 @@ def run_doctor(
                     )
                 from .adapters import claude_adapter
 
+                check = _claude_duplicates_check(target_dir)
+                if check is not None:
+                    adapter_checks.append(check)
                 check = _leftover_gate_check(target_dir)
                 if check is not None:
                     adapter_checks.append(check)

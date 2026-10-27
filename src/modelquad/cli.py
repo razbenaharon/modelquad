@@ -373,16 +373,44 @@ def _install_notices(as_json: bool) -> dict[str, object]:
     return fields
 
 
-def _mcp_registration_skipped(client: str, target_dir: Path, report: InstallReport) -> str | None:
+def _adapter_for(client: str, args: argparse.Namespace, factory=None) -> object:
+    """The adapter for one client, honouring a ``--plugin`` / ``--no-plugin`` given now."""
+
+    choice = getattr(args, "plugin", None)
+    if client == "claude" and choice is not None:
+        from .adapters.claude_adapter import ClaudeAdapter
+
+        return ClaudeAdapter(via_plugin=choice)
+    return factory() if factory is not None else get_adapter(client)
+
+
+def _remember_plugin_choice(args: argparse.Namespace) -> None:
+    """Save ``--plugin`` / ``--no-plugin`` once an install has used it, so a repair keeps it."""
+
+    choice = getattr(args, "plugin", None)
+    if choice is None or args.dry_run:
+        return
+    from .adapters.server_instructions import write_claude_plugin
+
+    write_claude_plugin(choice)
+
+
+def _mcp_registration_skipped(
+    client: str, target_dir: Path, report: InstallReport, adapter: object = None
+) -> str | None:
     """The reason an install left the host unregistered, or None.
 
     Every other skipped action can be a deliberate preservation (a user's own
     status line), but without the MCP entry Claude Code cannot reach
-    ModelQuad at all, so the install has not done its job.
+    ModelQuad at all, so the install has not done its job. Beside the plugin
+    install registers nothing, and the plugin's server is the registration.
     """
 
     from .adapters.report import ActionKind
     from .hostruntime import json_mcp_config_path
+
+    if getattr(adapter, "via_plugin", False):
+        return None
 
     config_path = json_mcp_config_path(client, Path(target_dir))
     for action in report.actions:
@@ -447,15 +475,17 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
         # registration predating this installation. Ordinary uninstall keeps
         # its existing displaced-registration restoration contract.
         before = (None, None) if integrations_off else _registration_before_uninstall(client, target_dir, method_name)
+        adapter = (_adapter_for(client, args, descriptor.adapter_cls) if method_name == "install"
+                   else descriptor.adapter_cls())
         try:
             if method_name == "install":
                 from .adapters.registration import install_with_registration
 
                 report = install_with_registration(
-                    client, target_dir, descriptor.adapter_cls(), dry_run=args.dry_run
+                    client, target_dir, adapter, dry_run=args.dry_run
                 )
             else:
-                report = descriptor.adapter_cls().uninstall(target_dir, dry_run=args.dry_run)
+                report = adapter.uninstall(target_dir, dry_run=args.dry_run)
         except (OSError, ValueError, BackupPersistenceError) as exc:
             # A failed uninstall still owes the user their earlier registration.
             restore = None if integrations_off else _restore_displaced_registration(
@@ -468,7 +498,9 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
             client, target_dir, args, method_name, before
         )
         if method_name == "install":
-            skipped = _mcp_registration_skipped(client, target_dir, report)
+            if client == "claude":
+                _remember_plugin_choice(args)
+            skipped = _mcp_registration_skipped(client, target_dir, report, adapter)
             if skipped is not None:
                 results.append({"client": client, "detected": True, "report": report,
                                 "error": f"Not registered: {skipped}", "restore": None})
@@ -832,15 +864,16 @@ def _run_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             errors.append({"client": client, "error": OFF_GUIDANCE})
             continue
         before = _registration_before_uninstall(client, target_dir, method_name)
+        adapter = _adapter_for(client, args) if method_name == "install" else get_adapter(client)
         try:
             if method_name == "install":
                 from .adapters.registration import install_with_registration
 
                 report = install_with_registration(
-                    client, target_dir, get_adapter(client), dry_run=args.dry_run
+                    client, target_dir, adapter, dry_run=args.dry_run
                 )
             else:
-                report = get_adapter(client).uninstall(target_dir, dry_run=args.dry_run)
+                report = adapter.uninstall(target_dir, dry_run=args.dry_run)
         except (OSError, ValueError, BackupPersistenceError) as exc:
             errors.append({"client": client, "error": str(exc)})
             # A failed uninstall still owes the user their earlier registration.
@@ -853,8 +886,10 @@ def _run_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             restores.append(restore)
         reports.append(report)
         if method_name == "install":
+            if client == "claude":
+                _remember_plugin_choice(args)
             recipes.append(_status_line_recipe(client, target_dir))
-            skipped = _mcp_registration_skipped(client, target_dir, report)
+            skipped = _mcp_registration_skipped(client, target_dir, report, adapter)
             if skipped is not None:
                 errors.append({"client": client, "error": f"Not registered: {skipped}"})
     if args.as_json:
@@ -1682,6 +1717,18 @@ def build_parser() -> argparse.ArgumentParser:
             dest="as_json",
             help="Print the adapter report as JSON.",
         )
+        if command_name == "install":
+            via_plugin = adapter_command.add_mutually_exclusive_group()
+            via_plugin.add_argument(
+                "--plugin", action="store_true", dest="plugin", default=None,
+                help="The ModelQuad Claude Code plugin supplies the server, commands and "
+                "reminder: install only the status line, take back ModelQuad's own copies, "
+                "and remember the choice.",
+            )
+            via_plugin.add_argument(
+                "--no-plugin", action="store_false", dest="plugin",
+                help="Install the server, commands and reminder directly again (the default).",
+            )
     doctor = subcommands.add_parser("doctor", help="Check optional CLIs, adapters, and usage sources.")
     doctor.add_argument("--json", action="store_true", dest="as_json", help="Print the doctor report as JSON.")
     doctor.add_argument(

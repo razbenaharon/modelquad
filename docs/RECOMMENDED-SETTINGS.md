@@ -21,12 +21,15 @@ rule to that project's `.claude/settings.json`:
 ```json
 {
   "permissions": {
-    "deny": ["mcp__modelquad"]
+    "deny": ["mcp__modelquad", "mcp__plugin_modelquad_modelquad__*"]
   }
 }
 ```
 
-`mcp__modelquad` covers every ModelQuad tool. Commit the file so the rule
+`mcp__modelquad` covers every ModelQuad tool from `modelquad install
+claude`. The ModelQuad plugin's server names its tools
+`mcp__plugin_modelquad_modelquad__...`, so the second rule covers those; keep
+both, and the rule holds however ModelQuad was installed. Commit the file so the rule
 applies to everyone who opens the repository, or put the same rule in
 `.claude/settings.local.json` to apply it only on your computer. Other
 projects keep ModelQuad.
@@ -100,10 +103,12 @@ ModelQuad off a whole fleet:
 
 - block the server by the command that starts it, with a `deniedMcpServers`
   entry: `"deniedMcpServers": [{"serverCommand": ["modelquad-mcp"]}]`. This
-  is the command `modelquad install claude` registers. Claude Code compares
+  is the command both `modelquad install claude` and the ModelQuad plugin
+  register. Claude Code compares
   the command and its arguments exactly, so a server started another way (a
   full path, or `python -m`) needs its own entry, or
-- deny its tools with `"permissions": {"deny": ["mcp__modelquad"]}`.
+- deny its tools with
+  `"permissions": {"deny": ["mcp__modelquad", "mcp__plugin_modelquad_modelquad__*"]}`.
 
 Both of these also match by a name, which a user can choose. Claude Code's
 documentation warns that a `serverName` entry is a label, not a security

@@ -90,6 +90,11 @@ _REMOVED_GATE = (
     "Removed the advisory PreToolUse hook an earlier version added; "
     "ModelQuad's guidance now comes from its MCP server."
 )
+_LEFT_TO_PLUGIN = "Removed ModelQuad's server entry; the ModelQuad plugin supplies the server."
+_FOREIGN_SERVER = (
+    "A modelquad server entry that ModelQuad's install did not write was left in place. "
+    "Claude Code starts it next to the plugin's server; remove it yourself to keep one."
+)
 
 
 def _status_line_command() -> str:
@@ -354,6 +359,53 @@ def _plan_remove_gates(payload) -> list[Change]:
     return changes
 
 
+def _plan_leave_server_to_plugin(staged: StagedJson, template_value: dict) -> Change:
+    """Remove ModelQuad's own server entry so the plugin's is the only one.
+
+    Only an entry ModelQuad provably wrote goes: today's exact value, or one
+    in the install lineage. Anything else is the user's own registration,
+    which install never destroys; it stays, and the report says so.
+    """
+
+    from .registration import recorded_replacement, registration_owned
+
+    if staged.refusal is not None:
+        return UNCHANGED
+    servers = staged.payload.get("mcpServers")
+    entry = servers.get(MCP_SERVER_NAME) if isinstance(servers, dict) else None
+    if entry is None:
+        return UNCHANGED
+    record = recorded_replacement("claude")
+    owned = entry == template_value or (
+        record is not None and isinstance(entry, dict) and registration_owned(record, entry, None)
+    )
+    if not owned:
+        return Change("skipped", _FOREIGN_SERVER)
+    change = delete_key(staged.payload, _MCP_KEY_PATH)
+    return Change(change.kind, _LEFT_TO_PLUGIN) if change.changes_file else change
+
+
+def plugin_recorded(target_dir: Path) -> bool | None:
+    """Whether Claude Code's plugin record lists the ModelQuad plugin.
+
+    Read-only, from ``plugins/installed_plugins.json`` under the Claude
+    folder. Claude Code does not document that file as stable, and it records
+    what was installed, not what is enabled, so this is only ever evidence for
+    a report. ``None`` when the file is missing or unreadable: unknown.
+    """
+
+    try:
+        payload = json.loads(
+            (Path(target_dir) / "plugins" / "installed_plugins.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, ValueError):
+        return None
+    plugins = payload.get("plugins") if isinstance(payload, dict) else None
+    if not isinstance(plugins, dict):
+        return None
+    return any(str(key).split("@", 1)[0] == PRODUCT_SLUG for key in plugins)
+
+
 def _read_mcp_entry(target_dir: Path) -> object:
     try:
         payload = json.loads(mcp_config_path(target_dir).read_text(encoding="utf-8"))
@@ -364,11 +416,26 @@ def _read_mcp_entry(target_dir: Path) -> object:
 
 
 class ClaudeAdapter:
-    """Install Claude Code's fully-owned skill and MCP configuration entry."""
+    """Install Claude Code's fully-owned skill and MCP configuration entry.
+
+    With ``via_plugin`` the ModelQuad plugin supplies the server, the commands
+    and the reminder, so install keeps only the status line and takes back its
+    own copies of the rest: Claude Code would otherwise run each twice.
+    ``None`` reads the choice ``modelquad install claude --plugin`` saved.
+    """
 
     name: str = "claude"
 
+    def __init__(self, *, via_plugin: bool | None = None) -> None:
+        if via_plugin is None:
+            from .server_instructions import read_claude_plugin
+
+            via_plugin = read_claude_plugin()
+        self.via_plugin = via_plugin
+
     def install(self, target_dir: Path, *, dry_run: bool = False) -> InstallReport:
+        if self.via_plugin:
+            return self._install_beside_plugin(Path(target_dir), dry_run=dry_run)
         destination = Path(target_dir)
         # Resolve the shell command before the first filesystem write.
         status_line_command = _status_line_command()
@@ -417,6 +484,55 @@ class ClaudeAdapter:
         ]
         return InstallReport(self.name, dry_run, tuple(actions))
 
+    def _install_beside_plugin(self, destination: Path, *, dry_run: bool) -> InstallReport:
+        """The status line only; ModelQuad's own server, commands and reminder go.
+
+        Each removal takes only what is provably ModelQuad's, with a backup,
+        exactly as uninstall does. The report keeps install's order.
+        """
+
+        status_line_command = _status_line_command()
+        with adapters_template_dir(self.name) as templates:
+            mcp_value = _mcp_template_value(templates)
+
+        mcp = StagedJson.load(mcp_config_path(destination))
+        policy = StagedText.load(destination / "CLAUDE.md")
+        settings = StagedJson.load(destination / "settings.json")
+
+        mcp_change = _plan_leave_server_to_plugin(mcp, mcp_value)
+        policy_change = _plan_remove_policy_block(policy)
+        status_change = timeout_change = pending_change = UNCHANGED
+        gates: list[Change] = []
+        retire: tuple[str, ...] = ()
+        if settings.refusal is None:
+            payload = settings.payload
+            status_change = plan_owned_status_line(
+                payload, _STATUS_LINE_ARGUMENTS, status_line_command, status_type="command"
+            )
+            gates = _plan_remove_gates(payload)
+            timeout_change, retire = _plan_remove_tool_timeout(settings)
+            pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run, remove=True)
+
+        skills = {_SKILL_DIR: _remove_owned_file(destination / "skills" / _SKILL_DIR / "SKILL.md",
+                                                 dry_run=dry_run)}
+        skills.update({
+            name: _remove_command_skill(destination / "skills" / name / "SKILL.md", dry_run=dry_run)
+            for name in _COMMAND_SKILL_DIRS
+        })
+        for staged in (mcp, policy, settings):
+            staged.commit(dry_run=dry_run)
+        actions = [
+            skills[_SKILL_DIR],
+            mcp.action(mcp_change, dry_run=dry_run),
+            *_policy_action(policy, policy_change, dry_run=dry_run),
+            settings.action(status_change, dry_run=dry_run),
+            *_timeout_action(settings, timeout_change, retire, dry_run=dry_run),
+            pending_action(settings, pending_change, dry_run=dry_run),
+            *(settings.action(change, dry_run=dry_run) for change in gates),
+            *(skills[name] for name in _COMMAND_SKILL_DIRS),
+        ]
+        return InstallReport(self.name, dry_run, tuple(actions))
+
     def uninstall(self, target_dir: Path, *, dry_run: bool = False) -> InstallReport:
         destination = Path(target_dir)
 
@@ -461,9 +577,12 @@ class ClaudeAdapter:
         """The skill is in place and Claude Code has the modelquad server entry.
 
         Whether that entry launches THIS installation is a separate question,
-        answered by doctor's ``claude MCP runtime`` check.
+        answered by doctor's ``claude MCP runtime`` check. Beside the plugin,
+        it is Claude Code's own record that the plugin is installed.
         """
         destination = Path(target_dir)
+        if self.via_plugin:
+            return plugin_recorded(destination) is True
         return (
             (destination / "skills" / _SKILL_DIR / "SKILL.md").is_file()
             and isinstance(_read_mcp_entry(destination), dict)

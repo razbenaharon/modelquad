@@ -25,6 +25,7 @@ from pathlib import Path
 
 PREFERENCES_FILE_NAME = "preferences.json"
 _PROACTIVE_KEY = "proactive"
+_CLAUDE_PLUGIN_KEY = "claude_plugin"
 
 _INTRO = (
     "ModelQuad lets Claude ask the user's own Codex CLI for a read-only second opinion: "
@@ -99,6 +100,32 @@ def write_proactive(enabled: bool, path: Path | None = None) -> Path:
     target = path or preferences_path()
     payload = _read_preferences(target)
     payload[_PROACTIVE_KEY] = bool(enabled)
+    atomic_write(target, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return target
+
+
+def read_claude_plugin(path: Path | None = None) -> bool:
+    """Whether the ModelQuad plugin supplies Claude Code's server, commands and reminder.
+
+    Set by ``modelquad install claude --plugin``; anything unreadable means the
+    regular install, which is what an install without the flag has always done.
+    """
+
+    try:
+        target = path or preferences_path()
+    except Exception:  # noqa: BLE001 -- an unreadable state folder means the regular install
+        return False
+    return _read_preferences(target).get(_CLAUDE_PLUGIN_KEY) is True
+
+
+def write_claude_plugin(enabled: bool, path: Path | None = None) -> Path:
+    """Save the choice, keeping any other preference in the same file."""
+
+    from .atomicwrite import atomic_write
+
+    target = path or preferences_path()
+    payload = _read_preferences(target)
+    payload[_CLAUDE_PLUGIN_KEY] = bool(enabled)
     atomic_write(target, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return target
 

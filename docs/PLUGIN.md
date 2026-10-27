@@ -1,45 +1,76 @@
 # Claude Code plugin (experimental, not published)
 
-This repository carries a prototype Claude Code plugin in `plugin/` and a
-marketplace file in `.claude-plugin/marketplace.json`. It is **not** part of
-the supported install yet: `modelquad install claude` remains the way to set
-ModelQuad up, and nothing here is published to any plugin directory.
+This repository carries a Claude Code plugin in `plugin/` and a marketplace
+file in `.claude-plugin/marketplace.json`. It is **not** the supported install
+yet: `modelquad install claude` remains the documented way to set ModelQuad
+up, and nothing here is published to any plugin directory.
 
 ## What the plugin contains
 
-- Five skills, copied from the package's own templates
-  (`src/modelquad/adapters/templates/claude/skills/`) by
-  `python scripts/sync_plugin.py`. A plugin namespaces its skills, so they
-  appear as `/modelquad:guide`, `/modelquad:review`, `/modelquad:handoff`,
-  `/modelquad:quota` and `/modelquad:setup`. All but the guide are commands
-  only you start.
-- The SessionStart reminder hook (`modelquad hook-pending claude`), the same
-  one the installer adds. It only reports retained answers; it never blocks
-  or approves anything.
+- **The ModelQuad MCP server** (`plugin/.mcp.json`), a copy of the entry
+  `modelquad install claude` writes: it launches `modelquad-mcp`, the command
+  pip puts on PATH. A plugin's server tools are named
+  `mcp__plugin_modelquad_modelquad__<tool>` instead of
+  `mcp__modelquad__<tool>`; the tools and their annotations are the same, so
+  Claude Code asks the user before every call that would start Codex.
+- **Five skills**, copied from the package's own templates
+  (`src/modelquad/adapters/templates/claude/skills/`). A plugin namespaces its
+  skills, so they appear as `/modelquad:guide`, `/modelquad:review`,
+  `/modelquad:handoff`, `/modelquad:quota` and `/modelquad:setup`. All but the
+  guide are commands only you start.
+- **The SessionStart reminder hook** (`modelquad hook-pending claude`), the
+  same one the installer adds. It only reports retained answers; it never
+  blocks or approves anything.
+
+`python scripts/sync_plugin.py` copies the skills and the server entry from
+the templates; `tests/test_plugin_prototype.py` fails while a copy differs.
 
 ## What it deliberately does not contain
 
-- **No MCP server.** The `modelquad` MCP server and the status line still come
-  from `modelquad install claude`. A server bundled in a plugin gets new tool
-  names (`mcp__plugin_modelquad_modelquad__*`), which would silently stop
-  existing deny rules such as `mcp__modelquad` from matching, and a plugin
-  cannot set Claude Code's main status line.
+- **No status line.** A plugin cannot set Claude Code's status line. Run
+  `modelquad install claude --plugin` for it (below).
 - **No permission rules, agents, output styles or settings.** Every call that
   starts Codex keeps Claude Code's approval prompt.
 - **No executables.** The plugin needs the `modelquad` package installed with
-  pip; the hook calls its `modelquad` command.
+  pip; the server and the hook run its `modelquad-mcp` and `modelquad`
+  commands.
+
+## Installing with the plugin
+
+    pip install <this repository>
+    claude plugin install modelquad --marketplace razbenaharon/modelquad
+    modelquad install claude --plugin
+
+The last step is needed for the status line in a terminal, and to take back
+the copies an earlier `modelquad install claude` made. With `--plugin`, the
+install keeps only the status line and removes ModelQuad's own server entry,
+commands and reminder, each with a backup, and only when it is provably
+ModelQuad's: a `modelquad` server entry the install did not write stays, and
+the report says so. The choice is saved, so `modelquad repair` keeps it.
+`modelquad install claude --no-plugin` goes back to the regular install.
+
+`modelquad doctor` reports the plugin's registration from Claude Code's own
+plugin record (`~/.claude/plugins/installed_plugins.json`, read-only), and
+warns when the plugin and the regular install are both present, because
+Claude Code would then run the server, the commands and the reminder twice.
+Claude Code does not document that file as stable, so an unreadable record
+reads as unknown, never as installed.
+
+## Keeping ModelQuad out of a project
+
+The plugin's tool names differ, so a deny rule needs both forms:
+`"deny": ["mcp__modelquad", "mcp__plugin_modelquad_modelquad__*"]`. See
+[RECOMMENDED-SETTINGS.md](RECOMMENDED-SETTINGS.md).
 
 ## Before this becomes a supported install
 
-- A live test that the plugin's hook and commands behave the same as the
-  installed ones.
-- **Known issue:** enabling the plugin and also running
-  `modelquad install claude` (still needed for the MCP server) gives two
-  copies of the commands and runs the SessionStart reminder twice, because
-  plugin hooks and settings hooks are separate. Do not enable the plugin until
-  the installer can leave the skills and the hook to it.
-- Decide how `modelquad install claude` and the plugin share the skills and
-  the hook, so a user has one copy of each.
+- A live test: the plugin's server, commands and reminder behave as the
+  installed ones; the approval prompt appears before every Codex call; both
+  deny rules hold; `modelquad install claude --plugin` leaves exactly one
+  copy of each.
+- The notice of what ModelQuad sends where, which `modelquad onboard` shows,
+  has to reach a user who installs only the plugin before the first Codex
+  call. Not decided yet.
 - Keep `plugin/.claude-plugin/plugin.json`'s `version` equal to the package
   version (`tests/test_plugin_prototype.py` checks it).
 - Validate with `claude plugin validate plugin --strict` and

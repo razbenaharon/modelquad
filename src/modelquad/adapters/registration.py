@@ -780,7 +780,9 @@ def install_with_registration(
         read_registered_command, read_registered_entry, registration_is_readable,
     )
 
-    if not registration_is_readable(host):
+    if not registration_is_readable(host) or getattr(adapter, "via_plugin", False):
+        # Beside the plugin, install writes no registration; it only takes
+        # back its own, and the record of what it displaced stays for uninstall.
         return adapter.install(target_dir, dry_run=dry_run)
     before_entry = read_registered_entry(host, target_dir)
     before_command = read_registered_command(host, target_dir)
