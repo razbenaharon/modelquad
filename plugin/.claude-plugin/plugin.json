@@ -1,7 +1,7 @@
 {
   "name": "modelquad",
-  "version": "0.3.0",
-  "description": "Read-only Codex second opinions inside Claude Code: the ModelQuad MCP server, its commands and its reminder. Needs the modelquad package installed with pip. The status line still comes from `modelquad install claude --plugin`.",
+  "version": "0.4.0",
+  "description": "Read-only Codex second opinions inside Claude Code: the ModelQuad MCP server, its commands, its reminder, and Codex's quota above the prompt in the desktop app. Needs the modelquad package installed with pip. The terminal status line comes from `modelquad install claude --plugin`.",
   "author": {
     "name": "Raz Ben Aharon"
   },

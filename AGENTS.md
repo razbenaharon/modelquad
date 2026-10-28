@@ -9,7 +9,7 @@ here; the tool under development is not the instrument for developing it.
 
 ## Current state
 
-- Version `0.3.0`, DB schema `24`, router engine `4`, outcome assessor `3`.
+- Version `0.4.0`, DB schema `24`, router engine `4`, outcome assessor `3`.
   `python scripts/check.py docs` checks these against the code.
 - Native Windows only, not WSL. Install, onboarding, repair and
   `service install` refuse to run elsewhere.

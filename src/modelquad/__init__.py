@@ -3,7 +3,7 @@
 """ModelQuad: read-only Codex second opinions and quota display for Claude Code."""
 
 __all__ = ["Config", "Freshness", "ProviderStatus", "Router", "TaskType", "load_config"]
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 
 def __getattr__(name: str):

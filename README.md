@@ -175,6 +175,22 @@ running, `modelquad settings job-runner on` keeps delegated work running after
 you close the chat. It explains what that means and turns on only after you
 type `yes` (or pass `--yes` where there is no prompt).
 
+### Or as a Claude Code plugin (experimental)
+
+The ModelQuad plugin carries the server, the five commands (as
+`/modelquad:review` and the like), the startup reminder, and, in the desktop
+app's Code tab, a line above the prompt with Codex's quota. It still needs the
+package from the step above:
+
+    claude plugin install modelquad --marketplace razbenaharon/modelquad
+    modelquad install claude --plugin
+
+The second command adds the status line, which a plugin cannot set, and takes
+back the server, commands and reminder an earlier `modelquad install claude`
+added, so Claude Code does not run them twice. Someone who installs only the
+plugin sees the notice of what ModelQuad sends where on their first Codex
+call, which starts nothing. See [docs/PLUGIN.md](docs/PLUGIN.md).
+
 ## What it changes on your machine
 
 `modelquad install claude` (and `modelquad onboard`) change Claude Code's user
