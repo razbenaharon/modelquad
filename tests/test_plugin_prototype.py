@@ -74,7 +74,7 @@ def test_the_quota_band_only_displays():
     # holds for ModelQuad's hooks of every kind), nor start a process.
     source = (PLUGIN / "hooks" / "quota-band.tsx").read_text(encoding="utf-8")
     events = set(re.findall(r"""\bon\(\s*['"]([\w.]+)['"]""", source))
-    assert events == {"session.start", "session.measure", "ui.render"}
+    assert events == {"session.start", "ui.render"}
     for forbidden in ("$.process", "$.tool", "$.model", "$.agent", "$.session.append",
                       "$.fs.write", "$.env.set", "deny"):
         assert forbidden not in source, forbidden

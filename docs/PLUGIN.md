@@ -24,9 +24,9 @@ up, and nothing here is published to any plugin directory.
 
 - **A quota band** (`plugin/hooks/quota-band.tsx`, a Claude Code hooks
   module; experimental). Where no status line is drawn (the desktop app's
-  Code tab, an IDE, a phone), it shows Claude's and Codex's 5-hour and
-  weekly windows above the prompt, worded as the status line words them.
-  Claude's figures are the ones Claude Code measures itself; Codex's are the
+  Code tab, an IDE, a phone), it shows Codex's 5-hour and weekly windows
+  above the prompt, worded as the status line words them. Claude's own usage
+  is already on show there, so the band leaves it out. The figures are the
   reading ModelQuad's server keeps in `~/.claude/usage-codex.json`, re-read
   every minute and marked "(as of ...)" when older than 15 minutes. It draws
   nothing in the terminal, which has the status line. It only displays: it
