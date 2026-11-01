@@ -190,7 +190,9 @@ def loopback_port_listening(port: int) -> bool | None:
     Windows answers a connect to a closed loopback port with a reset only after
     its SYN retries (about one second), so a short connect timeout cannot tell
     "nothing listens" from "something listens but is stuck". The OS table can.
-    None when the table is unavailable; callers then keep the cautious answer.
+    None when the table is unavailable, or when it has a row on the port whose
+    state it leaves blank (0, not a MIB_TCP_STATE; seen for listening sockets
+    on Windows 11 build 26300); callers then keep the cautious answer.
     """
     try:
         _kernel, _adv, ip = _windows()
@@ -212,13 +214,15 @@ def loopback_port_listening(port: int) -> bool | None:
         count = ctypes.c_uint32.from_buffer(buffer).value
         if count > (len(buffer) - 4) // ctypes.sizeof(_TcpRow):
             return None
+        blank = False
         for index in range(count):
             row = _TcpRow.from_buffer(buffer, 4 + index * ctypes.sizeof(_TcpRow))
             address = socket.inet_ntoa(struct.pack("=I", row.local_address))
-            if (row.state == 2 and socket.ntohs(row.local_port & 0xffff) == port
-                    and address in ("127.0.0.1", "0.0.0.0")):
-                return True
-        return False
+            if socket.ntohs(row.local_port & 0xffff) == port and address in ("127.0.0.1", "0.0.0.0"):
+                if row.state == 2:
+                    return True
+                blank = blank or row.state == 0
+        return None if blank else False
     return None
 
 

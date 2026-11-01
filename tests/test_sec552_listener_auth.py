@@ -329,6 +329,27 @@ def test_tcp_table_requires_exact_established_tuple(monkeypatch, rows, accepted,
             identity._owner_pid(ENDPOINT, server=server)
 
 
+@pytest.mark.parametrize("rows,expected", [
+    ([(2, 8765)], True),
+    ([(0, 8765)], None),
+    ([(0, 8765), (2, 8765)], True),
+    ([(5, 8765), (0, 8766)], False),
+    ([], False),
+], ids=["listening", "blank-state-is-unknown", "listening-beside-blank", "blank-on-another-port", "absent"])
+def test_listener_table_reads_a_blank_state_as_unknown(monkeypatch, rows, expected):
+    loopback = struct.unpack("=I", socket.inet_aton("127.0.0.1"))[0]
+    entries = [bytes(identity._TcpRow(state, loopback, socket.htons(port), 0, 0, 42)) for state, port in rows]
+    raw = struct.pack("=I", len(entries)) + b"".join(entries)
+    def table(buffer, size, *_args):
+        size._obj.value = len(raw)
+        if buffer is None:
+            return 122
+        ctypes.memmove(buffer, raw, len(raw))
+        return 0
+    monkeypatch.setattr(identity, "_windows", lambda: (None, None, SimpleNamespace(GetExtendedTcpTable=table)))
+    assert identity.loopback_port_listening(8765) is expected
+
+
 @pytest.mark.parametrize("failure", ["token", "table", "image", "sid"], ids=["token-inaccessible", "table-inaccessible", "image-mismatch", "sid-mismatch"])
 def test_native_inspection_refuses_and_releases_handle(monkeypatch, failure):
     closed = []
@@ -436,6 +457,9 @@ def test_native_listener_table_sees_a_listening_socket():
     server.bind(("127.0.0.1", 0))
     server.listen(1)
     try:
-        assert identity.loopback_port_listening(server.getsockname()[1]) is True
+        seen = identity.loopback_port_listening(server.getsockname()[1])
+        if seen is None:
+            pytest.skip("this Windows build leaves a listening socket's state blank")
+        assert seen is True
     finally:
         server.close()
