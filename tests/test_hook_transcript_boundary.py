@@ -296,3 +296,41 @@ def test_quiet_guard_catches_usage_collection_code(tmp_path, monkeypatch):
                 function(*[None] * len(required))
             except Exception:  # noqa: BLE001 -- only the call itself matters
                 pass
+
+
+# ---------------------------------------------------------------------------
+# The SessionStart reminder's repository line: it reads the user's per-repo
+# setting and the repository's .modelquad.toml, never the transcript it is
+# handed, starts no process and decides nothing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("choice", ["on", "off", "offer-only"])
+def test_session_start_repo_line_never_opens_the_transcript(tmp_path, capsys, monkeypatch, choice):
+    from modelquad import cli_entry, repo_settings
+    from modelquad.jobs import service_client
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".modelquad.toml").write_text('schema = 1\n[offers]\ncodex = "default"\n', encoding="utf-8")
+    repo_settings.write_mode(repo, choice)
+    monkeypatch.setattr(service_client, "read_pending_summary",
+                        lambda *a, **kw: {"count": 0, "more": False, "jobs": []})
+    canary = _write_canary(tmp_path)
+    payload = {"hook_event_name": "SessionStart", "session_id": RAW_SESSION_ID,
+               "transcript_path": str(canary), "cwd": str(repo)}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    capsys.readouterr()
+    with _canary_armed(monkeypatch, canary), _local_and_quiet(monkeypatch):
+        code = cli_entry.main(["hook-pending", "claude"])
+    out = capsys.readouterr().out
+    assert code == 0
+    expected = {"on": repo_settings.ADVICE[repo_settings.PROACTIVE],
+                "off": repo_settings.ADVICE[repo_settings.OFF], "offer-only": None}[choice]
+    if expected is None:
+        assert out == ""
+    else:
+        hook_output = json.loads(out)
+        assert hook_output == {"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                                      "additionalContext": expected}}
+    assert "permissionDecision" not in out and "decision" not in out and RAW_SESSION_ID not in out

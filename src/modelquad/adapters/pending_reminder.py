@@ -1,6 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Metadata-only SessionStart context. No conversation files or state writes."""
+"""Metadata-only SessionStart context. No conversation files or state writes.
+
+Two optional parts: one advisory line about Codex in this repository
+(``repo_settings.advice_line``: the user's per-repo setting and the
+repository's ``.modelquad.toml``, silent when nothing differs from the global
+setting), and the list of retained delegated work. The hook never blocks or
+approves, never opens the transcript path it is handed, and shares one budget.
+"""
 
 from __future__ import annotations
 
@@ -96,8 +103,29 @@ def serialize_codex(text):
     return {'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': text}}
 
 
-def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, fetch=None):
-    """Fail silent, including worker/input/transport/deadline failures."""
+def valid_cwd(cwd):
+    return (isinstance(cwd, str) and bool(cwd) and len(cwd) <= 4096
+            and not any(ord(c) < 32 for c in cwd) and Path(cwd).is_absolute())
+
+
+def repo_advice(cwd):
+    """The one closed advisory line for this repository, or None.
+
+    Reads only preferences.json, the installation id, the .git pointer files
+    and the repository's .modelquad.toml; starts no process.
+    """
+    if not valid_cwd(cwd):
+        return None
+    from modelquad.repo_settings import advice_line
+    return advice_line(cwd)
+
+
+def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, fetch=None, advise=None):
+    """Fail silent, including worker/input/transport/deadline failures.
+
+    The repository line and the retained-work list are independent: either
+    may appear alone, and a service that cannot answer leaves the line.
+    """
     environ = os.environ if environ is None else environ
     if environ.get('MODELQUAD_WORKER') == '1':
         return 0
@@ -126,19 +154,37 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, fetch=N
         event = json.loads(raw)
         if not isinstance(event, dict) or event.get('hook_event_name') != 'SessionStart':
             return 0
+        # The repository line first: closed text only (repo_settings.ADVICE),
+        # never the event's. Kept when it was ready within the budget, even
+        # if the retained-work read below runs out the rest of it.
+        advice = None
+        try:
+            line = (advise or repo_advice)(event.get('cwd'))
+            if line is not None:
+                from modelquad.repo_settings import ADVICE, BROKEN_FILE_ADVICE
+                if line in (*ADVICE.values(), BROKEN_FILE_ADVICE) and clock() < deadline:
+                    advice = line
+        except Exception:
+            advice = None
+        pending = None
         key = project_key(event.get('cwd'))
-        if key is None or clock() >= deadline:
-            return 0
-        if fetch is None:
-            from modelquad.jobs.service_client import read_pending_summary
-            fetch = read_pending_summary
-        summary = fetch(key, deadline=deadline)
-        validate_summary(summary)
-        if not summary['count'] or clock() >= deadline:
+        if key is not None and clock() < deadline:
+            try:
+                if fetch is None:
+                    from modelquad.jobs.service_client import read_pending_summary
+                    fetch = read_pending_summary
+                summary = fetch(key, deadline=deadline)
+                validate_summary(summary)
+                if summary['count'] and clock() < deadline:
+                    pending = reminder_text(summary)
+            except Exception:
+                pending = None
+        texts = [text for text in (advice, pending) if text]
+        if not texts:
             return 0
         serializer = serialize_claude if host == 'claude' else serialize_codex
-        output = json.dumps(serializer(reminder_text(summary)), separators=(',', ':')) + '\n'
-        if len(output.encode('utf-8')) <= BYTE_CAP and clock() < deadline:
+        output = json.dumps(serializer('\n'.join(texts)), separators=(',', ':')) + '\n'
+        if len(output.encode('utf-8')) <= BYTE_CAP and (advice or clock() < deadline):
             stdout.write(output)
     except Exception:
         pass  # No diagnostic text, state marker or user-facing message.

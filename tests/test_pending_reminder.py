@@ -23,13 +23,14 @@ SUMMARY = {'count': 1, 'more': False, 'jobs': [{
 }]}
 
 
-def invoke(monkeypatch, *, host='claude', event=None, raw=None, fetch=None, environ=None, clock=lambda: 10):
+def invoke(monkeypatch, *, host='claude', event=None, raw=None, fetch=None, environ=None, clock=lambda: 10,
+           advise=lambda cwd: None):
     monkeypatch.setattr(reminder, 'project_key', lambda cwd: KEY if cwd == 'C:/synthetic/project' else None)
     payload = event if event is not None else {'hook_event_name': 'SessionStart', 'cwd': 'C:/synthetic/project'}
     stream = io.BytesIO(raw if raw is not None else json.dumps(payload).encode())
     out = io.StringIO()
     code = reminder.run_hook(host, stream, out, environ=environ or {}, clock=clock,
-                             fetch=fetch or (lambda *a, **kw: SUMMARY))
+                             fetch=fetch or (lambda *a, **kw: SUMMARY), advise=advise)
     return code, out.getvalue()
 
 

@@ -155,6 +155,10 @@ REFUSAL_MESSAGES = {
         "This repository's .modelquad.toml could not be used (a link, not a plain file, or "
         "larger than 8 KiB), so ModelQuad refuses Codex here. Replace it with a plain file "
         "or remove it."),
+    # The user's own per-repository setting (repo_settings), rechecked here too.
+    "user_repo_codex_off": (
+        "You turned Codex off for this repository (modelquad settings repo off), so nothing "
+        "was started. To allow it here again, run: modelquad settings repo inherit"),
     UNAVAILABLE: (
         "The no-shell worker could not be started within its time budget, or its event "
         "stream could not be verified as tool-free, so no answer was returned."),

@@ -126,8 +126,9 @@ class RepoPolicy:
     def refusal_for(self, task_type, *, account_kind=None, check_account=True) -> str | None:
         """The closed reason this call is refused for, or None to go on.
 
-        ``account_kind`` is the Codex account kind word (personal, workspace,
-        unknown); anything but "workspace" fails ``account = "workspace"``.
+        ``account_kind`` is the account kind of the plan *Codex itself reports*
+        (personal, workspace, unknown); anything but "workspace" fails
+        ``account = "workspace"``. A plan the user declared never counts here.
         """
         if self.refusal is not None:
             return self.refusal
@@ -360,7 +361,20 @@ def load(working_directory) -> RepoPolicy:
     """
     try:
         root = find_root(working_directory)
-        raw = _read(root)
+    except Exception:  # noqa: BLE001 -- nothing about the path or the error escapes
+        return _broken(UNREADABLE, "unreadable")
+    return load_from_root(root)
+
+
+def load_from_root(root) -> RepoPolicy:
+    """The policy of the file in ``root`` itself, read now; starts no process.
+
+    The SessionStart hook uses this with the nearest folder holding ``.git``
+    (the fallback :func:`find_root` uses when Git cannot answer), so it stays
+    within its time budget. Never raises; fails closed like :func:`load`.
+    """
+    try:
+        raw = _read(Path(root))
     except Exception:  # noqa: BLE001 -- nothing about the path or the error escapes
         return _broken(UNREADABLE, "unreadable")
     if raw is None:
@@ -384,11 +398,12 @@ def message(code: str, policy: RepoPolicy | None = None, *, task_type=None, acco
         return (f"This repository's {FILE_NAME} does not allow Codex {named}tasks ([codex] task_kinds), "
                 "so ModelQuad started nothing. Ask for a kind it lists, or edit task_kinds.")
     if code == ACCOUNT_WORKSPACE_REQUIRED:
-        which = {"personal": "a personal account"}.get(account_kind, "an account ModelQuad cannot "
-                                                                     "confirm is a work account")
+        which = ("Codex reports a personal plan" if account_kind == "personal" else
+                 "Codex has not reported a workspace plan (a plan set with modelquad settings "
+                 "plan does not count)")
         return (f"This repository's {FILE_NAME} allows Codex only on a work account "
-                f"([codex] account = \"workspace\"), and Codex here is on {which}, so ModelQuad "
-                "started nothing. Use a work Codex account here, or change that line.")
+                f"([codex] account = \"workspace\"), and {which}, so ModelQuad started nothing. "
+                "Use a work Codex account here, or change that line.")
     problem = policy.problem if policy is not None and policy.problem in PROBLEMS else None
     key = policy.problem_key if policy is not None and policy.problem_key in _KNOWN_KEYS else None
     what = _PROBLEM_TEXT.get(problem, "could not be used")

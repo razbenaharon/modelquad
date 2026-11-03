@@ -676,6 +676,8 @@ NOSHELL_PRELAUNCH_REFUSALS: frozenset[str] = frozenset({
     # The repository's .modelquad.toml (repo_policy.REASONS).
     "repo_policy_codex_off", "repo_policy_kind_removed", "repo_policy_account_workspace_required",
     "repo_policy_invalid", "repo_policy_unreadable",
+    # The user's own per-repository setting (repo_settings.REASONS).
+    "user_repo_codex_off",
 })
 
 

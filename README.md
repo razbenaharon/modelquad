@@ -79,6 +79,16 @@ Status: early, source-only release. Windows only.
   account, for example when code would go from a work account to a personal
   one. Claude sees only that kind word, never the plan name. A plan never
   decides which tool works or when.
+- `modelquad settings repo <on|off|offer-only|inherit>` sets this for one
+  repository (the current folder's, or `--project DIR`): `off` turns Codex off
+  there, `offer-only` keeps Claude to offering, `on` lets Claude decide on its
+  own there, and `inherit` goes back to the global setting. With no choice it
+  shows what applies. A repository's own `.modelquad.toml` can still make
+  Claude ask less, never more. The setting is stored in `preferences.json`
+  under a keyed hash of the repository, never its path or name. `off` applies
+  from the next call; the other choices reach Claude as one line when a new
+  Claude Code session starts in that repository. The approval prompt still
+  appears before each call.
 - This guidance reaches Claude through ModelQuad's MCP server instructions and
   the `/modelquad` skill. ModelQuad writes nothing into your global
   `CLAUDE.md`.
@@ -94,7 +104,8 @@ Status: early, source-only release. Windows only.
 - To block new Codex calls from Claude Code: `modelquad host disconnect claude`.
   Undo with `modelquad host connect claude`.
 - A repository can carry a `.modelquad.toml` file that narrows Codex use there:
-  Codex off, fewer task kinds, lower file limits, or a work account only. It
+  Codex off, fewer task kinds, lower file limits, a work account only (one
+  Codex itself reports), or Claude calling Codex only when you ask. It
   can never approve a call, add files or change how Codex runs, and a broken
   file refuses Codex in that repository. See
   [docs/REPO-POLICY.md](docs/REPO-POLICY.md).

@@ -1422,19 +1422,27 @@ def _codex_account() -> str:
 
 def _repo_policy_refusal(task_type: str, working_directory: str,
                          usage_directory: str | None = None) -> dict | None:
-    """The repository file's closed refusal for this call, or None to go on.
+    """The per-repository closed refusal for this call, or None to go on.
 
-    Read fresh on every call (never cached). ``account = "workspace"`` needs
-    the Codex account kind to be workspace; unknown refuses.
+    Two layers, both read fresh on every call (never cached): the user's own
+    ``modelquad settings repo off`` for this repository, then the repository's
+    ``.modelquad.toml``. ``account = "workspace"`` needs Codex itself to report
+    a workspace plan; a plan the user declared, or none, refuses.
     """
-    from .. import plans, repo_policy
+    from .. import plans, repo_policy, repo_settings
 
+    try:
+        user_mode = repo_settings.read_mode(working_directory)
+    except Exception:  # noqa: BLE001 -- an unreadable setting is no setting
+        user_mode = None
+    if user_mode == "off":
+        return {"reason": repo_settings.USER_CODEX_OFF, "message": repo_settings.USER_OFF_MESSAGE}
     policy = repo_policy.load(working_directory)
     kind = plans.UNKNOWN
     if policy.refusal is None and policy.account == "workspace":
         try:
             directory = Path(usage_directory or USAGE_DIRECTORY or DEFAULT_USAGE_DIRECTORY)
-            kind = plans.current(directory)["codex"].kind
+            kind = plans.reported_codex_kind(directory)
         except Exception:  # noqa: BLE001 -- an unreadable account reads unknown, and refuses
             kind = plans.UNKNOWN
     return repo_policy.refusal(policy, task_type, account_kind=kind)

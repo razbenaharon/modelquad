@@ -977,6 +977,55 @@ def _run_plan_setting(provider: str | None, value: str | None) -> int:
     return 0
 
 
+_REPO_MODE_TEXT = {
+    "on": "on: Claude may decide on its own to consult Codex in this repository.",
+    "off": "off: no Codex in this repository; ModelQuad refuses every Codex call here.",
+    "offer-only": ("offer-only: Claude offers Codex here when it would help and calls it "
+                   "when you agree or ask."),
+}
+
+
+def _run_repo_setting(choice: str | None, project: str | None) -> int:
+    """Show or set the user's own Codex setting for one repository."""
+    from . import repo_policy, repo_settings
+    from .adapters.server_instructions import read_proactive
+
+    folder = Path(project) if project else Path.cwd()
+    if not folder.is_dir():
+        print("That project folder does not exist.", file=sys.stderr)
+        return 2
+    if choice is not None:
+        try:
+            repo_settings.write_mode(folder, choice)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"The setting was not saved: {exc.strerror or exc}", file=sys.stderr)
+            return 1
+    mode = repo_settings.read_mode(folder)
+    if mode is None:
+        print("This repository: inherit (your global setting applies).")
+    else:
+        print(f"This repository: {_REPO_MODE_TEXT[mode]}")
+    global_proactive = read_proactive()
+    result = repo_settings.effective(global_proactive=global_proactive, user_mode=mode,
+                                     policy=repo_policy.load(folder))
+    if result.refusal is not None and result.refusal != repo_settings.USER_CODEX_OFF:
+        print(f"In effect: Codex is refused here by this repository's {repo_policy.FILE_NAME}.")
+    elif result.refusal is None:
+        print({repo_settings.PROACTIVE: "In effect: Claude may decide on its own to consult Codex.",
+               repo_settings.OFFER: "In effect: Claude offers Codex and calls it when you agree or ask.",
+               repo_settings.ON_REQUEST: ("In effect: Claude calls Codex only when you ask "
+                                          f"(this repository's {repo_policy.FILE_NAME}).")}[result.offer])
+    print("Choices: on, off, offer-only, inherit. Claude Code still asks you before each "
+          "ModelQuad Codex call.")
+    print("Stored in this computer's preferences.json under a keyed hash of the repository, "
+          "never its path or name. off applies from the next call; Claude is told the rest when "
+          "a new Claude Code session starts here.")
+    return 0
+
+
 def _run_proactive_setting(enabled: bool) -> int:
     """Save who decides to consult Codex; the MCP server reads it at session start."""
     from .adapters.server_instructions import write_proactive
@@ -1662,6 +1711,14 @@ def build_parser() -> argparse.ArgumentParser:
     plan_cmd.add_argument('provider', nargs='?', choices=('claude', 'codex'))
     plan_cmd.add_argument('value', nargs='?', metavar='plan|unset',
                           help='A listed plan, or unset. Run without it to see the list.')
+    repo_cmd = settings_actions.add_parser(
+        'repo',
+        help='Your own Codex setting for one repository: on (Claude may decide on its own), '
+        'off (no Codex here), offer-only (Claude offers), inherit (the global setting). '
+        'With no choice, show it.')
+    repo_cmd.add_argument('choice', nargs='?', choices=('on', 'off', 'offer-only', 'inherit'))
+    repo_cmd.add_argument('--project', metavar='DIR',
+                          help='The project folder (default: the current folder).')
     host_cmd = subcommands.add_parser("host", help="Control which tools may start new work.")
     host_actions = host_cmd.add_subparsers(dest="host_action", required=True)
     from .routing_policy import VALID_HOST_IDS
@@ -1959,6 +2016,8 @@ def _run_command(argv: Sequence[str] | None) -> int:
         return _run_integrations_command(args, parser)
     if args.command == 'settings' and args.settings_action == 'proactive':
         return _run_proactive_setting(args.choice == 'on')
+    if args.command == 'settings' and args.settings_action == 'repo':
+        return _run_repo_setting(args.choice, args.project)
     if args.command == 'settings' and args.settings_action == 'plan':
         return _run_plan_setting(args.provider, args.value)
     if args.command == 'settings':

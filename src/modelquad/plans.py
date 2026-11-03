@@ -176,6 +176,16 @@ def read_observed_codex_plan(usage_directory: Path) -> str | None:
     return plan if type(plan) is str else None
 
 
+def reported_codex_kind(usage_directory: Path) -> str:
+    """The account kind of the plan Codex itself reported; unknown otherwise.
+
+    For rules that need evidence rather than a statement, such as a
+    repository's ``account = "workspace"``: a plan the user declared never
+    counts here. Reads only ModelQuad's own ``usage-codex.json``.
+    """
+    return observed_codex_kind(read_observed_codex_plan(usage_directory))
+
+
 def merged(observed_codex: str | None, declared: dict[str, str | None]) -> dict[str, PlanView]:
     """Each side's plan view. A plan Codex reports beats the one you set."""
     claude = declared.get("claude")
