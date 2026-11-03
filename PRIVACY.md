@@ -193,6 +193,18 @@ personal ChatGPT plan", "workspace plan" or "unknown", and for a personal plan
 the reminder "If this is work code, check you may send it to a personal
 account."
 
+You can also say which plan you are on with each provider:
+`modelquad settings plan claude <plan>` and `modelquad settings plan codex
+<plan>`. ModelQuad stores that value, from a fixed list, in `preferences.json`
+in the state folder and sends it nowhere. A plan Codex reports comes before the
+one you set. When one side is a work account and the other a personal one, the
+account line names both kinds and says which way the code goes, for example
+"Claude: work account (you set it). Codex: personal account (reported by
+Codex). This sends work code from a work account to a personal one." Claude
+Code's conversation sees that line and, in `modelquad_status`, each side's
+account kind and its source ("reported by Codex", "you set" or "unknown");
+never the plan name. Only the CLI shows plan names.
+
 - The MCP server reads once when it starts and then every 240 seconds (about
   every 4 minutes) while it runs. Claude Code sessions share one reading: a
   session skips its read when another one read less than 230 seconds earlier.
@@ -213,11 +225,11 @@ sends to Anthropic:
 
 - Codex's answers, and facts about each run: status, timings, counts, which
   files were sent (path, size, digest prefix) and which were skipped and why,
-  and the Codex account kind (personal, workspace or unknown), never the plan
-  name.
+  and the account kind of each side (personal, workspace or unknown), never
+  the plan name.
 - Quota, from `modelquad_status`: used and remaining percentages, reset times
-  and freshness for each window, and the note when Claude is near its
-  limit. Not your plan type. When a reading is missing, the reply says why; a
+  and freshness for each window, the note when Claude is near its limit,
+  and each side's account kind with its source. Not your plan type. When a reading is missing, the reply says why; a
   reason that mentions the quota file names it by its file name only, such as
   `usage-codex.json`, never its folder.
 - History, when Claude asks for it: task types, workers, statuses, times,
@@ -351,6 +363,7 @@ service (`modelquad service stop`) before you delete anything here.
 | `host-registration-backup.json` | Your earlier `modelquad` MCP entry in Claude Code, if install replaced one, stored verbatim so uninstall can put it back. Also ownership records for the timeout setting and the `SessionStart` hook, keyed by an unsalted SHA-256 of the settings file path. This file may contain credentials: an MCP entry can carry `args` and `env`, and `env` is where API keys live | Deleted when nothing is owed any more | Yes: it may contain credentials. Private to you and SYSTEM, and not shown by the CLI, `--json`, `doctor` or logs (`tests/test_registration_backup_is_product_state.py`) |
 | `host-observation-claude.json` | The last status-line facts: Claude Code version, model id and display name, large-context flag, a 16-character session fingerprint, time | Overwritten on each update | Low; the raw session id is not written |
 | `host-integrations.json` | Whether global host integrations are on or off | Kept | No |
+| `preferences.json` | Your settings: proactive use on or off, whether the plugin install is in use, and the plans you set with `modelquad settings plan` (values from a fixed list; no path or folder name) | Kept until you change or unset them | Low: the names of your plans |
 | `gate-state\` | One empty marker per Claude Code session, named by the session fingerprint | Markers older than 7 days are removed on the next hook run | No |
 | `service.pid`, `service*.lock`, `service.launch-unconfirmed` | The service's process id, start time and launch command line, which includes the Python interpreter's path; lock and marker files | Replaced on each service start | Low: a local path |
 | `logs\job-runner.log`, `logs\job-runner.log.1` | Runner events (UTC time, job id, a fixed label or an exception class name) and the runner's error output | Rotated above 1 MiB when opened, one older file kept | Possibly: a Python traceback can contain paths and lines of code |

@@ -540,7 +540,19 @@ def _provider_status_payload(
         # Quota is shown, never acted on: the note leaves the choice to the user.
         "handoff_suggestion": handoff_suggestion(
             statuses, config.freshness, now=now),
+        # Account kind words and where they come from; never a plan name.
+        "plans": _public_plans(),
     }
+
+
+def _public_plans() -> dict:
+    from .. import plans
+
+    try:
+        return plans.public_plans(_plan_views())
+    except Exception:  # noqa: BLE001 -- a status reply must not fail over a preference file
+        unknown = {"kind": plans.UNKNOWN, "source": plans.SOURCE_UNKNOWN}
+        return {provider: dict(unknown) for provider in plans.PROVIDERS}
 
 
 def _session_close_stops_worker() -> bool:
@@ -1376,45 +1388,33 @@ _approval_route: ContextVar[str] = ContextVar("modelquad_approval_route", defaul
 #: approval came from the window; otherwise None and the call takes them itself.
 _approved_digests: ContextVar[dict | None] = ContextVar("modelquad_approved_digests", default=None)
 
-#: Codex plan types (the app-server quota read's ``planType``) by account kind.
-_PERSONAL_PLANS = frozenset({"free", "go", "plus", "pro", "prolite"})
-_WORKSPACE_PLANS = frozenset({"team", "business", "enterprise", "edu", "education", "k12"})
-_ACCOUNT_LINES = {
-    "personal": ("Codex account: personal ChatGPT plan. "
-                 "If this is work code, check you may send it to a personal account."),
-    "workspace": "Codex account: workspace plan.",
-    "unknown": "Codex account: unknown.",
-}
 MAX_DELEGATED_FILES = 32
 FilesArgument = Annotated[list[str] | None, Field(max_length=MAX_DELEGATED_FILES)]
 
 
-def _codex_account() -> str:
-    """"personal", "workspace" or "unknown", from the stored Codex quota read.
+def _plan_views() -> dict:
+    """Each side's plan view: Codex's own report first, then what the user set.
 
-    Read locally from ``usage-codex.json``. Only this one word, as a short
-    sentence, ever reaches Claude; the plan name itself never does.
+    Read locally from ``usage-codex.json`` and ``preferences.json``. Only the
+    account kind word, as a short sentence or the ``plans`` block, ever
+    reaches Claude; the plan name itself never does.
     """
+    from .. import plans
+
     directory = Path(USAGE_DIRECTORY) if USAGE_DIRECTORY else DEFAULT_USAGE_DIRECTORY
-    try:
-        path = directory / "usage-codex.json"
-        if path.stat().st_size > 1024 * 1024:
-            return "unknown"
-        plan = json.loads(path.read_text(encoding="utf-8-sig")).get("plan_type")
-    except (OSError, ValueError, AttributeError, RecursionError):
-        return "unknown"
-    if type(plan) is not str:
-        return "unknown"
-    plan = plan.strip().casefold()
-    if plan in _PERSONAL_PLANS:
-        return "personal"
-    if plan in _WORKSPACE_PLANS or any(word in plan for word in ("enterprise", "business", "team", "edu")):
-        return "workspace"
-    return "unknown"
+    return plans.current(directory)
+
+
+def _codex_account() -> str:
+    """"personal", "workspace" or "unknown" for the Codex side."""
+    return _plan_views()["codex"].kind
 
 
 def _codex_account_line() -> str:
-    return _ACCOUNT_LINES[_codex_account()]
+    """The account line of a reply: both sides when one is work and one personal."""
+    from .. import plans
+
+    return plans.account_line(_plan_views())
 
 
 def _checked_files(files: Any) -> list[str]:
@@ -1657,8 +1657,14 @@ def _notice_first() -> CallToolResult | None:
 
     if notice_shown():
         return None
+    from .. import plans
+
+    notice = list(DATA_FLOW)
+    views = _plan_views()
+    if plans.accounts_differ(views):
+        notice.append(plans.account_line(views))
     payload: dict[str, Any] = {"status": "notice_first", "codex_started": False,
-                               "notice": list(DATA_FLOW), "next": NOTICE_FIRST_NEXT}
+                               "notice": notice, "next": NOTICE_FIRST_NEXT}
     try:
         record_notice_shown("first_call")
     except OSError:

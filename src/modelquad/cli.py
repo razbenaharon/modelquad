@@ -954,6 +954,29 @@ def _run_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentPars
     return 1 if errors or failed_restore else 0
 
 
+def _run_plan_setting(provider: str | None, value: str | None) -> int:
+    """Show, set or unset the plan the user says they are on with each provider."""
+    from . import plans
+
+    if provider is not None and value is not None:
+        try:
+            plans.write_declared(provider, None if value.strip().casefold() == "unset" else value)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"The setting was not saved: {exc.strerror or exc}", file=sys.stderr)
+            return 1
+    views = plans.current(DEFAULT_USAGE_DIRECTORY)
+    for line in plans.human_lines(views):
+        print(line)
+    if provider is not None and value is None:
+        print(f"{provider.capitalize()} plans: {', '.join(plans.DECLARABLE_PLANS[provider])}, or unset.")
+    print("Stored only in this computer's preferences.json. Claude sees only the account kind "
+          "(personal, workspace or unknown), never the plan name.")
+    return 0
+
+
 def _run_proactive_setting(enabled: bool) -> int:
     """Save who decides to consult Codex; the MCP server reads it at session start."""
     from .adapters.server_instructions import write_proactive
@@ -1632,6 +1655,13 @@ def build_parser() -> argparse.ArgumentParser:
         help='Let Claude decide on its own to consult Codex (default off: Claude offers it). '
         'Claude Code still asks you before each call.')
     proactive_cmd.add_argument('choice', choices=('on', 'off'))
+    plan_cmd = settings_actions.add_parser(
+        'plan',
+        help='Say which plan you are on with Claude or Codex (shown to you; the account kind '
+        'goes in the notice on Codex calls). With no arguments, show both.')
+    plan_cmd.add_argument('provider', nargs='?', choices=('claude', 'codex'))
+    plan_cmd.add_argument('value', nargs='?', metavar='plan|unset',
+                          help='A listed plan, or unset. Run without it to see the list.')
     host_cmd = subcommands.add_parser("host", help="Control which tools may start new work.")
     host_actions = host_cmd.add_subparsers(dest="host_action", required=True)
     from .routing_policy import VALID_HOST_IDS
@@ -1929,6 +1959,8 @@ def _run_command(argv: Sequence[str] | None) -> int:
         return _run_integrations_command(args, parser)
     if args.command == 'settings' and args.settings_action == 'proactive':
         return _run_proactive_setting(args.choice == 'on')
+    if args.command == 'settings' and args.settings_action == 'plan':
+        return _run_plan_setting(args.provider, args.value)
     if args.command == 'settings':
         if args.choice == 'on':
             if not _background_work_consented(args):

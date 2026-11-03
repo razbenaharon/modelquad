@@ -70,6 +70,15 @@ Status: early, source-only release. Windows only.
   lets Claude decide on its own to consult Codex (`off` goes back); it takes
   effect in new Claude Code sessions. Either way, the approval prompt below
   still appears before each call.
+- `modelquad settings plan claude <plan>` and `modelquad settings plan codex
+  <plan>` record which plan you are on (`unset` clears it; `modelquad settings
+  plan` shows both). The values are a fixed list, printed by `modelquad
+  settings plan claude` or `codex`. Codex's own report of its plan comes first
+  when there is one. ModelQuad uses a plan only to show it to you and to say
+  in the notice on each Codex call whether each side is a personal or a work
+  account, for example when code would go from a work account to a personal
+  one. Claude sees only that kind word, never the plan name. A plan never
+  decides which tool works or when.
 - This guidance reaches Claude through ModelQuad's MCP server instructions and
   the `/modelquad` skill. ModelQuad writes nothing into your global
   `CLAUDE.md`.
