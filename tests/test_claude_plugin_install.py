@@ -23,7 +23,8 @@ from modelquad.adapters.server_instructions import read_claude_plugin, write_cla
 
 from test_host_registration_transaction import claude_home, state_root  # noqa: F401 -- fixtures
 
-_SKILLS = ("modelquad", "modelquad-review", "modelquad-handoff", "modelquad-quota", "modelquad-setup")
+_SKILLS = ("modelquad", "modelquad-review", "modelquad-handoff", "modelquad-quota", "modelquad-setup",
+           "modelquad-split")
 
 
 @pytest.fixture(autouse=True)

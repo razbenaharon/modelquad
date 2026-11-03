@@ -29,6 +29,7 @@ SKILLS = {
     "modelquad-handoff": "handoff",
     "modelquad-quota": "quota",
     "modelquad-setup": "setup",
+    "modelquad-split": "split",
 }
 
 

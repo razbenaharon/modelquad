@@ -13,10 +13,11 @@ up, and nothing here is published to any plugin directory.
   `mcp__plugin_modelquad_modelquad__<tool>` instead of
   `mcp__modelquad__<tool>`; the tools and their annotations are the same, so
   Claude Code asks the user before every call that would start Codex.
-- **Five skills**, copied from the package's own templates
+- **Six skills**, copied from the package's own templates
   (`src/modelquad/adapters/templates/claude/skills/`). A plugin namespaces its
   skills, so they appear as `/modelquad:guide`, `/modelquad:review`,
-  `/modelquad:handoff`, `/modelquad:quota` and `/modelquad:setup`. All but the
+  `/modelquad:handoff`, `/modelquad:quota`, `/modelquad:setup` and
+  `/modelquad:split`. All but the
   guide are commands only you start.
 - **The SessionStart reminder hook** (`modelquad hook-pending claude`), the
   same one the installer adds. It only reports retained answers; it never

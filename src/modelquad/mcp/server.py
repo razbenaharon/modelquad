@@ -1391,6 +1391,56 @@ def modelquad_status() -> dict:
     return _provider_status_payload(USAGE_DIRECTORY, CONFIG_PATH)
 
 
+# Defined in its own module: a model whose module is run as ``__main__``
+# (python -m modelquad.mcp.server) could not resolve its field types.
+from ..split_args import SplitStep
+
+
+def _split_reply(working_directory: str, steps: list) -> dict:
+    """The proposal, read from local files only: starts no process, stores nothing."""
+    from .. import plans, repo_settings, split
+    from ..adapters.server_instructions import read_proactive
+    from ..router import Router
+
+    config = load_config(CONFIG_PATH)
+    usage = Path(USAGE_DIRECTORY) if USAGE_DIRECTORY else None
+    statuses = tuple(read_status(provider, refresh=False)
+                     for provider in build_providers(config, usage))
+    try:
+        user_mode = repo_settings.read_mode(working_directory)
+    except Exception:  # noqa: BLE001 -- an unreadable setting is no setting
+        user_mode = None
+    policy = repo_settings.local_policy(working_directory)
+    try:
+        views = _plan_views()
+    except Exception:  # noqa: BLE001 -- a proposal must not fail over a preference file
+        views = plans.merged(None, {})
+    checked = [split.Step(title=split.clean_title(step.title), task_type=step.task_type,
+                          needs=step.needs, independent=bool(step.independent))
+               for step in steps]
+    return split.propose(checked, router=Router(config), statuses=statuses,
+                         thresholds=config.freshness, now=datetime.now(timezone.utc),
+                         plan_views=views, policy=policy, user_mode=user_mode,
+                         global_proactive=read_proactive())
+
+
+@server.tool(title="Propose who does each step", annotations=READ_ONLY)
+def modelquad_split(
+    working_directory: str,
+    steps: Annotated[list[SplitStep], Field(min_length=1, max_length=12)],
+) -> CallToolResult:
+    """Show the user a proposed division of a task of several steps between Claude
+    and Codex. It starts nothing. Steps that edit files or run commands stay with
+    Claude; Codex can take only read-only review, exploration or architecture
+    steps, and each Codex step is its own call that asks the user when it runs.
+    Quota and plans are shown beside the proposal and never change it."""
+    if not os.path.isabs(working_directory):
+        raise ToolError("working_directory must be an absolute path")
+    payload = _split_reply(working_directory, steps)
+    return CallToolResult(content=[TextContent(type="text", text=payload.pop("content"))],
+                          structured_content=payload)
+
+
 #: Which approval prompt led to a delegation: the handoff form sets it for
 #: the one delegate call it makes. Never a tool argument the model can set.
 _approval_route: ContextVar[str] = ContextVar("modelquad_approval_route", default="delegate")

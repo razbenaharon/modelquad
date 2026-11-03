@@ -14,7 +14,7 @@ def test_release_tools_are_small_and_delegation_requires_interaction():
         "modelquad_job_wait", "modelquad_job_acknowledge", "modelquad_job_stop",
         "modelquad_job_list_pending", "modelquad_doctor", "modelquad_usage_refresh",
         "modelquad_activity", "modelquad_activity_detail",
-        "modelquad_handoff_confirm", "modelquad_handoff_wait",
+        "modelquad_handoff_confirm", "modelquad_handoff_wait", "modelquad_split",
     }
     for name in ("modelquad_delegate", "modelquad_handoff"):
         assert tools[name].meta["anthropic/requiresUserInteraction"] is True
@@ -31,8 +31,10 @@ def test_every_tool_has_a_title_and_only_pure_reads_are_marked_read_only():
     assert read_only == {
         "modelquad_status", "modelquad_activity", "modelquad_activity_detail",
         "modelquad_delegation_status", "modelquad_doctor", "modelquad_job_collect",
-        "modelquad_job_list_pending",
+        "modelquad_job_list_pending", "modelquad_split",
     }
+    # The split proposal starts nothing, so it asks for no interaction.
+    assert "anthropic/requiresUserInteraction" not in (tools["modelquad_split"].meta or {})
     # A retry of a Codex call would send the code again and spend usage.
     for name in ("modelquad_delegate", "modelquad_handoff", "modelquad_handoff_wait"):
         hints = tools[name].annotations

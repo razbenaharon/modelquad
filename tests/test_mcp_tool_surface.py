@@ -56,6 +56,9 @@ _ALLOWED_PATH_PARAMETERS = frozenset(
         # workspace selector `modelquad_delegate` takes, nothing more.
         ("modelquad_handoff", "working_directory"),
         ("modelquad_delegation_status", "working_directory"),
+        # The project whose per-repo setting and .modelquad.toml the split
+        # proposal reads; read-only, and it selects no settings or state.
+        ("modelquad_split", "working_directory"),
         # Activity can be scoped to one project; read-only filtering.
         ("modelquad_activity", "project_directory"),
         ("modelquad_activity_detail", "project_directory"),

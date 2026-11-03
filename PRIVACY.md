@@ -239,6 +239,10 @@ sends to Anthropic:
   leave out the quota snapshot stored with each request, so not your plan
   type. `modelquad_delegation_status` answers about the request or folder
   Claude names.
+- The proposed division of a task, from `modelquad_split`: for each step the
+  title Claude sent (after the same redaction of paths and credentials),
+  who takes it and a fixed reason; both sides' quota windows and account
+  kinds. The titles are not stored or logged.
 - Job status and retained answers. The `modelquad_job_*` tools need the
   project folder and answer only for jobs started from that folder.
 - The report of the `modelquad_doctor` tool, which includes local paths, such

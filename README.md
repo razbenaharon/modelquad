@@ -111,6 +111,28 @@ Status: early, source-only release. Windows only.
   [docs/REPO-POLICY.md](docs/REPO-POLICY.md).
 - Treat Codex's answer as input to check, not as a verified result.
 
+## Division of work
+
+For a task of several steps, Claude proposes a split of the work between the
+two tools you already use, and you approve each Codex call.
+
+- Claude describes the steps to the `modelquad_split` tool (or you ask with
+  `/modelquad-split`). For each step the reply says who takes it and why, in
+  a fixed reason: steps that edit files or run commands are always Claude's,
+  because Codex through ModelQuad is read-only. A review of Claude's own
+  change, or another opinion that should not come from Claude, can be
+  proposed for Codex.
+- The proposal starts nothing. Each Codex step is its own call, with Claude
+  Code's approval prompt when it runs; there is no way to approve the whole
+  plan at once.
+- What decides is the kind of step, your `modelquad settings repo` choice
+  and the repository's `.modelquad.toml`. Both tools' quota and the account
+  kind of each plan are shown beside the proposal and never change it. When
+  Codex reports a limit reached, the reply says a Codex step would likely be
+  refused.
+- The step titles go back to Claude in the reply only; ModelQuad does not
+  store or log them.
+
 ## Terminal or desktop app
 
 ModelQuad works in Claude Code in a terminal and in the Claude desktop app's
@@ -203,7 +225,7 @@ type `yes` (or pass `--yes` where there is no prompt).
 
 ### Or as a Claude Code plugin (experimental)
 
-The ModelQuad plugin carries the server, the five commands (as
+The ModelQuad plugin carries the server, the six commands (as
 `/modelquad:review` and the like), the startup reminder, and, in the desktop
 app's Code tab, a line above the prompt with Codex's quota. It still needs the
 package from the step above:
@@ -236,11 +258,12 @@ valid JSON is skipped with a reason; the other files still change.
     current project.
 - `%USERPROFILE%\.claude\skills\modelquad\SKILL.md`: the `/modelquad` skill.
 - `%USERPROFILE%\.claude\skills\modelquad-review`, `modelquad-handoff`,
-  `modelquad-quota` and `modelquad-setup`: commands only you start
-  (`/modelquad-review` asks Codex about files you name, `/modelquad-handoff`
-  hands the current read-only task to Codex, `/modelquad-quota` shows both
-  quotas, `/modelquad-setup` explains any setup problem). Claude Code still
-  asks before every Codex call.
+  `modelquad-quota`, `modelquad-setup` and `modelquad-split`: commands only
+  you start (`/modelquad-review` asks Codex about files you name,
+  `/modelquad-handoff` hands the current read-only task to Codex,
+  `/modelquad-quota` shows both quotas, `/modelquad-setup` explains any setup
+  problem, `/modelquad-split` shows a proposed division of a task). Claude
+  Code still asks before every Codex call.
 - Backups: before it changes an existing file, ModelQuad saves a full copy of
   the original bytes beside it, named `<file>.modelquad-backup-<time>`. JSON
   files are written back with your key order.

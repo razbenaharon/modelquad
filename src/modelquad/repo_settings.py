@@ -300,6 +300,29 @@ REPO_FILE_NAME = ".modelquad.toml"  # repo_policy.FILE_NAME; a test checks they 
 _REPO_FILE_OFF = "repo_policy_codex_off"  # repo_policy.CODEX_OFF; likewise
 
 
+def local_policy(working_directory):
+    """The repository file's policy, found without starting a process; None when absent.
+
+    The file is looked for in the nearest folder holding ``.git`` (the walk
+    the gates use when Git cannot answer), or the folder itself outside Git.
+    Fails closed like ``repo_policy.load``.
+    """
+    directory = Path(working_directory)
+    marker = _git_marker(directory)
+    root = marker if marker is not None else directory
+    try:
+        (root / REPO_FILE_NAME).lstat()
+    except FileNotFoundError:
+        return None  # No file: nothing more to read, and the packer is not imported.
+    except OSError:
+        from .repo_policy import UNREADABLE, _broken
+
+        return _broken(UNREADABLE, "unreadable")
+    from .repo_policy import load_from_root
+
+    return load_from_root(root)
+
+
 def advice_line(working_directory, *, preferences: Path | None = None) -> str | None:
     """The SessionStart line for this repository, or None when it matches the default.
 
@@ -316,21 +339,7 @@ def advice_line(working_directory, *, preferences: Path | None = None) -> str | 
     global_proactive = payload.get("proactive") is True
     modes = _stored(payload)
     user_mode = read_mode(directory, modes=modes) if modes else None
-    marker = _git_marker(directory)
-    root = marker if marker is not None else directory
-    policy = None
-    try:
-        (root / REPO_FILE_NAME).lstat()
-    except FileNotFoundError:
-        pass  # No file: nothing more to read, and the packer is not imported.
-    except OSError:
-        from .repo_policy import UNREADABLE, _broken
-
-        policy = _broken(UNREADABLE, "unreadable")
-    else:
-        from .repo_policy import load_from_root
-
-        policy = load_from_root(root)
+    policy = local_policy(directory)
     result = effective(global_proactive=global_proactive, user_mode=user_mode, policy=policy)
     if result.refusal is not None and result.refusal not in (USER_CODEX_OFF, _REPO_FILE_OFF):
         return BROKEN_FILE_ADVICE
