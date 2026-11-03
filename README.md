@@ -93,6 +93,11 @@ Status: early, source-only release. Windows only.
   agree, uses `modelquad_delegate`, which Claude Code asks about first.
 - To block new Codex calls from Claude Code: `modelquad host disconnect claude`.
   Undo with `modelquad host connect claude`.
+- A repository can carry a `.modelquad.toml` file that narrows Codex use there:
+  Codex off, fewer task kinds, lower file limits, or a work account only. It
+  can never approve a call, add files or change how Codex runs, and a broken
+  file refuses Codex in that repository. See
+  [docs/REPO-POLICY.md](docs/REPO-POLICY.md).
 - Treat Codex's answer as input to check, not as a verified result.
 
 ## Terminal or desktop app
@@ -419,6 +424,8 @@ maintainer directed, reviewed and tested the work and is responsible for it.
   delete it.
 - [docs/RECOMMENDED-SETTINGS.md](docs/RECOMMENDED-SETTINGS.md): recommended
   Claude Code settings, in plain language.
+- [docs/REPO-POLICY.md](docs/REPO-POLICY.md): the `.modelquad.toml` file a
+  repository can use to narrow what ModelQuad does with Codex.
 - [NETWORK.md](NETWORK.md): which connections ModelQuad and the programs it
   starts make.
 - [docs/PLUGIN.md](docs/PLUGIN.md): the experimental Claude Code plugin in this

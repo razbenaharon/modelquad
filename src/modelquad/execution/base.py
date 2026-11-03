@@ -673,6 +673,9 @@ NOSHELL_PRELAUNCH_REFUSALS: frozenset[str] = frozenset({
     "rendered_prompt_cap", "codex_shim_only", "codex_version_unsupported",
     "codex_feature_unverified", "codex_executable_unverified", "supplied_file_changed",
     "unsupported_platform",
+    # The repository's .modelquad.toml (repo_policy.REASONS).
+    "repo_policy_codex_off", "repo_policy_kind_removed", "repo_policy_account_workspace_required",
+    "repo_policy_invalid", "repo_policy_unreadable",
 })
 
 

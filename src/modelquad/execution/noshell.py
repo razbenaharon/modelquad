@@ -137,6 +137,24 @@ REFUSAL_MESSAGES = {
     "supplied_file_changed": (
         "A file changed after the user approved sending it, so nothing was sent. Ask again "
         "to send the current version."),
+    # The repository's .modelquad.toml (repo_policy), rechecked right before
+    # the files are packed: the MCP gates refuse first with a fuller line.
+    "repo_policy_codex_off": (
+        "This repository's .modelquad.toml turns Codex off, so nothing was started. Change "
+        "[codex] allowed or remove the file."),
+    "repo_policy_kind_removed": (
+        "This repository's .modelquad.toml does not allow this kind of Codex task, so nothing "
+        "was started. Ask for a kind it lists in [codex] task_kinds, or edit that line."),
+    "repo_policy_account_workspace_required": (
+        "This repository's .modelquad.toml allows Codex only on a work account, so nothing was "
+        "started. Use a work Codex account here, or change [codex] account."),
+    "repo_policy_invalid": (
+        "This repository's .modelquad.toml is not valid, so ModelQuad refuses Codex here until "
+        "it is fixed. Use the schema 1 format in docs/REPO-POLICY.md, or remove the file."),
+    "repo_policy_unreadable": (
+        "This repository's .modelquad.toml could not be used (a link, not a plain file, or "
+        "larger than 8 KiB), so ModelQuad refuses Codex here. Replace it with a plain file "
+        "or remove it."),
     UNAVAILABLE: (
         "The no-shell worker could not be started within its time budget, or its event "
         "stream could not be verified as tool-free, so no answer was returned."),
@@ -702,8 +720,19 @@ def _secret_reference(name):
             or Path(name).suffix.lower() in {".pem", ".key", ".pfx", ".p12"})
 
 
-def pack_files(workspace, names) -> SuppliedFiles:
-    """Explicit references only; no globbing, tree scan or dependency traversal."""
+def _cap(value, ceiling):
+    """A caller's cap, never above ModelQuad's own and never negative."""
+    return ceiling if type(value) is not int else max(0, min(value, ceiling))
+
+
+def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOTAL_BYTES) -> SuppliedFiles:
+    """Explicit references only; no globbing, tree scan or dependency traversal.
+
+    ``max_files`` and ``max_total_bytes`` can only lower ModelQuad's own caps
+    (a repository's ``.modelquad.toml``); a higher value is the built-in cap.
+    """
+    max_files = _cap(max_files, MAX_FILES)
+    max_total_bytes = _cap(max_total_bytes, MAX_TOTAL_BYTES)
     root = Path(workspace).absolute()
     files, skipped, seen, total = [], [], set(), 0
     secret_keys, folder_keys = set(), set()
@@ -716,8 +745,8 @@ def pack_files(workspace, names) -> SuppliedFiles:
         reason = ("elapsed_work_cap" if time.monotonic() >= budget.deadline else
                   "candidate_count_cap" if count >= MAX_CANDIDATES else
                   "omission_count_cap" if len(skipped) >= MAX_SKIPPED else
-                  "file_count_cap" if len(files) >= MAX_FILES else
-                  "total_byte_cap" if total >= MAX_TOTAL_BYTES else
+                  "file_count_cap" if len(files) >= max_files else
+                  "total_byte_cap" if total >= max_total_bytes else
                   "read_byte_cap" if budget.remaining <= 0 else None)
         if reason:
             skipped.append(("<remaining references, if any>", reason))
@@ -754,7 +783,7 @@ def pack_files(workspace, names) -> SuppliedFiles:
             # evidence of a link before admission.
             if _linked(root.lstat()):
                 raise ValueError("linked_path")
-            text = _read_file(root, name, budget, MAX_TOTAL_BYTES - total)
+            text = _read_file(root, name, budget, max_total_bytes - total)
             # A differently named copy is still a notes source, not supplied
             # task evidence. A standalone marker identifies even malformed
             # sources without excluding code that quotes the marker string.
@@ -784,7 +813,7 @@ def pack_files(workspace, names) -> SuppliedFiles:
         if size > MAX_FILE_BYTES:
             skipped.append((name, "file_byte_cap"))
             continue
-        if total + size > MAX_TOTAL_BYTES:
+        if total + size > max_total_bytes:
             skipped.append((name, "total_byte_cap"))
             continue
         total += size
@@ -1041,14 +1070,15 @@ def render_supplied(screened, pack, instruction, *, required=(), withheld=(),
     return rendered
 
 
-def approved_digests(prompt, workspace, files):
+def approved_digests(prompt, workspace, files, *, caps=None):
     """What the user approved, by content: {path: digest prefix} of each file a
     run would send now, or None when the files cannot be sent at all (the run
     refuses on its own then). The digest is :func:`sent_entry`'s, of the text
     as sent, so it compares directly with the audit of the real run."""
     report = {}
     try:
-        supplied_prompt(prompt, workspace, files=files, completion_protocol=True, report=report)
+        supplied_prompt(prompt, workspace, files=files, completion_protocol=True, report=report,
+                        caps=caps)
     except SuppliedContextRefused:
         return None
     return {item["path"]: item["sha256"] for item in report.get("sent", ())}
@@ -1117,14 +1147,19 @@ INSTRUCTION = ("\nYou have no command or file tools. Work only from the supplied
 
 
 def supplied_prompt(prompt, workspace, *, files=(), completion_protocol=False, diagnostics=None,
-                    report=None):
+                    report=None, caps=None):
     """Bound the entire rendered payload, including JSON escaping and labels.
 
     Only ``files`` -- the paths the user approved in the tool call -- are
     attached. A path named in the task text, a traceback or a diff is never
     read. Before reading, :func:`file_rules.screen` skips every file the
     user's Claude Code Read deny rules, Git or ``.modelquadignore`` exclude.
+    ``caps`` ({"max_files", "max_total_bytes"}, from the repository's
+    ``.modelquad.toml``) can only lower the packer's own caps.
     """
+    caps = caps if type(caps) is dict else {}
+    max_files = _cap(caps.get("max_files"), MAX_FILES)
+    max_total_bytes = _cap(caps.get("max_total_bytes"), MAX_TOTAL_BYTES)
     sink = diagnostics if diagnostics is not None else []
     if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
         diagnostic = OmissionDiagnostic("<prompt>", "rendered_prompt_cap", True)
@@ -1138,7 +1173,7 @@ def supplied_prompt(prompt, workspace, *, files=(), completion_protocol=False, d
         sink.append(diagnostic)
         raise bind_host_diagnostics(SuppliedContextRefused("task_text_secret"), (diagnostic,)) from None
     names = explicit_names(files, workspace)
-    if len(names) > MAX_FILES:
+    if len(names) > max_files:
         diagnostic = OmissionDiagnostic("<remaining references, if any>", "file_count_cap", True)
         sink.append(diagnostic)
         raise bind_host_diagnostics(SuppliedContextRefused("supplied_files_over_limit"), (diagnostic,))
@@ -1151,7 +1186,10 @@ def supplied_prompt(prompt, workspace, *, files=(), completion_protocol=False, d
     allowed, withheld = file_rules.screen(workspace, valid)
     excluded = {name.casefold() for name, _ in withheld}
     attach = [name for name in names if name.casefold() not in excluded]
-    pack = pack_files(workspace, attach)
+    # Nothing to attach: the caps have nothing to bound, and a zero cap must
+    # not report an omission that did not happen.
+    pack = (pack_files(workspace, attach, max_files=max_files, max_total_bytes=max_total_bytes)
+            if attach else pack_files(workspace, attach))
     return render_supplied(screened, pack, INSTRUCTION, required=attach, withheld=withheld,
                            completion_protocol=completion_protocol, diagnostics=sink, report=report)
 

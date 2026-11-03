@@ -359,11 +359,21 @@ class CodexExecutor(Executor):
             files = request.metadata.get("supplied_files", ())
             if type(files) not in (list, tuple) or any(type(name) is not str for name in files):
                 return refused("supplied_file_unavailable")
+            # The repository's .modelquad.toml, read again now: a background
+            # job runs after the MCP gate did, and a file changed since must
+            # still refuse or lower the caps. The account rule stays with the
+            # gate, which reads the account kind; nothing here can widen.
+            from .. import repo_policy
+            policy = repo_policy.load(request.working_directory)
+            repo_refusal = policy.refusal_for(request.task_type, check_account=False)
+            if repo_refusal is not None:
+                return refused(repo_refusal)
             report = {}
             try:
                 prompt = noshell.supplied_prompt(request.prompt, request.working_directory,
                                                 files=files, completion_protocol=True,
-                                                diagnostics=diagnostics, report=report)
+                                                diagnostics=diagnostics, report=report,
+                                                caps=policy.caps)
             except noshell.SuppliedContextRefused as refusal:
                 return refused(refusal.reason)
             # The approval covers the contents as they were when the user

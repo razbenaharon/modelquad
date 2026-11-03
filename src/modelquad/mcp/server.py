@@ -720,6 +720,14 @@ def _delegate_payload(
             task_type, decision_id=decision_id, provider=provider,
             host=host, invocation_mode=resolved_mode, **decision.to_dict(),
         )
+    # The repository's .modelquad.toml, read fresh for this call. It can only
+    # refuse or lower caps; only its closed reason code reaches history.
+    repo_refusal = _repo_policy_refusal(task_type, working_directory, usage_directory)
+    if repo_refusal is not None:
+        return _launch_refusal(
+            task_type, repo_refusal["reason"], decision_id=decision_id, provider=provider,
+            host=host, invocation_mode=resolved_mode, message=repo_refusal["message"],
+        )
 
     # From here a worker may actually be invoked. First close any stale rows
     # whose worker verifiably no longer exists, then refuse a RETRY of the
@@ -1093,7 +1101,8 @@ def _delegate_after_policy(
         from ..execution import noshell
         digests = _approved_digests.get()
         if digests is None:
-            digests = noshell.approved_digests(effective_prompt, working_directory, list(supplied_files))
+            digests = noshell.approved_digests(effective_prompt, working_directory, list(supplied_files),
+                                               caps=_repo_caps(working_directory))
         if digests is not None:
             call_args["metadata"]["approved_digests"] = dict(digests)
     runner_enabled = service_history.get_job_runner_enabled(db_path)
@@ -1285,7 +1294,8 @@ def _start_prepared_job(prepared, client, in_session):
         from ..execution.noshell import supplied_prompt, SuppliedContextRefused
         try:
             supplied_prompt(prepared.prompt, prepared.working_directory, files=files,
-                            completion_protocol=True, diagnostics=diagnostics, report=report)
+                            completion_protocol=True, diagnostics=diagnostics, report=report,
+                            caps=_repo_caps(prepared.working_directory))
         except SuppliedContextRefused:
             pass  # executor owns authoritative admission; no ownership change
     payload = _start_prepared_job_closed(prepared, client, in_session)
@@ -1408,6 +1418,33 @@ def _plan_views() -> dict:
 def _codex_account() -> str:
     """"personal", "workspace" or "unknown" for the Codex side."""
     return _plan_views()["codex"].kind
+
+
+def _repo_policy_refusal(task_type: str, working_directory: str,
+                         usage_directory: str | None = None) -> dict | None:
+    """The repository file's closed refusal for this call, or None to go on.
+
+    Read fresh on every call (never cached). ``account = "workspace"`` needs
+    the Codex account kind to be workspace; unknown refuses.
+    """
+    from .. import plans, repo_policy
+
+    policy = repo_policy.load(working_directory)
+    kind = plans.UNKNOWN
+    if policy.refusal is None and policy.account == "workspace":
+        try:
+            directory = Path(usage_directory or USAGE_DIRECTORY or DEFAULT_USAGE_DIRECTORY)
+            kind = plans.current(directory)["codex"].kind
+        except Exception:  # noqa: BLE001 -- an unreadable account reads unknown, and refuses
+            kind = plans.UNKNOWN
+    return repo_policy.refusal(policy, task_type, account_kind=kind)
+
+
+def _repo_caps(working_directory: str) -> dict:
+    """The packer caps the repository file allows now: never above the built-in."""
+    from .. import repo_policy
+
+    return repo_policy.load(working_directory).caps
 
 
 def _codex_account_line() -> str:
@@ -1792,7 +1829,8 @@ def _handoff_message(task_type: str, working_directory: str) -> tuple[str, dict 
             "Nothing starts unless you tick the box and accept."), suggestion
 
 
-def _handoff_refusal(task_type: str, capsule: dict | None, ctx: Context | None) -> dict | None:
+def _handoff_refusal(task_type: str, capsule: dict | None, ctx: Context | None,
+                     working_directory: str | None = None) -> dict | None:
     """Why a handoff must stop before the user is asked, or None to ask."""
     if _worker_refused():
         return {"refused": True, "started": False,
@@ -1810,6 +1848,12 @@ def _handoff_refusal(task_type: str, capsule: dict | None, ctx: Context | None) 
                             user_approved=True, caller_host=host_from_context(ctx))
     if not policy.allowed:
         return {"started": False, "approved": False, "reason": policy.reason}
+    # The repository's .modelquad.toml: refuse before the user is asked, so
+    # the form never offers what this repository does not allow.
+    if working_directory is not None:
+        repo_refusal = _repo_policy_refusal(task_type, working_directory)
+        if repo_refusal is not None:
+            return {"started": False, "approved": False, **repo_refusal}
     return None
 
 
@@ -1848,7 +1892,7 @@ def _handoff_question(task_type: str, prompt: str, working_directory: str, files
     connection allows (a 2026-07-28 input-required round, or a request on an
     older protocol). A handoff that must stop is not asked at all; the tool
     body sees that and refuses."""
-    if _handoff_refusal(task_type, capsule, ctx) is not None:
+    if _handoff_refusal(task_type, capsule, ctx, working_directory) is not None:
         return "not_asked"
     try:
         checked = _checked_files(files)
@@ -1900,7 +1944,7 @@ async def modelquad_handoff(
     asked_at = _HANDOFF_ASKED_AT.pop(_request_key(ctx), None)
     # The checks run again here, after the user answered: an answer never
     # outlives a pause, a disconnect or a refusal that arrived meanwhile.
-    refusal = _handoff_refusal(task_type, capsule, ctx)
+    refusal = _handoff_refusal(task_type, capsule, ctx, working_directory)
     if refusal is not None:
         return _plain_result(refusal)
     files = _checked_files(files)
@@ -1969,7 +2013,8 @@ def _widget_pending(**arguments: Any) -> dict:
     entries, skipped = _files_to_send(arguments["working_directory"], arguments["files"] or [])
     # The window shows the files as they are now; Approve covers these contents.
     digests = noshell.approved_digests(arguments["prompt"], arguments["working_directory"],
-                                       arguments["files"] or [])
+                                       arguments["files"] or [],
+                                       caps=_repo_caps(arguments["working_directory"]))
     return {
         "started": False,
         "approved": False,
@@ -2023,7 +2068,8 @@ async def modelquad_handoff_wait(pending_id: str, ctx: Context | None = None) ->
         return _plain_result({"started": False, "approved": False, "approval": decision,
                               "next_step": "Nothing started. Start nothing unless the user asks again."})
     # The checks run again after the answer, as in modelquad_handoff.
-    refusal = _handoff_refusal(arguments["task_type"], arguments["capsule"], ctx)
+    refusal = _handoff_refusal(arguments["task_type"], arguments["capsule"], ctx,
+                               arguments["working_directory"])
     if refusal is not None:
         return _plain_result(refusal)
     digests = arguments.pop("approved_digests", None)

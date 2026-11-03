@@ -57,6 +57,16 @@ another shell; Claude Code's documentation says such a rule is not a
 security boundary. If the code must never reach OpenAI, do not run Codex
 in that folder yourself either.
 
+## Narrow Codex use in one repository
+
+To keep ModelQuad's tools but limit what Codex does in one repository, commit
+a `.modelquad.toml` file at the repository's top folder. It can turn Codex off
+there, allow only some task kinds (for example reviews), lower how many files
+and how much text one call sends, or allow Codex only on a work account. It
+can only narrow: it never approves a call or adds files, and if the file is
+broken ModelQuad refuses Codex in that repository until it is fixed. The format
+and examples are in [REPO-POLICY.md](REPO-POLICY.md).
+
 ## Block secret files with Read deny rules
 
 Tell Claude Code which files it must not read:
