@@ -985,6 +985,34 @@ _REPO_MODE_TEXT = {
 }
 
 
+def _run_split_summary(args: argparse.Namespace, config) -> int:
+    """``modelquad split summary``: read-only, from ModelQuad's own history."""
+    from datetime import datetime, timezone
+
+    from . import split_summary
+    from .adapters.pending_reminder import project_key
+
+    folder = Path(args.project) if args.project else Path.cwd()
+    if not folder.is_dir():
+        print("That project folder does not exist.", file=sys.stderr)
+        return 2
+    key = project_key(str(folder.resolve()))
+    if key is None:
+        print("That project folder cannot be used.", file=sys.stderr)
+        return 2
+    current = tuple(read_status(provider, refresh=False)
+                    for provider in build_providers(config, args.usage_directory))
+    summary = split_summary.summarize(
+        _history_db_path(args), workspace_key=key, period=args.since,
+        now=datetime.now(timezone.utc), current=current, thresholds=config.freshness)
+    if args.as_json:
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    else:
+        for line in summary["lines"]:
+            print(line)
+    return 0 if summary["known"] else 2
+
+
 def _run_repo_setting(choice: str | None, project: str | None) -> int:
     """Show or set the user's own Codex setting for one repository."""
     from . import repo_policy, repo_settings
@@ -1930,6 +1958,20 @@ def build_parser() -> argparse.ArgumentParser:
             "e.g. --detail execution:42. Ignores every other filter/limit flag."
         ),
     )
+    split_cmd = subcommands.add_parser(
+        "split", help="What happened after the work: Codex requests and quota per window.")
+    split_actions = split_cmd.add_subparsers(dest="split_action", required=True)
+    split_summary_cmd = split_actions.add_parser(
+        "summary",
+        help="Codex requests by kind and outcome for one project, and each provider's "
+        "percentage points used in each of its own windows (never added together).")
+    split_summary_cmd.add_argument('--project', metavar='DIR',
+                                   help='The project folder (default: the current folder).')
+    split_summary_cmd.add_argument('--since', choices=('1d', '7d', 'session'), default='1d',
+                                   help='The period (default: 1d). session is known only '
+                                   'inside Claude Code, through modelquad_activity.')
+    split_summary_cmd.add_argument("--json", action="store_true", dest="as_json",
+                                   help="Print the summary as JSON.")
     lifecycle = subcommands.add_parser(
         "service",
         help="Manage local control-plane auto-start and background process state.",
@@ -2314,6 +2356,9 @@ def _run_command(argv: Sequence[str] | None) -> int:
         else:
             render_activity(entries)
         return 0
+
+    if args.command == "split":
+        return _run_split_summary(args, config)
 
     providers = build_providers(config, args.usage_directory)
     statuses = tuple(read_status(provider, refresh=args.command == "status") for provider in providers)

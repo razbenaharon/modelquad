@@ -201,10 +201,13 @@ def _launch_refusal(task_type, reason, *, decision_id=None, provider=None,
         }
     candidate_id = decision_id or new_decision_id()
     try:
+        # The folder's hash (never its path), so the split summary can count
+        # this refusal for its project.
         row_id = service_history.record_delegation_attempt(
             service_db.DEFAULT_DB_PATH, task_type=task_type, decision_id=candidate_id,
             requested_provider=provider, status="refused", failure_kind="policy_refused",
             detail=reason, source="mcp", host=host, invocation_mode=invocation_mode,
+            working_directory=call.get("working_directory") if call else None,
             **(call["repo_context"].attempt_fields(capability=call.get('capability', 'delegate'))
                if call and call.get("repo_context") else {}),
         )
@@ -232,7 +235,8 @@ def _launch_failures(function):
     @functools.wraps(function)
     def guarded(*args, **kwargs):
         bound = signature.bind(*args, **kwargs)
-        call = {"worker_entered": False}
+        call = {"worker_entered": False,
+                "working_directory": bound.arguments.get("working_directory")}
         token = _launch_call.set(call)
         try:
             return function(*args, **kwargs)
@@ -2207,6 +2211,11 @@ def modelquad_activity(
     handoff that started and never came back IS evidence and must not be
     rounded up or hidden. `activity` itself is unchanged: it stays the
     complete machine-readable record.
+
+    `split` is the split summary for this session (this project with
+    `project_directory`): Codex requests by kind and outcome, and each
+    provider's percentage points used in each of its own windows, never
+    added together. ModelQuad does not measure Claude's own work.
     """
     key = None
     if project_directory is not None:
@@ -2232,7 +2241,31 @@ def modelquad_activity(
         ),
         limit=limit,
     )
+    payload["split"] = _split_summary_block(key)
     return payload
+
+
+#: When this server process started: the start of the session the split
+#: summary in ``modelquad_activity`` covers.
+_SESSION_STARTED_AT = datetime.now(timezone.utc)
+
+
+def _split_summary_block(workspace_key: str | None) -> dict[str, Any]:
+    """What happened after the work, this session: read-only, never fails the listing."""
+    from .. import split_summary
+
+    try:
+        config = load_config(CONFIG_PATH)
+        usage = Path(USAGE_DIRECTORY) if USAGE_DIRECTORY else None
+        current = tuple(read_status(provider, refresh=False)
+                        for provider in build_providers(config, usage))
+        return split_summary.summarize(
+            service_db.DEFAULT_DB_PATH, workspace_key=workspace_key, period="session",
+            now=datetime.now(timezone.utc), current=current, thresholds=config.freshness,
+            session_started_at=_SESSION_STARTED_AT)
+    except Exception:  # noqa: BLE001 -- the listing must not fail over its summary
+        logger.warning("split summary unavailable", exc_info=True)
+        return {"known": False, "why": "unavailable"}
 
 
 @server.tool(title="One activity record", annotations=READ_ONLY)

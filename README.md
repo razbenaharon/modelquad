@@ -133,6 +133,20 @@ two tools you already use, and you approve each Codex call.
 - The step titles go back to Claude in the reply only; ModelQuad does not
   store or log them.
 
+Afterwards, `modelquad split summary [--project DIR] [--since 1d|7d]` (and a
+`split` block for this session in `modelquad_activity`) shows what happened,
+from ModelQuad's own history: the Codex requests for that project by kind,
+and how many were answered, withheld because Codex tried a tool, refused (by
+ModelQuad's rules, the repository's `.modelquad.toml`, your repo setting or
+Codex's own limit) or not answered, with the median time to an answer. For
+Claude it says only that ModelQuad does not measure Claude's own work;
+declines in Claude Code's approval prompt and in the handoff window are not
+counted. Quota is each tool's percentage points used in each of its own
+windows over the period, one column each and never added together, from the
+readings ModelQuad stored (at each Codex request, or on a timer with the
+background service). A window with fewer than two readings in the period
+reads unknown, and one that reset during the period says so.
+
 ## Terminal or desktop app
 
 ModelQuad works in Claude Code in a terminal and in the Claude desktop app's
