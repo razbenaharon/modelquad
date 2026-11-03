@@ -216,10 +216,10 @@ sends to Anthropic:
   and the Codex account kind (personal, workspace or unknown), never the plan
   name.
 - Quota, from `modelquad_status`: used and remaining percentages, reset times
-  and freshness for each window, and the handoff suggestion. Not your plan
-  type. When a reading is missing, the reply says why; a reason that mentions
-  the quota file names it by its file name only, such as `usage-codex.json`,
-  never its folder.
+  and freshness for each window, and the note when Claude is near its
+  limit. Not your plan type. When a reading is missing, the reply says why; a
+  reason that mentions the quota file names it by its file name only, such as
+  `usage-codex.json`, never its folder.
 - History, when Claude asks for it: task types, workers, statuses, times,
   short failure details and project folder names. Given a project folder, the
   `modelquad_activity` tools return only the entries of Codex requests started

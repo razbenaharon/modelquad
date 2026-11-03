@@ -38,12 +38,13 @@ Status: early, source-only release. Windows only.
   readings, when the window fills at the current pace. Missing data is said in
   plain words ("shows after your first message", "sign in to Codex", "Codex
   not found", "no 5-hour limit on your plan") or as unknown, never as 0%.
-- **A low-quota handoff suggestion.** When Claude has used 80% of its 5-hour
-  window or 90% of its weekly window, ModelQuad suggests handing the task to
-  Codex, unless Codex has itself used 90% of either window. When only the
-  5-hour window is over and it resets within 30 minutes, it suggests waiting
-  instead. The suggestion only asks. It starts nothing and does not change
-  either provider's limits.
+- **A note when Claude is near its limit.** When Claude has used 80% of its
+  5-hour window or 90% of its weekly window, ModelQuad says so, with the reset
+  time and Codex's own usage, and that you can wait for the reset or ask Codex
+  for a read-only review. You decide. When only the 5-hour window is over and
+  it resets within 30 minutes, the note says waiting may be simpler. When
+  Codex has itself used 90% of either window, there is no note. The note
+  starts nothing and does not change either provider's limits.
 - **An approval prompt on every Codex call.** Claude Code asks you before each
   call that would start Codex.
 - **Optional background jobs.** With the local service running and background
@@ -233,7 +234,7 @@ folder, but ModelQuad still writes to the places above. Install and
 `modelquad doctor` warn about this; ModelQuad does not follow the variable.
 
 **If you already have a status line.** ModelQuad leaves it alone. Then
-ModelQuad has no Claude quota and makes no handoff suggestion until you add it,
+ModelQuad has no Claude quota and shows no near-limit note until you add it,
 because the status line is its only source of Claude's quota. Install,
 `modelquad onboard` and `modelquad doctor` print the exact one-line recipe for
 your setup. `modelquad usage-hook claude --segment` records the quota and
@@ -345,7 +346,8 @@ ModelQuad works alongside it, and you can use both. The plugin lets Codex
 write code and offers its own reviews. ModelQuad adds:
 
 - both quotas in the Claude Code status line;
-- a low-quota handoff suggestion;
+- a note when Claude is near its limit: wait for the reset, or ask Codex for
+  a review;
 - read-only Codex reviews, with an approval prompt on every call;
 - optional background jobs that keep running after you close the chat.
 
@@ -370,7 +372,7 @@ licence. A changed version needs a name of its own. See
   accounts. Your use of each is governed by that provider's terms and usage
   policies, and you are responsible for following them.
 - ModelQuad does not change any usage limit. Each provider's limits apply as
-  they are, and a low-quota suggestion only asks you.
+  they are, and a note that Claude is near its limit starts nothing.
 - Every Codex call runs your own Codex CLI, under your own sign-in, after you
   approve it. Do not run ModelQuad unattended, in CI or on behalf of other
   people. OpenAI recommends API-key sign-in for programmatic Codex workflows

@@ -1,15 +1,15 @@
 ---
 name: handoff
-description: Hand the current read-only task (review, exploration or architecture) to Codex through ModelQuad.
+description: Ask Codex, through ModelQuad, for a read-only second opinion (review, exploration or architecture) on the current task.
 argument-hint: "[what Codex should do]"
 disable-model-invocation: true
 metadata:
   managed-by: modelquad
 ---
 
-# Hand a task to Codex
+# Ask Codex for a second opinion
 
-The user wants to hand this task to Codex: $ARGUMENTS
+The user wants Codex's read-only second opinion on this task: $ARGUMENTS
 
 1. Write a short, self-contained task summary: the goal, what is known so
    far, and what answer would help. Codex sees nothing of this conversation.

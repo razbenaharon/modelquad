@@ -133,7 +133,7 @@ from . import handoff_widget
 # The handoff approval page, for a client that renders MCP Apps (see handoff_widget).
 _apps = Apps()
 _apps.add_html_resource(handoff_widget.URI, handoff_widget.HTML, name="modelquad-handoff",
-                        title="Hand a task to Codex")
+                        title="Ask Codex for a second opinion")
 
 server = WorkerGuardMCPServer(MCP_SERVER_NAME, version=current_build_info().identity,
                               instructions=_server_instructions(), extensions=[_apps])
@@ -468,7 +468,7 @@ def _decision_result(
     summary = render_presentation_text(presentation)
     suggestion = payload.get("handoff_suggestion")
     if isinstance(suggestion, dict) and suggestion.get("message"):
-        # The one line a human must see: the reply asks, it never acts.
+        # The one line a human must see: the reply informs, it never acts.
         summary = f"{summary}\n{suggestion['message']}"
     return CallToolResult(
         content=[TextContent(type="text", text=summary)],
@@ -537,7 +537,7 @@ def _provider_status_payload(
     return {
         "providers": [public(status) for status in statuses],
         "summary": statusline_text(statuses, config.freshness, now=now),
-        # Quota is shown, never acted on: the suggestion asks the user.
+        # Quota is shown, never acted on: the note leaves the choice to the user.
         "handoff_suggestion": handoff_suggestion(
             statuses, config.freshness, now=now),
     }
@@ -1628,8 +1628,8 @@ class HandoffApproval(BaseModel):
 
     hand_off: bool = Field(
         default=False,
-        title="Hand this task to Codex",
-        description="Tick to let Codex, under your own login, do this task now.",
+        title="Ask Codex for a read-only second opinion",
+        description="Tick to let Codex, under your own login, answer this read-only task now.",
     )
 
 
@@ -1763,20 +1763,24 @@ async def _ask_handoff_approval(ctx: Context | None, message: str) -> str:
     return (await _elicit_handoff(ctx, message))[0]
 
 
+#: The handoff form's question. Codex through ModelQuad only answers read-only.
+HANDOFF_QUESTION = "Ask Codex for a read-only second opinion on this task?"
+
 #: What Claude does when this Claude Code client cannot show the handoff form
 #: (the desktop app's Code tab, for one). The delegate tool is the fallback
 #: because Claude Code shows its own approval prompt before that call.
 _FORM_UNAVAILABLE_STEP = (
     "This Claude Code client could not show ModelQuad's handoff form, so nothing "
-    "started. Tell the user that, then ask in the conversation whether to send this "
-    "task to Codex. Only if they say yes, call modelquad_delegate with the same task "
-    "and files; Claude Code asks them before that call too.")
+    "started. Tell the user that, then ask in the conversation whether they want "
+    "Codex's read-only second opinion on this task. Only if they say yes, call "
+    "modelquad_delegate with the same task and files; Claude Code asks them before "
+    "that call too.")
 
 
 def _handoff_message(task_type: str, working_directory: str) -> tuple[str, dict | None]:
     payload = _provider_status_payload(USAGE_DIRECTORY, CONFIG_PATH)
     suggestion = payload.get("handoff_suggestion")
-    lead = suggestion["message"] if isinstance(suggestion, dict) else "Hand this task to Codex?"
+    lead = suggestion["message"] if isinstance(suggestion, dict) else HANDOFF_QUESTION
     folder = Path(working_directory).name or working_directory
     return (f"{lead}\nTask: {task_type} in {folder}. Codex runs it under your own login. "
             "Nothing starts unless you tick the box and accept."), suggestion
@@ -1822,7 +1826,7 @@ def _handoff_form_text(task_type: str, prompt: str, working_directory: str, file
     else:
         files_line = "Files to send: none (only the task text)."
     return "\n".join((
-        "Hand this task to Codex?",
+        HANDOFF_QUESTION,
         files_line,
         _codex_account_line(),
         *(["Not sent: " + ", ".join(skipped)] if skipped else []),
@@ -1868,7 +1872,7 @@ def _approval_answer(outcome: Any) -> str:
     return "decline" if action == "decline" else "cancel"
 
 
-@server.tool(title="Hand a task to Codex", annotations=STARTS_CODEX,
+@server.tool(title="Ask Codex for a second opinion, after a form", annotations=STARTS_CODEX,
              meta={"anthropic/requiresUserInteraction": True,
                    **({"ui": {"resourceUri": handoff_widget.URI}} if handoff_widget.ENABLED else {})})
 async def modelquad_handoff(
@@ -1883,9 +1887,10 @@ async def modelquad_handoff(
     files: FilesArgument = None,
     approval: Annotated[ElicitationResult[HandoffApproval], Resolve(_handoff_question)] = None,
 ) -> CallToolResult:
-    """Ask the user, in a form listing the files and their total size, before handing a
-    read-only task to Codex. Only the files in `files` (paths relative to working_directory,
-    at most 32) are sent; a path named only in the task text is not."""
+    """Ask the user, in a form listing the files and their total size, before asking Codex
+    for a read-only second opinion (review, exploration or architecture). Only the files
+    in `files` (paths relative to working_directory, at most 32) are sent; a path named
+    only in the task text is not."""
     asked_at = _HANDOFF_ASKED_AT.pop(_request_key(ctx), None)
     # The checks run again here, after the user answered: an answer never
     # outlives a pause, a disconnect or a refusal that arrived meanwhile.
@@ -1921,7 +1926,7 @@ async def modelquad_handoff(
             "started": False,
             "approved": False,
             "approval": answer,
-            "message": (suggestion or {}).get("message") or "Hand this task to Codex?",
+            "message": (suggestion or {}).get("message") or HANDOFF_QUESTION,
             "next_step": ("Ask the user in the conversation. Start nothing unless they ask; then "
                           "call modelquad_delegate."),
         }

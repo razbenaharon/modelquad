@@ -16,8 +16,8 @@ directory, at most 32); a file named only in the prompt is not sent.
 If a reply lists `files_needed`, offer the user a follow-up call with those
 files; call only if they agree.
 
-Use `modelquad_handoff` when ModelQuad reports a low-quota handoff suggestion.
-It shows the user the task and starts only after acceptance.
+If ModelQuad notes Claude is near its limit, tell the user: they can wait for
+the reset or ask for a Codex review. Only if they ask, use `modelquad_handoff`.
 
 ModelQuad's Codex worker cannot write files or run shell commands. If the user
 wants Codex to make changes, use the official Codex plugin if installed, such

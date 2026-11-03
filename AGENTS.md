@@ -21,7 +21,8 @@ here; the tool under development is not the instrument for developing it.
   The guidance is the MCP server's `instructions`
   (`adapters/server_instructions.py`), not a global `CLAUDE.md` block. Claude
   Code asks the user before every call that would start Codex. Quota is
-  display-only: a low Claude quota produces a suggestion that starts nothing.
+  display-only: when Claude is near its limit, a note says so (wait for the
+  reset, or ask Codex for a review) and starts nothing.
 - No telemetry. ModelQuad's own processes connect only to loopback.
 
 ## Layout

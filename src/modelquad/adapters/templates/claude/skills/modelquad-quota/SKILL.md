@@ -16,5 +16,5 @@ Call `modelquad_status` and report, in plain words:
   never guess a number.
 - If a reset is close, say so.
 
-This is information only. Do not start, move or hand off any work because of
-these numbers; the user decides.
+This is information only. Do not start any work because of these numbers;
+the user decides.
