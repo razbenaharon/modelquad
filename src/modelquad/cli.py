@@ -1586,7 +1586,7 @@ def build_parser() -> argparse.ArgumentParser:
         # Follow the name actually invoked, so help text under the legacy
         # `modelquad` alias keeps showing examples the user can paste back.
         prog=Path(sys.argv[0]).stem or CLI_COMMAND,
-        description="Route local provider work, delegate explicitly, and install client adapters.",
+        description="Show which tool fits a task, delegate explicitly, and install client adapters.",
     )
     # The first thing anyone types at an unfamiliar CLI. Without it the
     # version was only reachable by reading the tail of `doctor`, and the
@@ -1647,7 +1647,7 @@ def build_parser() -> argparse.ArgumentParser:
     status = subcommands.add_parser("status", help="Show normalized provider availability and usage.")
     status.add_argument("--global", action="store_true", dest="global_status", help="Include host integrations and control-plane health.")
     status.add_argument("--json", action="store_true", dest="as_json", help="Print status as JSON.")
-    route = subcommands.add_parser("route", help="Score providers for a task type.")
+    route = subcommands.add_parser("route", help="Show which tool fits a task type.")
     route.add_argument("task_type", choices=[task.value for task in TaskType])
     route.add_argument("--json", action="store_true", dest="as_json", help="Print the routing result as JSON.")
     privacy_cmd = subcommands.add_parser(

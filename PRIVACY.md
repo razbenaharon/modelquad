@@ -15,6 +15,9 @@ ModelQuad is not affiliated with Anthropic or OpenAI. What those companies do
 with data you send them is governed by their terms and your settings with
 them, not by this document.
 
+ModelQuad's author receives no data from the tool. Nothing ModelQuad does
+sends anything to him or to any server he runs.
+
 ## Summary
 
 - ModelQuad's own processes connect only to loopback addresses

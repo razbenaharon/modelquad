@@ -17,7 +17,7 @@ OpenAI Codex CLI for a read-only review, exploration or architecture opinion,
 and it shows Claude's and Codex's usage side by side. ModelQuad and the CLIs
 it drives run on your computer, under your own logins. It works alongside
 OpenAI's official Codex plugin for Claude Code: the plugin for when you want
-Codex to change code, ModelQuad for a locked-down second opinion.
+Codex to change code, ModelQuad for a read-only second opinion.
 
 Status: early, source-only release. Windows only.
 
@@ -325,12 +325,12 @@ the file.
   except its listener check needs the installation secret.
 - Answers waiting to be collected are kept for 7 days by default. History
   stays until you delete it.
-- **Model training.** Anthropic's and OpenAI's terms each forbid using their
-  output to train the other's models, and ModelQuad passes text in both
-  directions. We recommend turning off model training in your ChatGPT data
-  controls and in your Claude privacy settings while you use ModelQuad.
-  Opting out does not cover feedback you submit or conversations flagged for
-  safety review.
+- **Model training.** Each provider's terms forbid using its output to train
+  models that compete with it, and ModelQuad passes text in both directions.
+  Turn off model training in your ChatGPT data controls and in your Claude
+  privacy settings while you use ModelQuad, and do not use its answers or
+  history as training data. Opting out does not cover feedback you submit or
+  conversations flagged for safety review.
 
 Details: [PRIVACY.md](PRIVACY.md), [NETWORK.md](NETWORK.md). For settings that
 keep ModelQuad away from sensitive work (a repository it must not touch, secret
@@ -346,7 +346,7 @@ write code and offers its own reviews. ModelQuad adds:
 
 - both quotas in the Claude Code status line;
 - a low-quota handoff suggestion;
-- locked-down, read-only Codex reviews, with an approval prompt on every call;
+- read-only Codex reviews, with an approval prompt on every call;
 - optional background jobs that keep running after you close the chat.
 
 ModelQuad is an independent project. It is not affiliated with or endorsed by
@@ -362,18 +362,45 @@ The code is open source; the ModelQuad name and logo are not part of the
 licence. A changed version needs a name of its own. See
 [TRADEMARK.md](TRADEMARK.md).
 
-<!-- disclaimer: pending legal review -->
-You are responsible for following the terms of each provider whose tools you
-use, including Anthropic's and OpenAI's terms and usage policies. ModelQuad
-runs the official CLIs under your own accounts and does not change what those
-terms allow or any usage limit. Anthropic and OpenAI can limit or suspend
-accounts. That risk is yours. ModelQuad is provided "as is", without
-warranties or conditions of any kind, under the Apache License 2.0; see
-sections 7 and 8 of [LICENSE](LICENSE).
+<!-- disclaimer: owner review 2026-11-03; re-read provider terms before each release -->
+
+## Provider terms and your account
+
+- ModelQuad runs Anthropic's Claude Code and OpenAI's Codex CLI under your own
+  accounts. Your use of each is governed by that provider's terms and usage
+  policies, and you are responsible for following them.
+- ModelQuad does not change any usage limit. Each provider's limits apply as
+  they are, and a low-quota suggestion only asks you.
+- Every Codex call runs your own Codex CLI, under your own sign-in, after you
+  approve it. Do not run ModelQuad unattended, in CI or on behalf of other
+  people. OpenAI recommends API-key sign-in for programmatic Codex workflows
+  such as CI/CD.
+- Anthropic and OpenAI can limit, suspend or close accounts, and can change
+  their terms at any time. That risk is yours. If a provider tells you that a
+  use is not allowed, stop it, and please tell us in an issue.
+- Text you send through Codex goes to OpenAI, and Codex's answer goes to
+  Anthropic as part of your conversation. If the code belongs to an employer
+  or a client, check that you may send it to both.
+- Each provider's terms forbid using its output to train models that compete
+  with it. Turn off model training with both while you use ModelQuad, and do
+  not use ModelQuad's answers or history as training data.
+- Codex's answers can be wrong, and code in them may be subject to third-party
+  licences. Check them before you rely on them.
+
+## No warranty
+
+ModelQuad is free software, provided "as is", without warranties or
+conditions of any kind, under the Apache License 2.0; see sections 7 and 8 of
+[LICENSE](LICENSE). To the extent the law allows, its author is not liable for
+any damage that comes from using it, including lost work, code or data sent to
+a provider, a wrong answer from Codex, or action a provider takes on your
+account. This does not limit rights that the law where you live gives you and
+that cannot be waived.
 
 ## How it was made
 
-ModelQuad was developed with substantial help from AI coding agents.
+ModelQuad was developed with substantial help from AI coding agents. The
+maintainer directed, reviewed and tested the work and is responsible for it.
 
 ## Documentation
 

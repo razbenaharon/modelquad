@@ -24,7 +24,8 @@ def test_the_data_flow_notice_names_every_destination_and_setting():
     for required in ("OpenAI", "Anthropic", "ModelQuad reads the files the request names",
                      "asks you before each call", "MODELQUAD_CODEX_QUOTA_REFRESH",
                      "employer or a client", CHATGPT_DATA_CONTROLS, CLAUDE_PRIVACY_SETTINGS,
-                     "Opting out does not cover feedback", "limit or suspend accounts"):
+                     "Opting out does not cover feedback", "limit or suspend accounts",
+                     "unattended", "other licences", "does not change any usage limit"):
         assert required in text
     # Codex has no file tools in this release; the notice must not say it reads files.
     assert "Codex can read files" not in text
