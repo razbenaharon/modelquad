@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/images/modelquad-logo.png" alt="ModelQuad" width="180">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/modelquad-logo-dark.svg">
+    <img src="docs/images/modelquad-logo-color.svg" alt="ModelQuad" width="320">
+  </picture>
 </p>
 
 <p align="center">
