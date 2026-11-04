@@ -1,6 +1,6 @@
 ---
 name: modelquad
-description: Use ModelQuad for a user-approved read-only Codex opinion.
+description: How Claude asks Codex, through ModelQuad, for a read-only second opinion the user approves.
 ---
 
 # ModelQuad
@@ -19,8 +19,8 @@ files; call only if they agree.
 If ModelQuad notes Claude is near its limit, tell the user: they can wait for
 the reset or ask for a Codex review. Only if they ask, use `modelquad_handoff`.
 
-ModelQuad's Codex worker cannot write files or run shell commands. If the user
-wants Codex to make changes, use the official Codex plugin if installed, such
+Codex through ModelQuad cannot write files or run shell commands. If the user
+wants Codex to make changes, use OpenAI's Codex plugin if it is installed, such
 as `/codex:rescue`.
 
 Give an absolute project directory to each `modelquad_job_*` call. Collect a

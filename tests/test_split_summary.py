@@ -420,7 +420,11 @@ def test_activity_carries_a_session_split_block_for_the_project(projects, monkey
     monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
     monkeypatch.setattr(mcp_server, "USAGE_DIRECTORY", str(tmp_path / "usage"))
     monkeypatch.setattr(mcp_server, "_SESSION_STARTED_AT", NOW - timedelta(minutes=30))
-    call = getattr(mcp_server.modelquad_activity, "fn", None) or mcp_server.modelquad_activity
+    tool = getattr(mcp_server.modelquad_activity, "fn", None) or mcp_server.modelquad_activity
+
+    def call(**kwargs):
+        return tool(**kwargs).structured_content
+
     block = call(project_directory=str(one))["split"]
     assert block["period"] == "session" and block["scope"] == "this_project"
     assert block["codex"]["requests"] == 9
@@ -438,6 +442,6 @@ def test_the_activity_listing_survives_a_failing_summary(projects, monkeypatch):
     monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
     monkeypatch.setattr(ss, "summarize", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
     call = getattr(mcp_server.modelquad_activity, "fn", None) or mcp_server.modelquad_activity
-    payload = call(project_directory=str(one))
+    payload = call(project_directory=str(one)).structured_content
     assert payload["split"] == {"known": False, "why": "unavailable"}
     assert payload["activity"]

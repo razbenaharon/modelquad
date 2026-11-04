@@ -117,6 +117,34 @@ def render_status(statuses: Sequence[ProviderStatus]) -> None:
     _print_table(("Provider", "Available", "Remaining", "Freshness", "Observed at", "Reason"), rows)
 
 
+def render_status_summary(statuses: Sequence[ProviderStatus], config, usage_directory=None) -> None:
+    """Under the table: the status line's words, the plans and this folder's Codex setting."""
+    from datetime import datetime, timezone
+
+    from . import plans
+    from .assistance import handoff_suggestion, statusline_text
+    from .doctor import repository_checks
+
+    now = datetime.now(timezone.utc)
+    print()
+    print(f"Quota now: {statusline_text(statuses, config.freshness, now=now)}")
+    note = handoff_suggestion(statuses, config.freshness, now=now)
+    if note is not None:
+        print(f"Note: {note['message']}")
+    print("Plans:")
+    try:
+        for line in plans.human_lines(plans.current(Path(usage_directory or DEFAULT_USAGE_DIRECTORY))):
+            print(f"  {line}")
+    except Exception:  # noqa: BLE001 -- the table above already answered
+        print("  unknown. Set them with: modelquad settings plan")
+    print("This folder:")
+    try:
+        for check in repository_checks(Path.cwd()):
+            print(f"  {check.detail}")
+    except Exception:  # noqa: BLE001
+        print("  Could not check its Codex setting. Run: modelquad doctor")
+
+
 def _route_row(score: ProviderScore) -> tuple[str, ...]:
     return (
         score.provider,
@@ -698,9 +726,13 @@ def render_doctor(report: DoctorReport) -> None:
             [(check.name, check.status.value, check.detail) for check in report.checks],
         )
     else:
+        from .doctor import PERSON_ONLY_CHECKS
+
         sections: dict[str, list] = {"Core": []}
         for check in report.checks:
-            if check.name.startswith(core_prefixes):
+            if check.name in PERSON_ONLY_CHECKS:
+                section = "Plans and this repository"
+            elif check.name.startswith(core_prefixes):
                 section = "Core"
             else:
                 matching_ids = [
@@ -722,6 +754,10 @@ def render_doctor(report: DoctorReport) -> None:
 
     package_check = next((check for check in report.checks if check.name == f"{PRODUCT_NAME} package"), None)
     print(f"Package version: {package_check.detail if package_check is not None else 'n/a'}")
+    attention = [check.name for check in report.checks if check.status.value in ("missing", "warn")]
+    if attention:
+        print(f"Needs attention ({len(attention)}): {', '.join(attention)}. "
+              "Each one's Detail above says what to do.")
     print(f"Overall: {'HEALTHY' if report.ok else 'DEGRADED'}")
 
 
@@ -968,11 +1004,13 @@ def _run_plan_setting(provider: str | None, value: str | None) -> int:
             print(f"The setting was not saved: {exc.strerror or exc}", file=sys.stderr)
             return 1
     views = plans.current(DEFAULT_USAGE_DIRECTORY)
+    print("Plans:")
     for line in plans.human_lines(views):
-        print(line)
+        print(f"  {line}")
     if provider is not None and value is None:
-        print(f"{provider.capitalize()} plans: {', '.join(plans.DECLARABLE_PLANS[provider])}, or unset.")
-    print("Stored only in this computer's preferences.json. Claude sees only the account kind "
+        print(f"{provider.capitalize()} plans you can set: "
+              f"{', '.join(plans.DECLARABLE_PLANS[provider])}, or unset.")
+    print("Stored only on this computer, in preferences.json. Claude sees only the account kind "
           "(personal, workspace or unknown), never the plan name.")
     return 0
 
@@ -1759,7 +1797,7 @@ def build_parser() -> argparse.ArgumentParser:
     host_reset.add_argument("--disconnect-all", action="store_true", required=True)
     host_status = host_actions.add_parser("status")
     host_status.add_argument("--json", action="store_true", dest="as_json")
-    status = subcommands.add_parser("status", help="Show normalized provider availability and usage.")
+    status = subcommands.add_parser("status", help="Show Claude's and Codex's quota, your plans and this folder's Codex setting.")
     status.add_argument("--global", action="store_true", dest="global_status", help="Include host integrations and control-plane health.")
     status.add_argument("--json", action="store_true", dest="as_json", help="Print status as JSON.")
     route = subcommands.add_parser("route", help="Show which tool fits a task type.")
@@ -1865,7 +1903,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "--no-plugin", action="store_false", dest="plugin",
                 help="Install the server, commands and reminder directly again (the default).",
             )
-    doctor = subcommands.add_parser("doctor", help="Check optional CLIs, adapters, and usage sources.")
+    doctor = subcommands.add_parser("doctor", help="Check the setup, your plans and this folder's .modelquad.toml, with what to do next.")
     doctor.add_argument("--json", action="store_true", dest="as_json", help="Print the doctor report as JSON.")
     doctor.add_argument(
         "--first-run", action="store_true", dest="first_run",
@@ -1940,7 +1978,7 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_cmd.add_argument(
         "--json", action="store_true", dest="as_json", help="Print the raw answer as JSON."
     )
-    activity = subcommands.add_parser("activity", help="Show routing and delegated-execution history.")
+    activity = subcommands.add_parser("activity", help="Show ModelQuad's history: past Codex calls and their outcomes.")
     activity.add_argument("--limit", type=int, default=50, help="Maximum number of entries (default: 50).")
     activity.add_argument("--provider", help="Filter by provider.")
     activity.add_argument("--task-type", choices=[task.value for task in TaskType], help="Filter by task type.")
@@ -2269,7 +2307,10 @@ def _run_command(argv: Sequence[str] | None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     if args.command == "doctor":
-        report = run_doctor(config, usage_directory=args.usage_directory)
+        # Plan names and the repository file's key names are for the person
+        # at this terminal only; the MCP doctor tool never includes them.
+        report = run_doctor(config, usage_directory=args.usage_directory,
+                            project_directory=Path.cwd(), include_plans=True)
         if args.as_json:
             payload = report.to_dict()
             if args.first_run:
@@ -2390,6 +2431,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
             print(json.dumps([status.to_dict() for status in statuses], indent=2, sort_keys=True))
         else:
             render_status(statuses)
+            render_status_summary(statuses, config, args.usage_directory)
         if history_enabled:
             service_history.record_provider_usage(db_path, statuses)
         return 0

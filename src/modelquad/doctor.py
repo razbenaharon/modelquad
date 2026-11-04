@@ -914,6 +914,78 @@ def _model_discovery_check(plugin: ProviderPlugin, context: ProviderPluginContex
     )
 
 
+#: Check names of the person-only section: plan names and repository key
+#: names are shown to the person running the CLI, never to the model.
+PLANS_CHECK = "plans"
+REPO_FILE_CHECK = "repository file"
+REPO_SETTING_CHECK = "repository setting"
+PERSON_ONLY_CHECKS = (PLANS_CHECK, REPO_FILE_CHECK, REPO_SETTING_CHECK)
+
+
+def plans_check(usage_directory: Path) -> DoctorCheck:
+    """What each side's plan is and where that comes from: declared vs reported."""
+    from . import plans
+
+    try:
+        views = plans.current(usage_directory)
+    except Exception:  # noqa: BLE001 -- a broken preference file reads unknown
+        return DoctorCheck(PLANS_CHECK, CheckStatus.UNKNOWN,
+                           "Could not read the plans. Set them with: modelquad settings plan")
+    detail = " ".join(plans.human_lines(views))
+    codex = views["codex"]
+    differs = (codex.source == plans.SOURCE_OBSERVED and codex.declared is not None
+               and codex.declared != plans._shown(codex.observed))
+    if differs:
+        return DoctorCheck(PLANS_CHECK, CheckStatus.WARN,
+                           f"{detail} To match, run: modelquad settings plan codex unset")
+    if all(view.kind == plans.UNKNOWN for view in views.values()):
+        return DoctorCheck(PLANS_CHECK, CheckStatus.UNKNOWN, detail)
+    return DoctorCheck(PLANS_CHECK, CheckStatus.OK, detail)
+
+
+_REPO_MODE_WORDS = {"on": "on (Claude may decide on its own)", "off": "off (no Codex here)",
+                    "offer-only": "offer-only (Claude offers)"}
+
+
+def repository_checks(project_directory: Path) -> list[DoctorCheck]:
+    """This repository's .modelquad.toml (valid, invalid with the fix, unknown keys)
+    and the user's own setting for it. Reads local files only; starts no process."""
+    from . import repo_policy, repo_settings
+
+    checks = []
+    try:
+        mode = repo_settings.read_mode(project_directory)
+    except Exception:  # noqa: BLE001 -- an unreadable setting is no setting
+        mode = None
+    checks.append(DoctorCheck(
+        REPO_SETTING_CHECK, CheckStatus.OK,
+        f"Your setting here: {_REPO_MODE_WORDS.get(mode, 'inherit (your global setting applies)')}. "
+        "Change it with: modelquad settings repo <on|off|offer-only|inherit>"))
+    policy = repo_settings.local_policy(project_directory)
+    if policy is None:
+        checks.append(DoctorCheck(REPO_FILE_CHECK, CheckStatus.OK,
+                                  f"No {repo_policy.FILE_NAME} here; ModelQuad's own limits apply."))
+        return checks
+    if policy.refusal in (repo_policy.INVALID, repo_policy.UNREADABLE):
+        checks.append(DoctorCheck(REPO_FILE_CHECK, CheckStatus.WARN,
+                                  "Invalid: " + repo_policy.message(policy.refusal, policy)))
+        return checks
+    facts = policy.facts()
+    parts = [f"Valid {repo_policy.FILE_NAME}.",
+             "Codex: " + ("allowed" if facts["codex_allowed"] else "off") + ";",
+             "kinds: " + (", ".join(facts["task_kinds"]) or "none") + ";",
+             f"at most {facts['max_files']} files, {facts['max_total_kib']} KiB;",
+             "account: " + ("work only" if facts["account"] == "workspace" else "any") + ";",
+             "offers: " + ("only when you ask" if facts["offers_codex"] == "on_request" else "default") + "."]
+    status = CheckStatus.OK
+    if policy.unknown_keys:
+        status = CheckStatus.WARN
+        parts.append("Ignored unknown keys: " + ", ".join(policy.unknown_keys)
+                     + ". Check their spelling against docs/REPO-POLICY.md, or remove them.")
+    checks.append(DoctorCheck(REPO_FILE_CHECK, status, " ".join(parts)))
+    return checks
+
+
 def run_doctor(
     config: Config,
     *,
@@ -924,8 +996,15 @@ def run_doctor(
     registry: ProviderRegistry | None = None,
     windows_path: str | None = None,
     control_plane_probe: Callable[[int], Any] | None = None,
+    project_directory: Path | None = None,
+    include_plans: bool = False,
 ) -> DoctorReport:
-    """Return non-throwing diagnostics for optional CLIs and integrations."""
+    """Return non-throwing diagnostics for optional CLIs and integrations.
+
+    ``include_plans`` and ``project_directory`` add the person-only checks
+    (plan names, the repository file's key names): only the CLI asks for
+    them, never a reply the model reads.
+    """
 
     which = which if which is not None else hostruntime.discovery_which
     active_registry = registry or default_registry()
@@ -1116,6 +1195,14 @@ def run_doctor(
     )
     checks.extend(adapter_checks)
     checks.extend(configuration_checks)
+    if include_plans:
+        checks.append(plans_check(usage_dir))
+    if project_directory is not None:
+        try:
+            checks.extend(repository_checks(Path(project_directory)))
+        except Exception:  # noqa: BLE001 -- doctor itself never fails over a repository file
+            checks.append(DoctorCheck(REPO_FILE_CHECK, CheckStatus.UNKNOWN,
+                                      "Could not check this repository's .modelquad.toml."))
     worker_value = os.environ.get(WORKER_ENV_VAR)
     checks.append(
         DoctorCheck(

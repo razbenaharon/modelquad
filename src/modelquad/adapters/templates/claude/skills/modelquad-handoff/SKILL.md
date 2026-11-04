@@ -15,11 +15,14 @@ The user wants Codex's read-only second opinion on this task: $ARGUMENTS
    far, and what answer would help. Codex sees nothing of this conversation.
 2. Pick the files Codex needs and pass them in `files` (at most 32). Ask the
    user if you are unsure.
-3. Call `modelquad_handoff`. Claude Code asks the user before the call. In a
-   terminal ModelQuad then shows a form with the files and the task; nothing
-   starts unless the user ticks the box and accepts. In the desktop app, which
-   cannot show the form, Claude Code's prompt is the user's answer.
+3. Call `modelquad_handoff`. Claude Code shows its approval prompt before the
+   call. In a terminal ModelQuad then shows an approval form with the files and
+   the task; nothing starts unless the user ticks the box and accepts. In the
+   desktop app, which cannot show the form, Claude Code's approval prompt is the
+   user's answer.
 4. Codex through ModelQuad is read-only: review, exploration or architecture
    only. For changes the user wants Codex to write, suggest OpenAI's Codex
    plugin, for example `/codex:rescue`.
-5. When the answer comes back, verify it before acting on it.
+5. If the reply's first line says Codex was not started, tell the user that
+   line and the next one as written, and start nothing else.
+6. When the answer comes back, verify it before acting on it.

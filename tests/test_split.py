@@ -17,6 +17,7 @@ import itertools
 import json
 import logging
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -114,10 +115,10 @@ def test_task_fit_decides_and_an_independent_opinion_excludes_claude():
     ]
     lines = reply["content"].splitlines()
     assert lines[1] == "Claude: steps 1, 2, 4, 6 (edits or commands; task fit)."
-    assert lines[2] == ("Codex, read-only, asks you first: steps 3, 5 (independent review; "
-                        "second opinion). Each Codex step asks you when it runs.")
+    assert lines[2] == ("Codex (read-only): steps 3, 5 (independent review; "
+                        "second opinion). Each Codex step shows its own approval prompt when it runs.")
     assert lines[-1].startswith("Quota now: ")
-    assert reply["approval"] == "Each Codex step asks you when it runs."
+    assert reply["approval"] == "Each Codex step shows its own approval prompt when it runs."
 
 
 def test_a_missing_codex_leaves_every_step_with_claude():
@@ -211,7 +212,8 @@ def test_no_quota_state_or_plan_changes_any_owner(policy):
         # Kind words only: no plan name reaches the reply.
         for name in filter(None, (observed, *declared.values())):
             assert name not in json.dumps(reply["facts"]["plans"])
-            assert name not in reply["content"]
+            # As a word: "pro" is also inside "approval prompt".
+            assert re.search(rf"{re.escape(name)}", reply["content"]) is None, name
         cautions.add(reply["facts"]["caution"])
     assert (split.CODEX, split.INDEPENDENT_REVIEW, True) in baseline
     # The grid reaches both a caution and none.
@@ -303,7 +305,7 @@ def test_the_tool_starts_no_process_and_says_so(tool, tmp_path):
     assert [(row["owner"], row["reason"]) for row in payload["steps"]] == [
         (split.CLAUDE_ONLY, split.EDITS_OR_COMMANDS), (split.CODEX, split.INDEPENDENT_REVIEW),
         (split.CLAUDE_ONLY, rp.KIND_REMOVED)]
-    assert "Each Codex step asks you when it runs." in text
+    assert "Each Codex step shows its own approval prompt when it runs." in text
     assert 3 <= len(text.splitlines()) <= 8
     assert payload["facts"]["plans"]["codex"] == {"kind": "personal", "source": "reported by Codex"}
     assert "plus" not in json.dumps(payload) and "plus" not in text

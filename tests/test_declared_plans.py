@@ -208,7 +208,7 @@ def test_the_first_call_notice_carries_the_mismatch_line(state, monkeypatch):
     observed(state.usage, "plus")
     plans.write_declared("claude", "enterprise")
     result = asyncio.run(mcp.modelquad_delegate("review", "Review it.", str(state.project), files=None))
-    payload = json.loads(result.content[0].text)
+    payload = result.structured_content
     assert payload["status"] == "notice_first"
     assert payload["notice"] == [*disclosure.DATA_FLOW, MISMATCH]
 

@@ -797,7 +797,7 @@ def execution_lifecycle(state: str) -> dict[str, Any]:
         "blocked": "The worker could not proceed.",
         "failed": "The task did not succeed.",
         "timeout": "The worker did not return in time.",
-        "refused": "ModelQuad did not start this delegation.",
+        "refused": "Nothing was sent to Codex.",
         "delegating": _ACTIVITY_NOTES["delegating"],
         "running": _ACTIVITY_NOTES["running"],
     }
@@ -1152,7 +1152,7 @@ def build_delegation_presentation(
         "blocked": f"{label or 'The worker'} could not proceed",
         "failed": f"{label or 'The worker'} did not finish this task",
         "timeout": f"{label or 'The worker'} did not return in time",
-        "refused": "Delegation did not start",
+        "refused": "Codex was not started",
     }[state]
 
     facts: list[dict[str, str]] = []
@@ -1257,7 +1257,7 @@ _ACTIVITY_NOTES: dict[str, str] = {
         "This handoff started and never reported back, so ModelQuad cannot say "
         "whether the work happened."
     ),
-    "refused": "ModelQuad did not start this handoff.",
+    "refused": "ModelQuad did not start this Codex call.",
     "completed": "The worker reported the task done.",
     "partial": "The worker reported only part of the task done.",
     "blocked": "The worker could not proceed.",
@@ -1273,7 +1273,7 @@ _ACTIVITY_NOTES: dict[str, str] = {
 #: Why ModelQuad declined to start a handoff, in the user's vocabulary. An
 #: unrecognised kind produces no sentence at all rather than a raw token.
 _REFUSAL_REASONS: dict[str, str] = {
-    "policy_refused": "Your routing settings did not allow this handoff.",
+    "policy_refused": "ModelQuad's rules or your settings did not allow this Codex call.",
     "duplicate_in_flight": "The same task was already running.",
     "no_viable_worker": "No provider could take this task.",
     "provider_unavailable": "The chosen provider was not available.",
@@ -1282,6 +1282,49 @@ _REFUSAL_REASONS: dict[str, str] = {
     "orphaned": "The worker was gone, so ModelQuad closed this handoff.",
     "timeout": "The worker did not return in time.",
 }
+
+
+#: One plain sentence per refusal a reply can carry, keyed by the closed code
+#: (or the fixed start of a policy reason). The code itself stays in the
+#: structured fields; a person reads only the sentence. An unknown code gets
+#: the general sentence, never the raw token.
+_REFUSAL_LINES: dict[str, str] = {
+    "duplicate_in_flight": "The same request is already running, so ModelQuad started nothing new.",
+    "task_type_not_read_only": ("Codex through ModelQuad takes only read-only review, exploration "
+                                "or architecture tasks."),
+    "capsule_action_authority_rejected": "The request carried an approval field ModelQuad does not accept.",
+    "launch_state_unknown": "ModelQuad could not read its own settings. Run: modelquad doctor",
+    "routing is paused": "Codex calls are paused in ModelQuad's settings, so nothing starts until they resume.",
+    "host_unidentified": ("A tool is disconnected in ModelQuad and this call could not show which tool "
+                          "it came from. Run: modelquad host status"),
+    "host_disconnected": "Claude Code is disconnected in ModelQuad. Run: modelquad host status",
+    "MODELQUAD_WORKER=1": "This session is itself a Codex worker, and a worker never asks Codex again.",
+    "worker ancestry match": "This session is itself a Codex worker, and a worker never asks Codex again.",
+    "user_repo_codex_off": ("You turned Codex off for this repository. To allow it again, run: "
+                            "modelquad settings repo inherit"),
+}
+REFUSAL_FALLBACK = "ModelQuad's rules did not allow this Codex call."
+
+
+def refusal_line(payload: Any) -> str:
+    """The one sentence a person reads about why Codex was not started.
+
+    A fixed ``message`` the refusing gate wrote (the repository rules do)
+    comes first; otherwise the sentence for the closed code. Never the code.
+    """
+    if not isinstance(payload, dict):
+        return REFUSAL_FALLBACK
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip() and payload.get("reason") != message:
+        return message
+    reason = payload.get("reason")
+    if isinstance(reason, str):
+        if reason in _REFUSAL_LINES:
+            return _REFUSAL_LINES[reason]
+        for start, line in _REFUSAL_LINES.items():
+            if reason.startswith(start):
+                return line
+    return REFUSAL_FALLBACK
 
 
 def failure_sentence(failure_kind: Any) -> str | None:
@@ -1554,7 +1597,7 @@ def _activity_headline(state: str, where: dict[str, Any]) -> str:
         "unattended": f"{worker} is still running this",
         "stopped": f"{worker} was stopped",
         "no_response": f"{worker} never reported back",
-        "refused": "This handoff was not started",
+        "refused": "Codex was not started",
         "completed": f"{worker} finished this task",
         "partial": f"{worker} finished part of this task",
         "blocked": f"{worker} could not proceed",

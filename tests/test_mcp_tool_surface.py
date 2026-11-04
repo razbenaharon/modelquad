@@ -59,6 +59,9 @@ _ALLOWED_PATH_PARAMETERS = frozenset(
         # The project whose per-repo setting and .modelquad.toml the split
         # proposal reads; read-only, and it selects no settings or state.
         ("modelquad_split", "working_directory"),
+        # The project whose per-repo setting and .modelquad.toml the status
+        # reply describes in closed codes; read-only, like the split above.
+        ("modelquad_status", "project_directory"),
         # Activity can be scoped to one project; read-only filtering.
         ("modelquad_activity", "project_directory"),
         ("modelquad_activity_detail", "project_directory"),

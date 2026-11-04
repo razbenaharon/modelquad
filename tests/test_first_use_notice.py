@@ -32,7 +32,7 @@ def fresh_install(monkeypatch, tmp_path):
 
 
 def _payload(result) -> dict:
-    return json.loads(result.content[0].text)
+    return result.structured_content
 
 
 def test_the_first_codex_call_returns_the_notice_and_starts_nothing(fresh_install, monkeypatch, tmp_path):

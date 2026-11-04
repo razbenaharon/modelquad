@@ -65,7 +65,7 @@ REASONS = frozenset({
     repo_policy.INVALID, repo_policy.UNREADABLE,
 })
 
-APPROVAL = "Each Codex step asks you when it runs."
+APPROVAL = "Each Codex step shows its own approval prompt when it runs."
 
 _WORDS = {
     EDITS_OR_COMMANDS: "edits or commands",
@@ -210,7 +210,7 @@ def content_lines(rows: list[dict], fact_block: dict, *, quota_line: str, accoun
     if claude:
         lines.append(f"Claude: {_numbers([row['step'] for row in claude])} ({_reasons(claude)}).")
     if codex:
-        lines.append(f"Codex, read-only, asks you first: {_numbers([row['step'] for row in codex])} "
+        lines.append(f"Codex (read-only): {_numbers([row['step'] for row in codex])} "
                      f"({_reasons(codex)}). {APPROVAL}")
         repository = fact_block["repository"]
         if repository["offer_mode"] == ON_REQUEST:

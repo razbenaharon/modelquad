@@ -60,6 +60,7 @@ from .livelifecycle import derive_recovery_outlook, facts_from_attempt
 from .presentation import (
     build_activity_feed,
     build_delegation_presentation,
+    refusal_line,
     render_presentation_text,
 )
 from .callerinfo import (
@@ -470,6 +471,10 @@ def _decision_result(
     """
 
     summary = render_presentation_text(presentation)
+    if payload.get("refused"):
+        # The outcome, then why in one plain sentence; the code stays in `reason`.
+        first, _, rest = summary.partition("\n")
+        summary = "\n".join(part for part in (first, refusal_line(payload), rest) if part)
     suggestion = payload.get("handoff_suggestion")
     if isinstance(suggestion, dict) and suggestion.get("message"):
         # The one line a human must see: the reply informs, it never acts.
@@ -1389,10 +1394,97 @@ def _start_prepared_job_closed(prepared, client, in_session):
         time.sleep(min(0.1, max(0, deadline - time.monotonic())))
 
 
+def _repo_policy_view(project_directory: str | None) -> dict:
+    """This repository's Codex setting in closed codes, read from local files only.
+
+    The user's own ``modelquad settings repo`` word and the repository's
+    ``.modelquad.toml``, combined as the gates combine them. It starts no
+    process and stores nothing; no path, file text or key name is carried,
+    only closed words and a count of unknown keys.
+    """
+    from .. import repo_policy, repo_settings
+    from ..adapters.server_instructions import read_proactive
+
+    if project_directory is None:
+        return {"state": "unknown", "why": "no_project_directory"}
+    if not os.path.isabs(project_directory) or not os.path.isdir(project_directory):
+        return {"state": "unknown", "why": "project_directory_unusable"}
+    try:
+        user_mode = repo_settings.read_mode(project_directory)
+    except Exception:  # noqa: BLE001 -- an unreadable setting is no setting
+        user_mode = None
+    policy = repo_settings.local_policy(project_directory)
+    applied = repo_settings.effective(global_proactive=read_proactive(), user_mode=user_mode,
+                                      policy=policy)
+    broken = policy is not None and policy.refusal in (repo_policy.INVALID, repo_policy.UNREADABLE)
+    facts = (policy or repo_policy.BUILTIN).facts()
+    return {
+        "state": "known",
+        "file": "absent" if policy is None else ("invalid" if broken else "valid"),
+        "codex_allowed": applied.codex_allowed,
+        "refusal": applied.refusal,
+        "offer_mode": applied.offer,
+        "user_setting": user_mode or "inherit",
+        "task_kinds": facts["task_kinds"],
+        "account_rule": facts["account"],
+        "unknown_key_count": facts["unknown_key_count"],
+    }
+
+
+#: The repository line of a status reply, by closed refusal code.
+_REPO_REFUSAL_LINES = {
+    "user_repo_codex_off": "This repository: Codex is off (your setting: modelquad settings repo).",
+    "repo_policy_codex_off": "This repository: Codex is off (its .modelquad.toml).",
+}
+
+
+def _repo_policy_line(view: dict) -> str:
+    """One plain line for a person: what applies to Codex in this repository."""
+    if view.get("state") != "known":
+        return "This repository: not checked (no project folder given)."
+    refusal = view.get("refusal")
+    if refusal in _REPO_REFUSAL_LINES:
+        return _REPO_REFUSAL_LINES[refusal]
+    if refusal is not None:
+        return ("This repository: Codex is refused until its .modelquad.toml is fixed. "
+                "Run: modelquad doctor")
+    notes = []
+    if len(view.get("task_kinds") or ()) < 3:
+        notes.append("only " + ", ".join(view["task_kinds"]))
+    if view.get("account_rule") == "workspace":
+        notes.append("work account only")
+    if view.get("offer_mode") == "on_request":
+        notes.append("Claude calls Codex only when you ask")
+    source = "no .modelquad.toml" if view.get("file") == "absent" else ".modelquad.toml"
+    return f"This repository: Codex allowed ({'; '.join([*notes, source])})."
+
+
+def _status_lines(payload: dict) -> list[str]:
+    from .. import plans
+
+    lines = [f"Quota now: {payload['summary']}"]
+    suggestion = payload.get("handoff_suggestion")
+    if isinstance(suggestion, dict) and suggestion.get("message"):
+        lines.append(suggestion["message"])
+    accounts = payload.get("plans") or {}
+    words = {plans.PERSONAL: "personal", plans.WORKSPACE: "work", plans.UNKNOWN: "unknown"}
+    lines.append("Account kinds: " + ", ".join(
+        f"{label} {words.get((accounts.get(name) or {}).get('kind'), 'unknown')}"
+        for name, label in (("claude", "Claude"), ("codex", "Codex"))) + ".")
+    lines.append(_repo_policy_line(payload["repo_policy"]))
+    return lines
+
+
 @server.tool(title="Quota and provider status", annotations=READ_ONLY)
-def modelquad_status() -> dict:
-    """Show local provider availability and display-only quota readings."""
-    return _provider_status_payload(USAGE_DIRECTORY, CONFIG_PATH)
+def modelquad_status(project_directory: str | None = None) -> CallToolResult:
+    """Show local provider availability and display-only quota readings. With
+    `project_directory` (absolute), also this repository's Codex setting."""
+    payload = _provider_status_payload(USAGE_DIRECTORY, CONFIG_PATH)
+    try:
+        payload["repo_policy"] = _repo_policy_view(project_directory)
+    except Exception:  # noqa: BLE001 -- a status reply must not fail over a repository file
+        payload["repo_policy"] = {"state": "unknown", "why": "unreadable"}
+    return _plain_result(payload, _status_lines(payload))
 
 
 # Defined in its own module: a model whose module is run as ``__main__``
@@ -1697,8 +1789,10 @@ async def modelquad_delegate(
     if "job_id" in payload:
         # A job response has its own evidence shape. Legacy presentation
         # expects process fields that the output seam deliberately cannot claim.
-        return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload))],
-                              structuredContent=payload)
+        return CallToolResult(content=[
+            TextContent(type="text", text="Codex is working on this in the background. "
+                                          "Claude collects the answer when it is ready."),
+            TextContent(type="text", text=json.dumps(payload))], structuredContent=payload)
     presentation = build_delegation_presentation(
         payload,
         task_type=task_type,
@@ -1732,9 +1826,20 @@ class HandoffApproval(BaseModel):
     )
 
 
-def _plain_result(payload: dict) -> CallToolResult:
-    return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload))],
-                          structured_content=payload)
+def _plain_result(payload: dict, lines: list[str] | None = None) -> CallToolResult:
+    """A reply: the plain lines a person reads first (the outcome on the first
+    line), then the same facts as data for Claude. Codes stay in the data."""
+    content = [TextContent(type="text", text=json.dumps(payload))]
+    if lines:
+        content.insert(0, TextContent(type="text", text="\n".join(lines)))
+    return CallToolResult(content=content, structured_content=payload)
+
+
+NOT_STARTED = "Codex was not started."
+
+
+def _refused_result(payload: dict) -> CallToolResult:
+    return _plain_result(payload, [NOT_STARTED, refusal_line(payload)])
 
 
 NOTICE_FIRST_NEXT = (
@@ -1768,7 +1873,10 @@ def _notice_first() -> CallToolResult | None:
         record_notice_shown("first_call")
     except OSError:
         payload["note"] = "ModelQuad could not record that the notice was shown, so it shows it again."
-    return _plain_result(payload)
+    return _plain_result(payload, [
+        "Codex was not started. Before the first Codex call, ModelQuad shows what it sends where:",
+        *notice,
+        "To go ahead, ask again. Claude Code shows its approval prompt before the call."])
 
 
 #: No person reads the handoff form, ticks its box and answers this fast. The
@@ -1870,6 +1978,13 @@ async def _ask_handoff_approval(ctx: Context | None, message: str) -> str:
 
 #: The handoff form's question. Codex through ModelQuad only answers read-only.
 HANDOFF_QUESTION = "Ask Codex for a read-only second opinion on this task?"
+
+#: The first line of a handoff reply that started nothing, by the form's answer.
+_ANSWER_LINES = {
+    "decline": "Codex was not started: you declined.",
+    "cancel": "Codex was not started: the approval form was closed without an answer.",
+    "unavailable": "Codex was not started: this Claude Code client could not show the approval form.",
+}
 
 #: What Claude does when this Claude Code client cannot show the handoff form
 #: (the desktop app's Code tab, for one). The delegate tool is the fallback
@@ -2008,7 +2123,7 @@ async def modelquad_handoff(
     # outlives a pause, a disconnect or a refusal that arrived meanwhile.
     refusal = _handoff_refusal(task_type, capsule, ctx, working_directory)
     if refusal is not None:
-        return _plain_result(refusal)
+        return _refused_result(refusal)
     files = _checked_files(files)
     first = _notice_first()
     if first is not None:
@@ -2017,7 +2132,8 @@ async def modelquad_handoff(
     if getattr(approval, "data", None) == "widget" and _shows_handoff_window(ctx):
         return _plain_result(_widget_pending(
             task_type=task_type, prompt=prompt, working_directory=working_directory, timeout=timeout,
-            model=model, reasoning_effort=reasoning_effort, capsule=capsule, files=files))
+            model=model, reasoning_effort=reasoning_effort, capsule=capsule, files=files),
+            ["Waiting for your answer in the handoff window. Nothing starts unless you press Approve."])
     # Only the framework's resolver can say so, and only when the check still
     # holds here: a direct call never passed Claude Code's approval card.
     card = getattr(approval, "data", None) == "card_approved" and _desktop_card_approves(ctx)
@@ -2046,7 +2162,7 @@ async def modelquad_handoff(
             refusal["form_unavailable_reason"] = why
             refusal["files_preview"] = _files_preview(working_directory, files)
             refusal["next_step"] = _FORM_UNAVAILABLE_STEP
-        return _plain_result(refusal)
+        return _plain_result(refusal, [_ANSWER_LINES.get(answer, NOT_STARTED)])
     # The card is the same approval as modelquad_delegate's, so it is recorded as one.
     token = _approval_route.set("delegate" if card else "handoff")
     try:
@@ -2119,21 +2235,24 @@ async def modelquad_handoff_wait(pending_id: str, ctx: Context | None = None) ->
     """After modelquad_handoff showed its approval window: wait for the user's answer and,
     only if they pressed Approve, run the task in Codex and return its answer."""
     if _worker_refused():
-        return _plain_result({"refused": True, "started": False,
-                              "reason": f"{_worker_refusal_prefix()} a delegated worker must never hand off work"})
+        return _refused_result({"refused": True, "started": False,
+                                "reason": f"{_worker_refusal_prefix()} a delegated worker must never hand off work"})
     decision, arguments = await anyio.to_thread.run_sync(
         handoff_widget.take, pending_id, WIDGET_WAIT_SECONDS, abandon_on_cancel=True)
     if decision == "waiting":
         return _plain_result({"started": False, "approval": "waiting", "pending_id": pending_id,
-                              "next_step": "The user has not answered yet. Call modelquad_handoff_wait again."})
+                              "next_step": "The user has not answered yet. Call modelquad_handoff_wait again."},
+                             ["Still waiting for your answer in the handoff window."])
     if decision != "approve" or arguments is None:
         return _plain_result({"started": False, "approved": False, "approval": decision,
-                              "next_step": "Nothing started. Start nothing unless the user asks again."})
+                              "next_step": "Nothing started. Start nothing unless the user asks again."},
+                             ["Codex was not started: you declined." if decision == "decline" else
+                              "Codex was not started: the handoff window got no answer."])
     # The checks run again after the answer, as in modelquad_handoff.
     refusal = _handoff_refusal(arguments["task_type"], arguments["capsule"], ctx,
                                arguments["working_directory"])
     if refusal is not None:
-        return _plain_result(refusal)
+        return _refused_result(refusal)
     digests = arguments.pop("approved_digests", None)
     token = _approval_route.set("handoff")
     bound = _approved_digests.set(digests if type(digests) is dict else {})
@@ -2189,8 +2308,9 @@ def modelquad_activity(
     provider: str | None = None,
     task_type: str | None = None,
     project_directory: str | None = None,
-) -> dict:
-    """Return persisted routing and execution activity, compact by default.
+) -> CallToolResult:
+    """Return ModelQuad's recorded activity (past Codex calls and their outcomes),
+    compact by default, newest first.
 
     Each entry is a small summary (id, timestamp, task_type, kind, provider,
     model, status, reason, duration, host, invocation_mode, ...) -- raw
@@ -2222,7 +2342,8 @@ def modelquad_activity(
         from ..adapters.pending_reminder import project_key
         key = project_key(project_directory)
         if key is None:
-            return {"error": "project_scope_invalid"}
+            return _plain_result({"error": "project_scope_invalid"},
+                                 ["That project folder cannot be used for activity. Pass its absolute path."])
     entries = service_history.fetch_activity(
         service_db.DEFAULT_DB_PATH,
         limit=limit,
@@ -2242,7 +2363,28 @@ def modelquad_activity(
         limit=limit,
     )
     payload["split"] = _split_summary_block(key)
-    return payload
+    return _plain_result(payload, _activity_lines(payload, scoped=key is not None))
+
+
+def _activity_lines(payload: dict, *, scoped: bool) -> list[str]:
+    """The few lines a person reads: how many entries, the latest, this session's Codex calls."""
+    rows = (payload.get("presentation") or {}).get("entries") or []
+    where = " for this project" if scoped else ""
+    if not rows:
+        lines = [f"No ModelQuad activity recorded yet{where}."]
+    else:
+        lines = [f"ModelQuad activity{where}: {len(rows)} entr{'y' if len(rows) == 1 else 'ies'}, newest first."]
+        for row in rows[:3]:
+            task = (row.get("task") or {}).get("label")
+            lines.append(f"- {row.get('headline')}" + (f" ({task})" if task else "") + ".")
+    split = payload.get("split") or {}
+    codex = split.get("codex") if split.get("known") else None
+    if isinstance(codex, dict):
+        outcomes, refused = codex.get("outcomes") or {}, codex.get("refused") or {}
+        lines.append(f"This session: {codex.get('requests', 0)} Codex request"
+                     f"{'' if codex.get('requests') == 1 else 's'} (answered {outcomes.get('answered', 0)}, "
+                     f"refused {sum(refused.values())}).")
+    return lines
 
 
 #: When this server process started: the start of the session the split

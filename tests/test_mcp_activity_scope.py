@@ -27,7 +27,9 @@ mcp_server = importlib.import_module("modelquad.mcp.server")
 
 
 def _call(tool, **kwargs):
-    return (getattr(tool, "fn", None) or tool)(**kwargs)
+    result = (getattr(tool, "fn", None) or tool)(**kwargs)
+    # A tool that replies with lines for a person carries its data alongside.
+    return getattr(result, "structured_content", result)
 
 
 def _evidence(usage_file) -> str:

@@ -24,4 +24,4 @@ $ARGUMENTS
    and account facts.
 4. Do the Claude steps as usual. When you reach a Codex step, ask the user;
    call `modelquad_delegate` for that one step only if they agree. Claude Code
-   asks them again before each call. The proposal approves nothing.
+   shows its approval prompt before each call. The proposal approves nothing.

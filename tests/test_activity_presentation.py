@@ -378,7 +378,7 @@ def test_a_refused_attempt_says_it_never_started_and_why_in_words():
         attempt(status="refused", resolved_at=NOW, liveness="resolved", failure_kind="duplicate_in_flight")
     )
     assert entry["state"] == "refused"
-    assert entry["headline"] == "This handoff was not started"
+    assert entry["headline"] == "Codex was not started"
     assert {"key": "refusal", "label": "Why not", "value": "The same task was already running."} in entry["facts"]
 
 
@@ -755,7 +755,9 @@ def test_the_activity_tool_serves_a_plain_language_view_beside_the_raw_record(tm
     monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
 
     def _call(tool, **kwargs):
-        return (getattr(tool, "fn", None) or tool)(**kwargs)
+        result = (getattr(tool, "fn", None) or tool)(**kwargs)
+        # A tool that replies with lines for a person carries its data alongside.
+        return getattr(result, "structured_content", result)
 
     service_history.record_execution(
         db_path,
