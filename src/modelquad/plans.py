@@ -27,6 +27,7 @@ Imports stay light: the MCP server reads this on every Codex call.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import re
 from pathlib import Path
@@ -57,6 +58,12 @@ _OBSERVED_WORKSPACE = frozenset({"team", "business", "enterprise", "edu", "educa
 SOURCE_OBSERVED = "reported by Codex"
 SOURCE_DECLARED = "you set"
 SOURCE_UNKNOWN = "unknown"
+
+#: How recent Codex's own reading must be to count as evidence of the account
+#: kind: the quota freshness window (``usage.refresh.FRESH_SECONDS``; a test
+#: keeps the two equal). The background refresh reads Codex well inside it.
+ACCOUNT_EVIDENCE_SECONDS = 300.0
+_FUTURE_SKEW_SECONDS = 60.0
 
 _PLANS_KEY = "plans"
 _MAX_USAGE_FILE_BYTES = 1024 * 1024
@@ -92,7 +99,9 @@ def observed_codex_kind(plan_type: Any) -> str:
     plan = plan_type.strip().casefold()
     if plan in _OBSERVED_PERSONAL:
         return PERSONAL
-    if plan in _OBSERVED_WORKSPACE or any(word in plan for word in ("enterprise", "business", "team", "edu")):
+    # Exact names only: a plan type ModelQuad does not know stays unknown
+    # (invariant 4), even when its letters contain "team" or "edu".
+    if plan in _OBSERVED_WORKSPACE:
         return WORKSPACE
     return UNKNOWN
 
@@ -138,13 +147,13 @@ def read_declared(path: Path | None = None) -> dict[str, str | None]:
 def write_declared(provider: str, value: str | None, path: Path | None = None) -> Path:
     """Set (or, with None, unset) one provider's plan, keeping every other preference."""
     from .adapters.atomicwrite import atomic_write
-    from .adapters.server_instructions import _read_preferences
+    from .adapters.server_instructions import preferences_for_write
 
     plan = None if value is None else normalise(provider, value)
     if provider not in DECLARABLE_PLANS:
         raise ValueError(f"Unknown provider {provider!r}. Use one of: {', '.join(PROVIDERS)}.")
     target = _preferences_path(path)
-    payload = _read_preferences(target)
+    payload = preferences_for_write(target)  # Unreadable: raises, and nothing is written.
     stored = payload.get(_PLANS_KEY)
     plans = {key: item for key, item in stored.items()
              if key in DECLARABLE_PLANS and type(item) is str and item in DECLARABLE_PLANS[key]} \
@@ -161,29 +170,63 @@ def write_declared(provider: str, value: str | None, path: Path | None = None) -
     return target
 
 
-def read_observed_codex_plan(usage_directory: Path) -> str | None:
-    """The ``plan_type`` of the stored Codex quota read, or None.
-
-    Reads only ModelQuad's own ``usage-codex.json``.
-    """
+def _codex_snapshot(usage_directory: Path) -> dict | None:
+    """ModelQuad's own stored Codex quota read (``usage-codex.json``), or None."""
     try:
         path = Path(usage_directory) / "usage-codex.json"
         if path.stat().st_size > _MAX_USAGE_FILE_BYTES:
             return None
-        plan = json.loads(path.read_text(encoding="utf-8-sig")).get("plan_type")
-    except (OSError, ValueError, AttributeError, RecursionError):
+        snapshot = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
         return None
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def read_observed_codex_plan(usage_directory: Path) -> str | None:
+    """The ``plan_type`` of the stored Codex quota read, or None.
+
+    Reads only ModelQuad's own ``usage-codex.json``. For showing the plan; a
+    rule that needs evidence uses :func:`reported_codex_kind`.
+    """
+    snapshot = _codex_snapshot(usage_directory)
+    plan = snapshot.get("plan_type") if snapshot is not None else None
     return plan if type(plan) is str else None
 
 
-def reported_codex_kind(usage_directory: Path) -> str:
-    """The account kind of the plan Codex itself reported; unknown otherwise.
+def _moment(value: Any) -> datetime | None:
+    if type(value) is not str:
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+def reported_codex_kind(usage_directory: Path, *, now: datetime | None = None,
+                        max_age_seconds: float | None = None) -> str:
+    """The account kind of the plan Codex itself reported just now; unknown otherwise.
 
     For rules that need evidence rather than a statement, such as a
     repository's ``account = "workspace"``: a plan the user declared never
-    counts here. Reads only ModelQuad's own ``usage-codex.json``.
+    counts here. The reading counts only when it is a successful (signed-in)
+    read -- ``available`` true, no ``quota_error`` -- observed within
+    ``ACCOUNT_EVIDENCE_SECONDS``. An older reading may come from another
+    login (a failed read keeps the last good one), so it reads unknown and
+    the rule refuses. Reads only ModelQuad's own ``usage-codex.json``.
     """
-    return observed_codex_kind(read_observed_codex_plan(usage_directory))
+    snapshot = _codex_snapshot(usage_directory)
+    if snapshot is None or snapshot.get("available") is not True or snapshot.get("quota_error") is not None:
+        return UNKNOWN
+    observed = _moment(snapshot.get("observed_at"))
+    if observed is None:
+        return UNKNOWN
+    now = now or datetime.now(timezone.utc)
+    age = (now - observed).total_seconds()
+    limit = ACCOUNT_EVIDENCE_SECONDS if max_age_seconds is None else max_age_seconds
+    if age > limit or age < -_FUTURE_SKEW_SECONDS:
+        return UNKNOWN
+    return observed_codex_kind(snapshot.get("plan_type"))
 
 
 def merged(observed_codex: str | None, declared: dict[str, str | None]) -> dict[str, PlanView]:

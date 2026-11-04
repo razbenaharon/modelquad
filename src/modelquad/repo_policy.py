@@ -62,7 +62,11 @@ KIND_REMOVED = "repo_policy_kind_removed"
 ACCOUNT_WORKSPACE_REQUIRED = "repo_policy_account_workspace_required"
 INVALID = "repo_policy_invalid"
 UNREADABLE = "repo_policy_unreadable"
-REASONS = frozenset({CODEX_OFF, KIND_REMOVED, ACCOUNT_WORKSPACE_REQUIRED, INVALID, UNREADABLE})
+#: A named file sits in another Git repository below the working folder, whose
+#: own ``.modelquad.toml`` and per-repository setting this call would skip.
+FILE_OUTSIDE_REPO = "repo_policy_file_outside_repo"
+REASONS = frozenset({CODEX_OFF, KIND_REMOVED, ACCOUNT_WORKSPACE_REQUIRED, INVALID, UNREADABLE,
+                     FILE_OUTSIDE_REPO})
 
 # Closed problem labels: why a file was refused as unreadable or invalid.
 _PROBLEM_TEXT = {
@@ -129,12 +133,18 @@ class RepoPolicy:
         ``account_kind`` is the account kind of the plan *Codex itself reports*
         (personal, workspace, unknown); anything but "workspace" fails
         ``account = "workspace"``. A plan the user declared never counts here.
+
+        A kind that is not one of the read-only kinds is not this file's to
+        refuse: the read-only gate refuses it with its own reason, whether or
+        not the repository has a file.
         """
         if self.refusal is not None:
             return self.refusal
         if not self.allowed:
             return CODEX_OFF
         kind = getattr(task_type, "value", task_type)
+        if kind not in TASK_KINDS:
+            return None
         if kind not in self.task_kinds:
             return KIND_REMOVED
         if check_account and self.account == "workspace" and account_kind != "workspace":
@@ -145,7 +155,8 @@ class RepoPolicy:
         """A closed, content-free summary a model-facing reply may carry."""
         return {
             "source": self.source,
-            "codex_allowed": self.allowed and self.refusal is None,
+            # An empty task_kinds list refuses every call, so it reads as off.
+            "codex_allowed": self.allowed and self.refusal is None and bool(self.task_kinds),
             "task_kinds": [kind for kind in TASK_KINDS if kind in self.task_kinds],
             "max_files": self.caps["max_files"],
             "max_total_kib": self.caps["max_total_bytes"] // 1024,
@@ -221,6 +232,12 @@ def find_root(working_directory) -> Path:
     marker = _git_marker(directory)
     if marker is None:
         return directory
+    from .repo_settings import git_pointer_leaves_machine
+
+    if git_pointer_leaves_machine(marker):
+        # Git would follow the pointer and open a network share: it is not
+        # started, and the caller refuses (load fails closed).
+        raise OSError("git pointer leaves this machine")
     try:
         from .jobs import changes
 
@@ -359,11 +376,96 @@ def load(working_directory) -> RepoPolicy:
     No file: the built-in policy. Never raises; any failure to find the root
     or read the file as a plain file refuses (fail closed).
     """
+    from .localpath import text_reason
+
+    # Defence in depth: the entry points refuse a network or device folder
+    # before this; here such a folder is never handed to Git or stat.
+    if text_reason(working_directory) is not None:
+        return _broken(UNREADABLE, "unreadable")
     try:
         root = find_root(working_directory)
     except Exception:  # noqa: BLE001 -- nothing about the path or the error escapes
         return _broken(UNREADABLE, "unreadable")
     return load_from_root(root)
+
+
+def file_in_other_repository(working_directory, files) -> bool:
+    """True when a named file sits in another Git repository below the working folder.
+
+    A folder between the file and the working folder (the file's own folder
+    included, the working folder excluded) that holds a ``.git`` entry is the
+    top of a nested repository or a submodule. Its ``.modelquad.toml`` and the
+    user's setting for it would not be read for this call, so the call is
+    refused (fail closed) rather than sent under the outer folder's policy.
+    Reads only ``lstat`` of ``.git`` entries; starts no process. Names the
+    packer would refuse anyway (``..``, a drive, a root) are left to it.
+    """
+    base = Path(os.path.abspath(working_directory))
+    for name in files or ():
+        if type(name) is not str:
+            continue
+        parts = [part for part in name.replace("\\", "/").split("/") if part]
+        if not parts or any(part in (".", "..") or ":" in part for part in parts) \
+                or name.startswith(("/", "\\")):
+            continue
+        folder = base
+        for part in parts[:-1]:
+            folder = folder / part
+            try:
+                (folder / ".git").lstat()
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            except OSError:
+                return True  # Cannot tell: refuse.
+            return True
+    return False
+
+
+def gate(working_directory, task_type, *, files=(), usage_directory=None):
+    """The per-repository gate for one Codex call, read fresh: ``(refusal, policy)``.
+
+    ``refusal`` is None or the closed ``{"reason", "message"}``; ``policy`` is
+    the repository file's policy (its caps bound the packer), None when the
+    call is refused before the file is read. One place for the MCP gates and
+    the executor's recheck, in this order:
+
+    1. a network, device or relative folder (``localpath``), before any
+       file-system access;
+    2. the user's own ``modelquad settings repo off``;
+    3. a named file in another Git repository below the folder;
+    4. the repository's ``.modelquad.toml``, including ``account =
+       "workspace"``, which needs a fresh plan Codex itself reported
+       (``plans.reported_codex_kind``) in ``usage_directory`` (ModelQuad's
+       default usage folder when None).
+    """
+    from . import localpath, plans, repo_settings
+
+    if localpath.reason(working_directory) is not None:
+        return {"reason": localpath.UNUSABLE, "message": UNUSABLE_MESSAGE}, None
+    try:
+        user_mode = repo_settings.read_mode(working_directory)
+    except Exception:  # noqa: BLE001 -- an unreadable setting is no setting
+        user_mode = None
+    if user_mode == "off":
+        return {"reason": repo_settings.USER_CODEX_OFF, "message": repo_settings.USER_OFF_MESSAGE}, None
+    if file_in_other_repository(working_directory, files):
+        return {"reason": FILE_OUTSIDE_REPO, "message": message(FILE_OUTSIDE_REPO)}, None
+    policy = load(working_directory)
+    kind = plans.UNKNOWN
+    if policy.refusal is None and policy.account == "workspace":
+        try:
+            if usage_directory is None:
+                from .providers.base import DEFAULT_USAGE_DIRECTORY as usage_directory
+            kind = plans.reported_codex_kind(Path(usage_directory))
+        except Exception:  # noqa: BLE001 -- an unreadable account reads unknown, and refuses
+            kind = plans.UNKNOWN
+    return refusal(policy, task_type, account_kind=kind), policy
+
+
+UNUSABLE_MESSAGE = (
+    "The folder is not a local folder ModelQuad can use (a network share, a device, a relative "
+    "path, or a link to one), so ModelQuad started nothing and did not open it. Use the "
+    "project's absolute folder on a local drive.")
 
 
 def load_from_root(root) -> RepoPolicy:
@@ -397,10 +499,15 @@ def message(code: str, policy: RepoPolicy | None = None, *, task_type=None, acco
         named = f"{kind} " if kind in TASK_KINDS else ""
         return (f"This repository's {FILE_NAME} does not allow Codex {named}tasks ([codex] task_kinds), "
                 "so ModelQuad started nothing. Ask for a kind it lists, or edit task_kinds.")
+    if code == FILE_OUTSIDE_REPO:
+        return ("A file named for Codex is in another Git repository inside this folder, whose own "
+                f"{FILE_NAME} and settings this call would skip, so ModelQuad started nothing. Ask "
+                "from that repository's own folder instead.")
     if code == ACCOUNT_WORKSPACE_REQUIRED:
         which = ("Codex reports a personal plan" if account_kind == "personal" else
-                 "Codex has not reported a workspace plan (a plan set with modelquad settings "
-                 "plan does not count)")
+                 "Codex has not reported a workspace plan in the last 5 minutes (read it again "
+                 "with modelquad usage-refresh; a plan set with modelquad settings plan does "
+                 "not count)")
         return (f"This repository's {FILE_NAME} allows Codex only on a work account "
                 f"([codex] account = \"workspace\"), and {which}, so ModelQuad started nothing. "
                 "Use a work Codex account here, or change that line.")

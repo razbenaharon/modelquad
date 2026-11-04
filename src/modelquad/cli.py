@@ -429,15 +429,29 @@ def _note_notice_shown(args: argparse.Namespace, notices: dict, reports: list) -
         pass  # The first Codex call then shows the notice instead.
 
 
-def _remember_plugin_choice(args: argparse.Namespace) -> None:
-    """Save ``--plugin`` / ``--no-plugin`` once an install has used it, so a repair keeps it."""
+PLUGIN_CHOICE_NOT_SAVED = (
+    "Installed, but the plugin choice was not saved (ModelQuad could not write its "
+    "preferences.json), so a later repair may install the direct server again. Run this "
+    "install again once the file can be written.")
+
+
+def _remember_plugin_choice(args: argparse.Namespace) -> str | None:
+    """Save ``--plugin`` / ``--no-plugin`` once an install has used it, so a repair keeps it.
+
+    Runs after the adapter changed files, so it never raises: a choice that
+    could not be saved is returned as the client's error line instead.
+    """
 
     choice = getattr(args, "plugin", None)
     if choice is None or args.dry_run:
-        return
+        return None
     from .adapters.server_instructions import write_claude_plugin
 
-    write_claude_plugin(choice)
+    try:
+        write_claude_plugin(choice)
+    except OSError:
+        return PLUGIN_CHOICE_NOT_SAVED
+    return None
 
 
 def _mcp_registration_skipped(
@@ -542,9 +556,10 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
         restore = None if integrations_off else _restore_displaced_registration(
             client, target_dir, args, method_name, before
         )
+        not_saved = None
         if method_name == "install":
             if client == "claude":
-                _remember_plugin_choice(args)
+                not_saved = _remember_plugin_choice(args)
             skipped = _mcp_registration_skipped(client, target_dir, report, adapter)
             if skipped is not None:
                 results.append({"client": client, "detected": True, "report": report,
@@ -555,7 +570,7 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
                 "client": client,
                 "detected": True,
                 "report": report,
-                "error": None,
+                "error": not_saved,
                 "restore": restore,
                 "status_line_recipe": (
                     _status_line_recipe(client, target_dir) if method_name == "install" else None
@@ -942,7 +957,9 @@ def _run_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentPars
         reports.append(report)
         if method_name == "install":
             if client == "claude":
-                _remember_plugin_choice(args)
+                not_saved = _remember_plugin_choice(args)
+                if not_saved is not None:
+                    errors.append({"client": client, "error": not_saved})
             recipes.append(_status_line_recipe(client, target_dir))
             skipped = _mcp_registration_skipped(client, target_dir, report, adapter)
             if skipped is not None:
@@ -1023,6 +1040,10 @@ _REPO_MODE_TEXT = {
 }
 
 
+_NOT_LOCAL_FOLDER = ("That folder is not a local folder ModelQuad can use (a network share, a "
+                     "device, or a link to one). Use the project's folder on a local drive.")
+
+
 def _run_split_summary(args: argparse.Namespace, config) -> int:
     """``modelquad split summary``: read-only, from ModelQuad's own history."""
     from datetime import datetime, timezone
@@ -1030,7 +1051,13 @@ def _run_split_summary(args: argparse.Namespace, config) -> int:
     from . import split_summary
     from .adapters.pending_reminder import project_key
 
+    from .localpath import reason as local_reason
+
     folder = Path(args.project) if args.project else Path.cwd()
+    # Before any file-system call: a network share is never opened.
+    if local_reason(os.path.abspath(folder)) is not None:
+        print(_NOT_LOCAL_FOLDER, file=sys.stderr)
+        return 2
     if not folder.is_dir():
         print("That project folder does not exist.", file=sys.stderr)
         return 2
@@ -1055,8 +1082,13 @@ def _run_repo_setting(choice: str | None, project: str | None) -> int:
     """Show or set the user's own Codex setting for one repository."""
     from . import repo_policy, repo_settings
     from .adapters.server_instructions import read_proactive
+    from .localpath import reason as local_reason
 
     folder = Path(project) if project else Path.cwd()
+    # Before any file-system call: a network share is never opened.
+    if local_reason(os.path.abspath(folder)) is not None:
+        print(_NOT_LOCAL_FOLDER, file=sys.stderr)
+        return 2
     if not folder.is_dir():
         print("That project folder does not exist.", file=sys.stderr)
         return 2

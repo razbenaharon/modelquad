@@ -155,6 +155,15 @@ REFUSAL_MESSAGES = {
         "This repository's .modelquad.toml could not be used (a link, not a plain file, or "
         "larger than 8 KiB), so ModelQuad refuses Codex here. Replace it with a plain file "
         "or remove it."),
+    "repo_policy_file_outside_repo": (
+        "A file named for Codex is in another Git repository inside the working folder, whose "
+        "own .modelquad.toml and settings would be skipped, so nothing was started. Ask from "
+        "that repository's own folder."),
+    # The working folder itself (localpath): a network share, a device or a
+    # relative path is refused before anything opens it.
+    "project_directory_unusable": (
+        "The working folder is not a local folder ModelQuad can use (a network share, a "
+        "device, a relative path, or a link to one), so nothing was started."),
     # The user's own per-repository setting (repo_settings), rechecked here too.
     "user_repo_codex_off": (
         "You turned Codex off for this repository (modelquad settings repo off), so nothing "
@@ -549,7 +558,7 @@ _SECRET_KEY = (r"(?:(?:[a-z][a-z0-9]*[_-])*(?:api[_-]?key|"
                r"secret[_-]?(?:access[_-]?)?key|private[_-]?key|"
                r"(?:access|refresh|auth|session)[_-]?token|token|pass(?:word|wd|phrase)|"
                r"(?:client[_-]?|private[_-]?)?secret|credential(?:s)?|authorization|"
-               r"connection[_-]?string))")
+               r"connection[_-]?string|account[_-]?key|auth))")
 # Every screen is anchored at a key or token start: unanchored, a long word
 # made every start position backtrack (a 128 KiB token took two minutes).
 _SECRET_ASSIGNMENT = re.compile(
@@ -566,6 +575,12 @@ _HIGH_CONFIDENCE_SECRET = re.compile(
     r"|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}"
     r"|(?:AKIA|ASIA)[0-9A-Z]{16}|xox[abposr]-[A-Za-z0-9-]{10,}"
     r"|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}"
+    # Stripe secret and restricted keys (underscore, unlike OpenAI's sk-).
+    r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}"
+    # A Slack incoming-webhook URL carries its secret in the path.
+    r"|hooks\.slack\.com/services/T[A-Za-z0-9]{6,}/B[A-Za-z0-9]{6,}/[A-Za-z0-9]{16,}"
+    # An Azure storage connection string's account key (base64 of 64 bytes).
+    r"|AccountKey=[A-Za-z0-9+/]{40,}={0,2}"
     r")(?![A-Za-z0-9_-])")
 _SECRET_LITERAL = re.compile(
     r"(?i)(?<![\w-])[\"']?" + _SECRET_KEY + r"[\"']?\s*[=:]\s*"
@@ -576,7 +591,9 @@ _PLACEHOLDER = re.compile(r"(?i)example|placeholder|dummy|changeme|redacted|test
 # Values found in prose or output rather than in assignments.
 _BEARER = re.compile(r"(?i)\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/-]{16,}=*")
 _JWT = re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
-_URL_CREDENTIAL = re.compile(r"(?i)\b(https?://)[^\s/@:\"']+:[^\s/@\"']+@")
+# Any scheme (postgresql://, mongodb+srv://, redis://, amqp:// ...). The scheme
+# is bounded so a long dotted word cannot make each start position rescan it.
+_URL_CREDENTIAL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}://)[^\s/@:\"']+:[^\s/@\"']+@")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 # Configuration and prose, where an unquoted value is data rather than code.
 _DATA_SUFFIXES = frozenset({".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties",
@@ -716,12 +733,16 @@ def _secret_reference(name):
     """Share the path privacy screen with diagnostics that cannot read files."""
     parts = tuple(part.casefold() for part in name.split("/"))
     return (_CONTEXT_CREDENTIAL.search(name) is not None
-            or any(part in {".codex", ".claude", ".aws", ".ssh", ".agents", ".azure", ".kube", "gcloud"} for part in parts)
+            or any(part in {".codex", ".claude", ".aws", ".ssh", ".agents", ".azure", ".kube", "gcloud",
+                            ".docker", ".gnupg"} for part in parts)
             or parts[-1].startswith(".env") or parts[-1] in {
                 "auth.json", "credentials", "credentials.json", ".npmrc", ".yarnrc",
                 ".yarnrc.yml", ".pypirc", ".netrc", "_netrc", ".git-credentials",
-                "pip.conf", "pip.ini", "nuget.config", "kubeconfig", "application_default_credentials.json"}
-            or Path(name).suffix.lower() in {".pem", ".key", ".pfx", ".p12"})
+                "pip.conf", "pip.ini", "nuget.config", "kubeconfig", "application_default_credentials.json",
+                ".pgpass", "pgpass.conf", ".my.cnf", ".s3cfg", ".boto", ".vault-token", ".htpasswd"}
+            or parts[-1].endswith((".tfstate", ".tfstate.backup"))
+            or Path(name).suffix.lower() in {".pem", ".key", ".pfx", ".p12", ".tfvars", ".jks",
+                                              ".keystore"})
 
 
 def _cap(value, ceiling):

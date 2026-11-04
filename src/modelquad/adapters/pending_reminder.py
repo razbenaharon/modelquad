@@ -40,6 +40,10 @@ def project_key(cwd):
     if (not isinstance(cwd, str) or not cwd or len(cwd) > 4096
             or any(ord(c) < 32 for c in cwd) or not Path(cwd).is_absolute()):
         return None
+    # Before any file-system call: a network share or a device is never opened.
+    from modelquad.localpath import reason as local_reason
+    if local_reason(cwd) is not None:
+        return None
     from modelquad.service.history import workspace_identity
     key, _ = workspace_identity(cwd)
     return key if valid_workspace_key(key) else None
@@ -104,8 +108,12 @@ def serialize_codex(text):
 
 
 def valid_cwd(cwd):
-    return (isinstance(cwd, str) and bool(cwd) and len(cwd) <= 4096
-            and not any(ord(c) < 32 for c in cwd) and Path(cwd).is_absolute())
+    if not (isinstance(cwd, str) and bool(cwd) and len(cwd) <= 4096
+            and not any(ord(c) < 32 for c in cwd) and Path(cwd).is_absolute()):
+        return False
+    # A network share or a device folder is never opened from the hook.
+    from modelquad.localpath import reason as local_reason
+    return local_reason(cwd) is None
 
 
 def repo_advice(cwd):

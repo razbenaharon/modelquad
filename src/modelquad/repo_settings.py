@@ -47,6 +47,8 @@ from pathlib import Path
 import re
 import stat
 
+from .localpath import reason as local_reason, remote_pointer
+
 MODES = ("on", "off", "offer-only")
 CHOICES = (*MODES, "inherit")
 USER_CODEX_OFF = "user_repo_codex_off"
@@ -99,14 +101,37 @@ def _git_common_dir(marker: Path) -> Path:
         line = _small_text(dot)
         if not line.startswith("gitdir:"):
             raise OSError("not a gitdir pointer")
-        target = Path(line[len("gitdir:"):].strip())
+        pointer = line[len("gitdir:"):].strip()
+        if remote_pointer(pointer):
+            # A pointer to a network share or a device is never followed:
+            # following it would open a connection to that host.
+            raise OSError("gitdir points outside this machine")
+        target = Path(pointer)
         git_dir = target if target.is_absolute() else marker / target
     try:
         common = _small_text(git_dir / "commondir")
     except FileNotFoundError:
         return git_dir
+    if remote_pointer(common):
+        raise OSError("commondir points outside this machine")
     common_path = Path(common)
     return common_path if common_path.is_absolute() else git_dir / common_path
+
+
+def git_pointer_leaves_machine(marker: Path) -> bool:
+    """True when ``marker/.git`` (or its ``commondir``) points at a network share or a device.
+
+    Git follows those pointers itself, so a caller checks this before
+    starting Git in the folder. An unreadable pointer counts as leaving
+    (fail closed); a plain ``.git`` folder, or no pointer at all, does not.
+    """
+    try:
+        _git_common_dir(marker)
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeError, ValueError):
+        return True
+    return False
 
 
 def repo_key(working_directory, installation_key: str | None) -> str | None:
@@ -118,6 +143,8 @@ def repo_key(working_directory, installation_key: str | None) -> str | None:
     from .repo_identity import _canonical_directory, _hash
 
     if type(installation_key) is not str or not _INSTALLATION_KEY.fullmatch(installation_key):
+        return None
+    if local_reason(working_directory) is not None:
         return None
     try:
         directory = Path(os.path.abspath(working_directory))
@@ -188,7 +215,7 @@ def write_mode(working_directory, choice: str, *, path: Path | None = None,
     an unknown choice or a folder whose key cannot be computed.
     """
     from .adapters.atomicwrite import atomic_write
-    from .adapters.server_instructions import _read_preferences
+    from .adapters.server_instructions import preferences_for_write
 
     if choice not in CHOICES:
         raise ValueError(f"Use one of: {', '.join(CHOICES)}.")
@@ -200,7 +227,7 @@ def write_mode(working_directory, choice: str, *, path: Path | None = None,
     if key is None:
         raise ValueError("ModelQuad could not identify this folder. Pass an existing project folder.")
     target = _preferences_path(path)
-    payload = _read_preferences(target)
+    payload = preferences_for_write(target)  # Unreadable: raises, and nothing is written.
     modes = _stored(payload)
     if choice == "inherit":
         modes.pop(key, None)
@@ -250,6 +277,9 @@ def effective(*, global_proactive: bool, user_mode: str | None, policy=None) -> 
         refusal = policy.refusal
     elif policy is not None and not policy.allowed:
         refusal = _REPO_FILE_OFF
+    elif policy is not None and not policy.task_kinds:
+        # A valid file whose task_kinds is empty refuses every call: Codex is off.
+        refusal = _REPO_FILE_NO_KINDS
     if refusal is not None:
         return Effective(refusal, OFF)
     offer = PROACTIVE if global_proactive else OFFER
@@ -260,18 +290,6 @@ def effective(*, global_proactive: bool, user_mode: str | None, policy=None) -> 
     if policy is not None and policy.offers_codex == "on_request":
         offer = _lowest(offer, ON_REQUEST)
     return Effective(None, offer)
-
-
-def call_refusal(user_mode: str | None, policy, task_type, *, account_kind=None,
-                 check_account=True) -> str | None:
-    """The closed code one Codex call is refused for, or None to go on.
-
-    The user's ``off`` first, then the repository file (which also checks the
-    task kind and the account rule).
-    """
-    if user_mode == "off":
-        return USER_CODEX_OFF
-    return policy.refusal_for(task_type, account_kind=account_kind, check_account=check_account)
 
 
 USER_OFF_MESSAGE = (
@@ -298,6 +316,7 @@ BROKEN_FILE_ADVICE = (
 
 REPO_FILE_NAME = ".modelquad.toml"  # repo_policy.FILE_NAME; a test checks they agree
 _REPO_FILE_OFF = "repo_policy_codex_off"  # repo_policy.CODEX_OFF; likewise
+_REPO_FILE_NO_KINDS = "repo_policy_kind_removed"  # repo_policy.KIND_REMOVED; likewise
 
 
 def local_policy(working_directory):
@@ -307,6 +326,11 @@ def local_policy(working_directory):
     the gates use when Git cannot answer), or the folder itself outside Git.
     Fails closed like ``repo_policy.load``.
     """
+    if local_reason(working_directory) is not None:
+        # Never opened: a network share or a device folder refuses, closed.
+        from .repo_policy import UNREADABLE, _broken
+
+        return _broken(UNREADABLE, "unreadable")
     directory = Path(working_directory)
     marker = _git_marker(directory)
     root = marker if marker is not None else directory
@@ -334,6 +358,8 @@ def advice_line(working_directory, *, preferences: Path | None = None) -> str | 
     """
     from .adapters.server_instructions import _read_preferences
 
+    if local_reason(working_directory) is not None:
+        return None  # A network share or a device folder is never opened.
     directory = Path(working_directory)
     payload = _read_preferences(_preferences_path(preferences))
     global_proactive = payload.get("proactive") is True
@@ -341,7 +367,8 @@ def advice_line(working_directory, *, preferences: Path | None = None) -> str | 
     user_mode = read_mode(directory, modes=modes) if modes else None
     policy = local_policy(directory)
     result = effective(global_proactive=global_proactive, user_mode=user_mode, policy=policy)
-    if result.refusal is not None and result.refusal not in (USER_CODEX_OFF, _REPO_FILE_OFF):
+    if result.refusal is not None and result.refusal not in (USER_CODEX_OFF, _REPO_FILE_OFF,
+                                                                _REPO_FILE_NO_KINDS):
         return BROKEN_FILE_ADVICE
     default = PROACTIVE if global_proactive else OFFER
     if result.offer == default:

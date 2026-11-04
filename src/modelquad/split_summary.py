@@ -14,7 +14,10 @@ read ModelQuad's own history and nothing else:
 * Claude: one sentence. ModelQuad sees only what goes to Codex, so it does
   not measure Claude's own work, and a decline in Claude Code's own approval
   prompt never reaches it. A decline in the handoff window is not stored
-  either; the summary says so instead of counting it.
+  either; the summary says so instead of counting it. A refusal is counted
+  when it was recorded: ``modelquad_delegate`` records each one, while
+  ``modelquad_handoff`` refuses before its form and records nothing then (the
+  summary's refusal line says so).
 * Quota: for each provider and each of its own windows, the percentage
   points used between the first and the last reading of that window inside
   the period. Each provider and window is its own column: never added
@@ -83,7 +86,8 @@ CLAUDE_LINE = ("Claude: everything else in this period. ModelQuad does not measu
                "own work (not measured).")
 PROMPT_DECLINES_LINE = ("Declines in Claude Code's own approval prompt are not visible to "
                         "ModelQuad and are not counted.")
-HANDOFF_DECLINES_LINE = "Declines in the handoff window: not recorded by ModelQuad."
+HANDOFF_DECLINES_LINE = ("Declines in the handoff window, and handoff requests refused before "
+                         "its form: not recorded by ModelQuad.")
 QUOTA_NOTE = ("Each provider and window is shown on its own, in percentage points of that "
               "window; they are not added together.")
 _USER_OFF = "user_repo_codex_off"
@@ -162,44 +166,55 @@ def outcome_of(attempt: Mapping[str, Any], execution: Mapping[str, Any] | None) 
 
 
 _EXECUTION_COLUMNS = (
-    "task_status, task_status_reason, duration_seconds, success, "
-    "json_extract(metadata_json, '$.worker_metrics.rate_limit_events') AS rate_limit_events, "
-    "json_extract(metadata_json, '$.stderr_category') AS stderr_category"
+    "e.task_status AS task_status, e.task_status_reason AS task_status_reason, "
+    "e.duration_seconds AS execution_seconds, e.success AS success, "
+    "json_extract(e.metadata_json, '$.worker_metrics.rate_limit_events') AS rate_limit_events, "
+    "json_extract(e.metadata_json, '$.stderr_category') AS stderr_category, "
+    "e.id AS execution_id"
 )
+_EXECUTION_FIELDS = ("task_status", "task_status_reason", "success", "rate_limit_events",
+                     "stderr_category")
 
 
 def codex_requests(db_path: str | Path, *, workspace_key: str | None, since: datetime,
                    until: datetime) -> list[dict[str, Any]]:
-    """One row per recorded Codex request in the period: kind, outcome, seconds."""
+    """One row per recorded Codex request in the period: kind, outcome, seconds.
+
+    One query: each attempt joined to the latest Codex execution of its
+    decision (an index on ``decision_id`` answers each lookup).
+    """
     conn = _connect(db_path)
     if conn is None:
         return []
     try:
         scope, params = "", [_utc(since).isoformat(), _utc(until).isoformat()]
         if workspace_key is not None:
-            scope = " AND workspace_key = ?"
+            scope = " AND a.workspace_key = ?"
             params.append(workspace_key)
-        attempts = conn.execute(
-            "SELECT id, decision_id, task_type, status, detail, resolved_at, duration_seconds "
-            "FROM delegation_attempts WHERE created_at >= ? AND created_at <= ?" + scope
-            + " AND COALESCE(routed_provider, requested_provider, 'codex') = 'codex'"
-            " ORDER BY id LIMIT ?", (*params, _SCAN_LIMIT),
+        found = conn.execute(
+            "SELECT a.task_type AS task_type, a.status AS status, a.detail AS detail, "
+            "a.resolved_at AS resolved_at, a.duration_seconds AS attempt_seconds, "
+            + _EXECUTION_COLUMNS +
+            " FROM delegation_attempts a LEFT JOIN execution_history e ON e.id = ("
+            "SELECT MAX(x.id) FROM execution_history x"
+            " WHERE a.decision_id IS NOT NULL AND a.decision_id != ''"
+            " AND x.decision_id = a.decision_id"
+            " AND x.provider = 'codex')"
+            " WHERE a.created_at >= ? AND a.created_at <= ?" + scope
+            + " AND COALESCE(a.routed_provider, a.requested_provider, 'codex') = 'codex'"
+            " ORDER BY a.id LIMIT ?", (*params, _SCAN_LIMIT),
         ).fetchall()
         rows = []
-        for attempt in attempts:
-            execution = None
-            if attempt["decision_id"]:
-                found = conn.execute(
-                    f"SELECT {_EXECUTION_COLUMNS} FROM execution_history "
-                    "WHERE decision_id = ? AND provider = 'codex' ORDER BY id DESC LIMIT 1",
-                    (attempt["decision_id"],),
-                ).fetchone()
-                execution = dict(found) if found is not None else None
-            outcome = outcome_of(dict(attempt), execution)
+        for row in found:
+            row = dict(row)
+            execution = ({name: row[name] for name in _EXECUTION_FIELDS}
+                         | {"duration_seconds": row["execution_seconds"]}
+                         if row["execution_id"] is not None else None)
+            outcome = outcome_of(row, execution)
             seconds = (execution or {}).get("duration_seconds")
             if seconds is None:
-                seconds = attempt["duration_seconds"]
-            rows.append({"task_type": attempt["task_type"], "outcome": outcome,
+                seconds = row["attempt_seconds"]
+            rows.append({"task_type": row["task_type"], "outcome": outcome,
                          "seconds": seconds if isinstance(seconds, (int, float)) else None})
         return rows
     except sqlite3.Error:

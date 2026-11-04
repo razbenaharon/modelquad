@@ -947,11 +947,41 @@ _REPO_MODE_WORDS = {"on": "on (Claude may decide on its own)", "off": "off (no C
                     "offer-only": "offer-only (Claude offers)"}
 
 
+#: How many unknown key names doctor names, and how long each may be. The
+#: names come from a file anyone can commit: doctor's report can reach Claude
+#: (a terminal it runs), so only a count and a few short, plain names are shown.
+_SHOWN_UNKNOWN_KEYS = 3
+_SHOWN_KEY_CHARS = 24
+
+
+def _unknown_keys_text(keys) -> str:
+    """The count of ignored keys and at most three short names of letters, digits and ._-"""
+    import re
+
+    names = []
+    for key in keys:
+        if type(key) is str and re.fullmatch(r"[A-Za-z0-9._-]{1,%d}" % _SHOWN_KEY_CHARS, key):
+            names.append(key)
+        if len(names) >= _SHOWN_UNKNOWN_KEYS:
+            break
+    count = len(keys)
+    text = f"Ignored {count} unknown key{'s' if count != 1 else ''}"
+    if names:
+        more = " and others" if count > len(names) else ""
+        text += " (" + ", ".join(names) + more + ")"
+    return text + ". Check them against docs/REPO-POLICY.md, or remove them."
+
+
 def repository_checks(project_directory: Path) -> list[DoctorCheck]:
     """This repository's .modelquad.toml (valid, invalid with the fix, unknown keys)
     and the user's own setting for it. Reads local files only; starts no process."""
     from . import repo_policy, repo_settings
+    from .localpath import reason as local_reason
 
+    if local_reason(os.path.abspath(project_directory)) is not None:
+        # A network share or a device folder is never opened.
+        return [DoctorCheck(REPO_FILE_CHECK, CheckStatus.WARN,
+                            "Not checked: this folder is not a local folder ModelQuad can use.")]
     checks = []
     try:
         mode = repo_settings.read_mode(project_directory)
@@ -980,8 +1010,7 @@ def repository_checks(project_directory: Path) -> list[DoctorCheck]:
     status = CheckStatus.OK
     if policy.unknown_keys:
         status = CheckStatus.WARN
-        parts.append("Ignored unknown keys: " + ", ".join(policy.unknown_keys)
-                     + ". Check their spelling against docs/REPO-POLICY.md, or remove them.")
+        parts.append(_unknown_keys_text(policy.unknown_keys))
     checks.append(DoctorCheck(REPO_FILE_CHECK, status, " ".join(parts)))
     return checks
 

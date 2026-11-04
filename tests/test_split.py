@@ -423,3 +423,28 @@ def test_the_split_skill_is_user_invoked_and_plain():
         assert "disable-model-invocation: true" in text
         assert "modelquad_split" in text and "The proposal approves nothing." in text
         assert banned_in(text) == [], path
+
+
+def test_no_step_goes_to_codex_while_modelquad_refuses_codex_calls():
+    steps = [split.Step("Review", "review", "none", True), split.Step("Explore", "exploration", "none")]
+    reply = split.propose(steps, router=Router(CODEX_FAVOURED),
+                          statuses=[ProviderStatus(name="claude"), ProviderStatus(name="codex")],
+                          thresholds=THRESHOLDS, now=datetime.now(timezone.utc),
+                          plan_views=plans.merged(None, {}), policy=None, user_mode=None,
+                          global_proactive=False, codex_paused=True)
+    assert {row["owner"] for row in reply["steps"]} == {split.CLAUDE_ONLY}
+    assert {row["reason"] for row in reply["steps"]} == {split.CODEX_PAUSED}
+    assert "paused" in reply["content"] and "No step is proposed for Codex." in reply["content"]
+    assert banned_in(reply["content"]) == []
+
+
+def test_the_split_tool_reads_modelquads_own_pause(tmp_path, monkeypatch):
+    from modelquad.mcp import server as mcp
+    from modelquad.routing_policy import DelegationPolicyDecision
+
+    monkeypatch.setattr(mcp, "_launch_policy", lambda *a, **k: DelegationPolicyDecision(
+        allowed=False, routing_mode="automatic", reason="routing is paused", routing_paused=True))
+    from modelquad.split_args import SplitStep
+
+    reply = mcp._split_reply(str(tmp_path), [SplitStep(title="Review", task_type="review", needs="none")])
+    assert reply["steps"][0]["reason"] == split.CODEX_PAUSED

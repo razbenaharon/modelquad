@@ -31,8 +31,12 @@ def test_every_tool_has_a_title_and_only_pure_reads_are_marked_read_only():
     assert read_only == {
         "modelquad_status", "modelquad_activity", "modelquad_activity_detail",
         "modelquad_delegation_status", "modelquad_doctor", "modelquad_job_collect",
-        "modelquad_job_list_pending", "modelquad_split",
+        "modelquad_job_list_pending", "modelquad_split", "modelquad_usage_refresh",
     }
+    # The quota refresh asks Codex's app-server, which talks to OpenAI, and a
+    # retry is debounced.
+    refresh = tools["modelquad_usage_refresh"].annotations
+    assert refresh.open_world_hint is True and refresh.idempotent_hint is True
     # The split proposal starts nothing, so it asks for no interaction.
     assert "anthropic/requiresUserInteraction" not in (tools["modelquad_split"].meta or {})
     # A retry of a Codex call would send the code again and spend usage.

@@ -445,3 +445,22 @@ def test_the_activity_listing_survives_a_failing_summary(projects, monkeypatch):
     payload = call(project_directory=str(one)).structured_content
     assert payload["split"] == {"known": False, "why": "unavailable"}
     assert payload["activity"]
+
+
+def test_the_codex_requests_are_read_in_one_query(projects, monkeypatch):
+    db_path, one, _ = projects
+    statements = []
+    real = ss._connect
+
+    def traced(path):
+        conn = real(path)
+        if conn is not None:
+            conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(ss, "_connect", traced)
+    rows = ss.codex_requests(db_path, workspace_key=project_key(str(one)),
+                             since=datetime.now(timezone.utc) - timedelta(days=1),
+                             until=datetime.now(timezone.utc))
+    assert len(rows) == 9
+    assert len([text for text in statements if text.lstrip().upper().startswith("SELECT")]) == 1

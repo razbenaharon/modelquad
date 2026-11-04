@@ -52,9 +52,12 @@ codex = "default"
 - `account = "workspace"` allows Codex only when Codex itself reports a work
   plan (team, business, enterprise or education) in its quota read. A plan you
   set with `modelquad settings plan codex <plan>` does not count here, because
-  a statement is not evidence. When Codex reports a personal plan, or none
-  ModelQuad recognises, the call is refused. The check runs at the MCP tools
-  and again right before the files are packed.
+  a statement is not evidence. The reading must be a successful one from the
+  last 5 minutes (the background refresh keeps it that recent; `modelquad
+  usage-refresh` reads it again), because an older one may come from another
+  login. When Codex reports a personal plan, a plan name ModelQuad does not
+  know exactly, or no recent reading, the call is refused. The check runs at
+  the MCP tools and again right before the files are packed.
 - `[offers] codex = "on_request"` tells Claude, through a one-line reminder
   when a Claude Code session starts in the repository, not to offer Codex on
   its own and to call it only when you ask. It applies even when you turned
@@ -139,6 +142,11 @@ The reason codes are:
 | `repo_policy_account_workspace_required` | `account = "workspace"` and Codex has not reported a work plan |
 | `repo_policy_invalid` | not valid TOML, a missing or unknown schema, or a wrong value |
 | `repo_policy_unreadable` | a link, not a plain file, larger than 8 KiB, or unreadable |
+| `repo_policy_file_outside_repo` | a file named for Codex sits in another Git repository (a nested clone or a submodule) below the working folder, whose own file and settings that call would skip |
+
+A file applies to its own repository only. A call from a parent folder that
+names a file inside a nested repository is refused rather than sent under the
+parent's rules: ask from that repository's own folder.
 
 Only the reason code is written to ModelQuad's local history. The file's
 contents, its path and its key names are never stored.

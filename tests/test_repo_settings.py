@@ -116,14 +116,17 @@ def test_the_repo_file_can_never_raise_the_offer_mode(text, glob, user):
         assert with_file.offer != rs.PROACTIVE
 
 
-def test_call_refusal_puts_the_users_off_first_and_keeps_the_file_rules():
-    assert rs.call_refusal("off", rp.BUILTIN, "review") == rs.USER_CODEX_OFF
-    assert rs.call_refusal("on", OFF_FILE, "review") == rp.CODEX_OFF
-    kinds = rp.parse(b'schema = 1\n[codex]\ntask_kinds = ["review"]\n')
-    assert rs.call_refusal("on", kinds, "architecture") == rp.KIND_REMOVED
-    workspace = rp.parse(b'schema = 1\n[codex]\naccount = "workspace"\n')
-    assert rs.call_refusal(None, workspace, "review", account_kind="unknown") == rp.ACCOUNT_WORKSPACE_REQUIRED
-    assert rs.call_refusal(None, workspace, "review", account_kind="workspace") is None
+def test_the_gate_puts_the_users_off_first_and_keeps_the_file_rules(tmp_path):
+    repo = git_repo(tmp_path / "repo")
+    write_policy(repo, "schema = 1\n[codex]\nallowed = false\n")
+    assert rp.gate(str(repo), "review")[0]["reason"] == rp.CODEX_OFF
+    rs.write_mode(repo, "off")
+    assert rp.gate(str(repo), "review")[0]["reason"] == rs.USER_CODEX_OFF
+    rs.write_mode(repo, "on")
+    write_policy(repo, 'schema = 1\n[codex]\ntask_kinds = ["review"]\n')
+    assert rp.gate(str(repo), "architecture")[0]["reason"] == rp.KIND_REMOVED
+    refusal, policy = rp.gate(str(repo), "review")
+    assert refusal is None and policy.task_kinds == frozenset({"review"})
 
 
 def test_shared_constants_agree_with_the_repo_file_module():
@@ -299,8 +302,13 @@ def test_on_lets_an_allowed_call_through(tmp_path, no_start):
 
 
 def _usage(directory, plan_type):
+    """A successful Codex read made just now (the account rule needs a fresh one)."""
+    from datetime import datetime, timezone
+
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "usage-codex.json").write_text(json.dumps({"plan_type": plan_type}), encoding="utf-8")
+    (directory / "usage-codex.json").write_text(json.dumps({
+        "plan_type": plan_type, "available": True, "quota_error": None,
+        "observed_at": datetime.now(timezone.utc).isoformat()}), encoding="utf-8")
 
 
 @pytest.mark.parametrize("declared", [None, "business", "enterprise", "team"])

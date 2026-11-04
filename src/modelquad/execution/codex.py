@@ -359,29 +359,20 @@ class CodexExecutor(Executor):
             files = request.metadata.get("supplied_files", ())
             if type(files) not in (list, tuple) or any(type(name) is not str for name in files):
                 return refused("supplied_file_unavailable")
-            # The user's per-repository setting and the repository's
-            # .modelquad.toml, read again now: a background job runs after
-            # the MCP gate did, and a change since must still refuse or lower
-            # the caps. The account rule reads the plan Codex reported in
-            # ModelQuad's own usage file (the default usage folder): a read,
-            # no process. Nothing here can widen what the gate allowed.
-            from .. import plans, repo_policy, repo_settings
-            from ..providers import base as providers_base
-            policy = repo_policy.load(request.working_directory)
-            account_kind = plans.UNKNOWN
-            if policy.refusal is None and policy.account == "workspace":
-                try:
-                    account_kind = plans.reported_codex_kind(providers_base.DEFAULT_USAGE_DIRECTORY)
-                except Exception:  # noqa: BLE001 -- unreadable reads unknown, and refuses
-                    account_kind = plans.UNKNOWN
-            try:
-                user_mode = repo_settings.read_mode(request.working_directory)
-            except Exception:  # noqa: BLE001 -- an unreadable setting is no setting
-                user_mode = None
-            repo_refusal = repo_settings.call_refusal(user_mode, policy, request.task_type,
-                                                      account_kind=account_kind)
+            # The same per-repository gate as the MCP tools (repo_policy.gate),
+            # read again now: a background job runs after the MCP gate did,
+            # and a change since must still refuse or lower the caps. The
+            # account rule reads the plan Codex reported in ModelQuad's
+            # default usage folder: a read, no process. The MCP gate reads
+            # the server's --usage-directory when one is set; the two differ
+            # only then, and since each must pass, a difference can only
+            # refuse (no path is put in the request to carry it). Nothing
+            # here can widen what the gate allowed.
+            from .. import repo_policy
+            repo_refusal, policy = repo_policy.gate(
+                request.working_directory, request.task_type, files=files)
             if repo_refusal is not None:
-                return refused(repo_refusal)
+                return refused(repo_refusal["reason"])
             report = {}
             try:
                 prompt = noshell.supplied_prompt(request.prompt, request.working_directory,

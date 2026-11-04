@@ -86,3 +86,20 @@ def test_unreadable_state_reads_as_not_shown(monkeypatch):
 
     monkeypatch.setattr(disclosure, "_state_root", broken)
     assert disclosure.notice_shown() is False
+
+
+def test_the_quota_refresh_tool_waits_for_the_notice_before_asking_codex(fresh_install, monkeypatch):
+    from modelquad.usage import refresh
+
+    asked = []
+    real = refresh.refresh_all
+    monkeypatch.setattr(refresh, "refresh_all",
+                        lambda directory, **kwargs: asked.append(kwargs.get("providers")) or {})
+    payload = server.modelquad_usage_refresh()
+    assert asked == [["claude"]], "Codex's app-server waits for the notice"
+    assert payload["skipped"] == {"codex": "notice_not_shown"} and "notice" in payload["note"]
+    disclosure.record_notice_shown("first_call")
+    asked.clear()
+    payload = server.modelquad_usage_refresh()
+    assert sorted(asked[0]) == ["claude", "codex"] and "skipped" not in payload
+    assert real is not None

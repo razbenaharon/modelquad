@@ -1074,3 +1074,57 @@ def test_packing_a_maximal_single_token_file_stays_within_the_default_work_cap(t
     started = time.monotonic()
     noshell.pack_files(tmp_path, ["ordinary.py"])
     assert time.monotonic() - started < noshell.MAX_PACK_SECONDS
+
+
+# Credential shapes the 2026-11-04 security review found passing unchanged.
+# Built from parts so the test file itself holds no credential-shaped text.
+_B64 = "Zm9vYmFyYmF6cXV4" * 5 + "Zm9vYmFy=="
+
+
+@pytest.mark.parametrize("name,content", [
+    ("settings.py", 'SQLALCHEMY_DATABASE_URI = "postgresql://admin:' + "Pr0dPassw0rd9" + '@db.internal:5432/app"\n'),
+    ("docker-compose.yml", "DATABASE_URL: mongodb+srv://svc:" + "Zx81kQ0pLmn2" + "@cluster0.example.net/db\n"),
+    ("cache.py", 'REDIS = "redis://default:' + "s3cretValue77" + '@cache:6379/0"\n'),
+], ids=["postgres", "mongodb-srv", "redis"])
+def test_credentials_in_any_url_scheme_are_redacted(tmp_path, name, content):
+    (tmp_path / name).write_text(content, encoding="utf-8")
+    packed = noshell.pack_files(tmp_path, [name])
+    assert len(packed.files) == 1
+    text = packed.files[0][1]
+    assert noshell.CREDENTIAL_MARKER + "@" in text and "Passw0rd" not in text and "Zx81" not in text
+
+
+@pytest.mark.parametrize("name,content", [
+    ("pay.js", 'const stripe = Stripe("sk_' + 'live_' + "51HqAbCdEfGhIjKlMnOpQrStUv" + '");\n'),
+    ("pay_test.js", 'const stripe = Stripe("rk_' + 'test_' + "51HqAbCdEfGhIjKlMnOpQrStUv" + '");\n'),
+    ("notify.py", 'URL = "https://hooks.' + 'slack.com/services/T01ABCDEF/B02GHIJKL/'
+     + "aBcDeFgHiJkLmNoPqRsTuVwX" + '"\n'),
+    ("appsettings.json", '{"AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName=x;Account'
+     + "Key=" + _B64 + ';EndpointSuffix=core.windows.net"}\n'),
+    ("config.json", '{"auths": {"registry.example": {"auth": "' + "dXNlcjpQcjBkUGFzc3cwcmQ5" + '"}}}\n'),
+], ids=["stripe-live", "stripe-restricted", "slack-webhook", "azure-account-key", "docker-auth"])
+def test_recognisable_service_credentials_are_refused(tmp_path, name, content):
+    (tmp_path / name).write_text(content, encoding="utf-8")
+    packed = noshell.pack_files(tmp_path, [name])
+    assert packed.files == ()
+    assert packed.skipped == (("<path>", "secret_file"),)
+
+
+@pytest.mark.parametrize("name", [".docker/config.json", ".gnupg/pubring.kbx", "infra/prod.tfstate",
+                                  "infra/prod.tfstate.backup", "infra/prod.tfvars", ".pgpass",
+                                  ".my.cnf", ".s3cfg", ".boto", ".vault-token", ".htpasswd",
+                                  "keys/release.jks", "keys/app.keystore"])
+def test_more_credential_stores_are_not_opened(tmp_path, monkeypatch, name):
+    path = tmp_path.joinpath(*name.split("/"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("inert credential store fixture", encoding="utf-8")
+    read = Mock(side_effect=AssertionError("credential store must not be opened"))
+    monkeypatch.setattr(noshell, "_read_file", read)
+    assert noshell.pack_files(tmp_path, [name]).skipped == (("<path>", "secret_file"),)
+    read.assert_not_called()
+
+
+def test_auth_named_code_stays_ordinary(tmp_path):
+    content = "auth = make_auth(user)\nif auth:\n    use(auth)\nsettings = {'auth': True}\n"
+    (tmp_path / "client.py").write_text(content, encoding="utf-8")
+    assert noshell.pack_files(tmp_path, ["client.py"]).files == (("client.py", content),)

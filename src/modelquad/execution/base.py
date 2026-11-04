@@ -675,7 +675,9 @@ NOSHELL_PRELAUNCH_REFUSALS: frozenset[str] = frozenset({
     "unsupported_platform",
     # The repository's .modelquad.toml (repo_policy.REASONS).
     "repo_policy_codex_off", "repo_policy_kind_removed", "repo_policy_account_workspace_required",
-    "repo_policy_invalid", "repo_policy_unreadable",
+    "repo_policy_invalid", "repo_policy_unreadable", "repo_policy_file_outside_repo",
+    # The working folder is not a local folder (localpath.UNUSABLE).
+    "project_directory_unusable",
     # The user's own per-repository setting (repo_settings.REASONS).
     "user_repo_codex_off",
 })

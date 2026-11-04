@@ -56,12 +56,15 @@ INDEPENDENT_REVIEW = "independent_review"
 SECOND_OPINION = "second_opinion"
 TASK_FIT = "task_fit"
 CODEX_UNAVAILABLE = "codex_unavailable"
+#: ModelQuad's own launch policy refuses every Codex call now (paused, or
+#: Claude Code disconnected with ``modelquad host``).
+CODEX_PAUSED = "codex_paused"
 #: Every reason a step can carry. The account rule of a repository file is
 #: checked when a Codex step runs, not here: it depends on the plan Codex
 #: reports, and a plan never moves an owner.
 REASONS = frozenset({
     EDITS_OR_COMMANDS, KIND_NOT_READ_ONLY, INDEPENDENT_REVIEW, SECOND_OPINION, TASK_FIT,
-    CODEX_UNAVAILABLE, USER_CODEX_OFF, repo_policy.CODEX_OFF, repo_policy.KIND_REMOVED,
+    CODEX_UNAVAILABLE, CODEX_PAUSED, USER_CODEX_OFF, repo_policy.CODEX_OFF, repo_policy.KIND_REMOVED,
     repo_policy.INVALID, repo_policy.UNREADABLE,
 })
 
@@ -74,6 +77,7 @@ _WORDS = {
     INDEPENDENT_REVIEW: "independent review",
     SECOND_OPINION: "second opinion",
     CODEX_UNAVAILABLE: "Codex is not available",
+    CODEX_PAUSED: "Codex calls are paused in ModelQuad (modelquad host status)",
     USER_CODEX_OFF: "you turned Codex off for this repository",
     repo_policy.CODEX_OFF: f"this repository's {repo_policy.FILE_NAME} turns Codex off",
     repo_policy.KIND_REMOVED: f"this repository's {repo_policy.FILE_NAME} does not allow that kind",
@@ -229,12 +233,14 @@ def content_lines(rows: list[dict], fact_block: dict, *, quota_line: str, accoun
 
 
 def propose(steps: Iterable[Step], *, router, statuses, thresholds, now: datetime,
-            plan_views, policy, user_mode: str | None, global_proactive: bool) -> dict:
+            plan_views, policy, user_mode: str | None, global_proactive: bool,
+            codex_paused: bool = False) -> dict:
     """The whole reply: owners, facts, ``launches`` False and the human lines.
 
     ``policy`` is the repository file's ``RepoPolicy`` or None; ``user_mode``
-    the user's per-repo word. Neither the statuses' quota nor the plans reach
-    :func:`owner_for`.
+    the user's per-repo word. ``codex_paused``: ModelQuad's own launch policy
+    refuses every Codex call now, so no step goes to Codex. Neither the
+    statuses' quota nor the plans reach :func:`owner_for`.
     """
     from .repo_settings import effective
 
@@ -243,10 +249,11 @@ def propose(steps: Iterable[Step], *, router, statuses, thresholds, now: datetim
         raise ValueError(f"Give between 1 and {MAX_STEPS} steps.")
     statuses = list(statuses)
     applied = effective(global_proactive=global_proactive, user_mode=user_mode, policy=policy)
+    refusal = applied.refusal or (CODEX_PAUSED if codex_paused else None)
     seen = router_statuses(statuses)
     rows = []
     for index, step in enumerate(steps, start=1):
-        owner, reason = owner_for(step, router, seen, refusal=applied.refusal, policy=policy)
+        owner, reason = owner_for(step, router, seen, refusal=refusal, policy=policy)
         rows.append({"step": index, "title": step.title, "task_type": step.task_type,
                      "needs": step.needs, "independent": step.independent,
                      "owner": owner, "reason": reason, "asks_user": owner == CODEX})

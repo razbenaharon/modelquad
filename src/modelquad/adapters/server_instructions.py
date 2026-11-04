@@ -76,12 +76,67 @@ def preferences_path(state_root: Path | None = None) -> Path:
     return Path(state_root) / PREFERENCES_FILE_NAME
 
 
+class PreferencesUnreadable(OSError):
+    """``preferences.json`` exists but could not be read as a JSON object."""
+
+
+#: A file another program holds for a moment (an antivirus scan, another
+#: ModelQuad replacing it) is read again this many times, this far apart.
+_READ_ATTEMPTS = 3
+_RETRY_SECONDS = 0.05
+
+PREFERENCES_UNREADABLE = (
+    "ModelQuad could not read its preferences.json, so it changed nothing, to keep your other "
+    "settings. Close any program that has it open and try again, or fix or remove the file.")
+
+
+def _load_preferences(path: Path) -> dict:
+    """The stored preferences; {} when there is no file.
+
+    Tolerates a UTF-8 byte order mark (PowerShell 5 writes one) and a file
+    locked for a moment. Raises :class:`PreferencesUnreadable` when the file
+    exists but is still unreadable, or is not a JSON object.
+    """
+    import time
+
+    for attempt in range(_READ_ATTEMPTS):
+        try:
+            text = Path(path).read_text(encoding="utf-8-sig")
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            if attempt + 1 < _READ_ATTEMPTS:
+                time.sleep(_RETRY_SECONDS)
+                continue
+            raise PreferencesUnreadable(PREFERENCES_UNREADABLE) from exc
+        except UnicodeError as exc:
+            raise PreferencesUnreadable(PREFERENCES_UNREADABLE) from exc
+        try:
+            payload = json.loads(text)
+        except (ValueError, RecursionError) as exc:
+            raise PreferencesUnreadable(PREFERENCES_UNREADABLE) from exc
+        if not isinstance(payload, dict):
+            raise PreferencesUnreadable(PREFERENCES_UNREADABLE)
+        return payload
+    raise PreferencesUnreadable(PREFERENCES_UNREADABLE)  # pragma: no cover -- the loop returns or raises
+
+
 def _read_preferences(path: Path) -> dict:
+    """For reading a setting: an unreadable file reads as no settings."""
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
+        return _load_preferences(path)
+    except OSError:
         return {}
-    return payload if isinstance(payload, dict) else {}
+
+
+def preferences_for_write(path: Path) -> dict:
+    """For changing one setting: the whole stored payload, to write back with the change.
+
+    Never {} for a file that exists but cannot be read: writing a fresh file
+    then would erase every other setting. Raises :class:`PreferencesUnreadable`
+    instead, and the caller changes nothing.
+    """
+    return _load_preferences(path)
 
 
 def read_proactive(path: Path | None = None) -> bool:
@@ -100,7 +155,7 @@ def write_proactive(enabled: bool, path: Path | None = None) -> Path:
     from .atomicwrite import atomic_write
 
     target = path or preferences_path()
-    payload = _read_preferences(target)
+    payload = preferences_for_write(target)
     payload[_PROACTIVE_KEY] = bool(enabled)
     atomic_write(target, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return target
@@ -126,7 +181,7 @@ def write_claude_plugin(enabled: bool, path: Path | None = None) -> Path:
     from .atomicwrite import atomic_write
 
     target = path or preferences_path()
-    payload = _read_preferences(target)
+    payload = preferences_for_write(target)
     payload[_CLAUDE_PLUGIN_KEY] = bool(enabled)
     atomic_write(target, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return target
