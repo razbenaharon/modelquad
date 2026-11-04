@@ -36,7 +36,7 @@ from modelquad.identity import installation_id, reset_installation_id
 from modelquad.mcp import server as mcp
 from modelquad.models import TaskType
 
-KEY = "0123456789abcdef0123456789abcdef"
+KEY = "0123456789abcdef0123456789abcdef"  # gitleaks:allow (synthetic installation id)
 
 
 def git_repo(folder):
