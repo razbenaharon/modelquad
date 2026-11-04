@@ -154,18 +154,18 @@ def codex_status(*, reason=None, available=True, windows=None, seven=None):
 
 @pytest.mark.parametrize(("status", "full", "segment"), [
     (codex_status(reason="codex CLI not found on PATH (looked for 'codex').", available=False),
-     "Codex not found", "Codex not found"),
+     "Codex: not found", "Codex: not found"),
     (codex_status(reason="codex app-server rate-limit read failed: codex app-server returned an "
                          "error: {'message': 'Not logged in. Run codex login.'}"),
-     "Codex: sign in to Codex", "Codex: sign in to Codex"),
+     "Codex: not signed in (run codex login)", "Codex: not signed in (run codex login)"),
     (codex_status(windows=[{"slot": "seven_day", "used_percentage": 40.0, "window_minutes": 10080}], seven=40),
-     "Codex: no 5-hour limit on your plan / 7d 60% left", "Codex week 60% left"),
+     "Codex: no 5-hour limit on your plan / 7d 60% left", "Codex 7d 60% left"),
 ])
 def test_plain_language_codex_states(status, full, segment):
     claude = reading("claude", five=20, seven=10)
     assert statusline_text([claude, status], THRESHOLDS, now=NOW).endswith(f" | {full}")
     assert assistance.statusline_segment([claude, status], THRESHOLDS, now=NOW) == (
-        f"{segment} | Claude 5h 80% left")
+        f"Claude 5h 80% left | {segment}")
 
 
 def test_a_missing_codex_usage_file_is_not_called_codex_not_found():
@@ -184,10 +184,22 @@ def test_a_reset_claude_window_waits_for_the_next_message():
 def test_segment_is_compact_and_ascii():
     segment = assistance.statusline_segment(
         [reading("claude", five=62, seven=40), reading("codex", five=30)], THRESHOLDS, now=NOW)
-    assert segment == "Codex 5h 70% left | Claude 5h 38% left"
+    assert segment == "Claude 5h 38% left | Codex 5h 70% left"
     assert segment.isascii()
     assert assistance.statusline_segment([reading("claude", observed=None)], THRESHOLDS, now=NOW) == (
-        "Codex 5h unknown | Claude: shows after your first message")
+        "Claude: shows after your first message | Codex 5h unknown")
+
+
+def test_an_old_reading_says_when_it_was_taken_once_per_tool():
+    old = reading("claude", five=40, seven=10, observed=NOW - timedelta(hours=2), five_reset=40)
+    old = ProviderStatus(name=old.name, available=True, observed_at=old.observed_at,
+                         freshness=Freshness.STALE, metadata={**old.metadata, "stale": True})
+    when = assistance.local_clock(NOW - timedelta(hours=2), NOW)
+    line = statusline_text([old], THRESHOLDS, now=NOW)
+    assert line.startswith(f"Claude 5h 60% left, resets {clock(40)} / 7d 90% left (as of {when})")
+    assert line.count("as of") == 1 and "stale" not in line
+    assert assistance.statusline_segment([old], THRESHOLDS, now=NOW).startswith(
+        f"Claude 5h 60% left (as of {when})")
 
 
 # --- the pace hint ---------------------------------------------------------------
@@ -201,8 +213,8 @@ def test_pace_needs_two_readings_and_says_when_the_window_fills():
     line = statusline_text([status], THRESHOLDS, now=NOW, pace=pace)
     assert line.startswith(
         f"Claude 5h 50% left, resets {clock(240)}, at this pace full by about {clock(100)} / 7d 90% left")
-    assert assistance.statusline_segment([status], THRESHOLDS, now=NOW, pace=pace).endswith(
-        f"Claude 5h 50% left, full by about {clock(100)}")
+    assert assistance.statusline_segment([status], THRESHOLDS, now=NOW, pace=pace).startswith(
+        f"Claude 5h 50% left, at this pace full by about {clock(100)}")
 
 
 @pytest.mark.parametrize("first", [
@@ -277,7 +289,7 @@ def test_status_line_command_prints_both_providers(tmp_path, capsys, monkeypatch
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     assert cli.main(["--usage-directory", str(usage), "usage-hook", "claude", "--segment"]) == 0
     assert capsys.readouterr().out.strip() == (
-        "Codex 5h 70% left | Claude 5h 15% left"
+        "Claude 5h 15% left | Codex 5h 70% left"
         f" | Claude 5h near its limit, resets {resets}: you can wait, or ask Codex for a review")
 
 
@@ -497,7 +509,7 @@ def test_a_stale_reading_never_claims_the_plan_has_no_five_hour_limit():
     line = statusline_text([claude, stale], THRESHOLDS, now=NOW)
     assert "no 5-hour limit" not in line
     assert "Codex 5h unknown" in line
-    assert "Codex week" not in assistance.statusline_segment([claude, stale], THRESHOLDS, now=NOW)
+    assert "Codex 7d" not in assistance.statusline_segment([claude, stale], THRESHOLDS, now=NOW)
 
 
 def test_a_client_without_forms_gets_a_reason_files_and_a_safe_next_step(low_claude_world, monkeypatch):

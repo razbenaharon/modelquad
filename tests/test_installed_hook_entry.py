@@ -153,7 +153,7 @@ def test_the_segment_runs_on_the_installed_path_and_matches_the_full_cli(tmp_pat
     assert files["entry"] == files["cli"]
     assert results["entry"]["stdout"] == results["cli"]["stdout"]
     assert results["entry"]["stdout"].strip() == (
-        "Codex 5h 70% left | Claude 5h 15% left"
+        "Claude 5h 15% left | Codex 5h 70% left"
         f" | Claude 5h near its limit, resets {_resets_clock(now)}: you can wait, or ask Codex for a review")
     assert results["entry"]["stdout"].strip().isascii()
     assert not set(_HEAVY) & set(results["entry"]["modules"])

@@ -42,6 +42,8 @@ HANDOFF_CODEX_EXHAUSTED_USED = 90.0
 HANDOFF_WAIT_MINUTES = 30
 # A pace estimate needs two readings at least this far apart, and growth.
 PACE_MIN_SECONDS = 600
+#: Before the projected time a window fills, on both status line forms.
+PACE_WORDS = "at this pace full by about"
 
 
 def _source(value):
@@ -246,11 +248,14 @@ def handoff_suggestion(statuses, thresholds, *, now):
 
 # --- plain-language status ------------------------------------------------------
 
+# One wording for both tools, on every quota surface: "<Tool> 5h <state> / 7d
+# <state>", Claude first, a whole-tool state as "<Tool>: <state>", and an old
+# reading as "(as of 14:02)" once at the end of that tool's part.
 FIRST_MESSAGE = "shows after your first message"
 NEXT_MESSAGE = "shows after your next message"
 NO_FIVE_HOUR = "no 5-hour limit on your plan"
-SIGN_IN = "sign in to Codex"
-CODEX_NOT_FOUND = "Codex not found"
+SIGN_IN = "not signed in (run codex login)"
+CODEX_NOT_FOUND = "not found"
 # Words a Codex app-server or CLI answer uses when nobody is signed in.
 _SIGN_IN_WORDS = ("not logged in", "log in", "login", "logged out", "sign in", "signed in",
                   "unauthorized", "unauthenticated", "authentication", "401")
@@ -364,19 +369,37 @@ def _provider_view(status, thresholds, now, pace):
     return windows, full
 
 
+def _shows_number(window, now):
+    """The window's figure is shown: known, and its window has not reset."""
+    if window is None or window.get("unknown") or _used(window) is None:
+        return False
+    resets = _moment(window.get("resets_at"))
+    return resets is None or resets > now
+
+
 def _window_text(window, now, *, name):
-    """"38% left" (with "(stale)"), or the plain-language state; never a made-up number.
+    """"38% left", or the plain-language state; never a made-up number.
 
     The line says what is left, not what is used: "0% used" on a fresh
-    window read to the owner as nothing left (live test, 2026-10-25)."""
+    window read to the owner as nothing left (live test, 2026-10-25). An old
+    reading is said once per tool, by :func:`_as_of`."""
     if window is None or window.get("unknown") or _used(window) is None:
         return "unknown"
-    resets = _moment(window.get("resets_at"))
-    if resets is not None and resets <= now:
+    if not _shows_number(window, now):
         # The reading describes a window that has reset.
         return NEXT_MESSAGE if name == "claude" else "unknown"
-    text = f"{min(100.0, max(0.0, 100.0 - _used(window))):.0f}% left"
-    return f"{text} (stale)" if window.get("stale") else text
+    return f"{min(100.0, max(0.0, 100.0 - _used(window))):.0f}% left"
+
+
+def _as_of(windows, now):
+    """" (as of 14:02)" when a figure shown for this tool is an old reading, else ""."""
+    old = [window for window in windows
+           if window is not None and window.get("stale") and _shows_number(window, now)]
+    if not old:
+        return ""
+    known = [moment for moment in (_moment(window.get("observed_at")) for window in old)
+             if moment is not None]
+    return f" (as of {local_clock(min(known), now)})" if known else " (old reading)"
 
 
 def _lead_state(name, status, windows):
@@ -384,7 +407,7 @@ def _lead_state(name, status, windows):
     if name == "codex":
         state = _codex_state(status)
         if state == CODEX_NOT_FOUND:
-            return CODEX_NOT_FOUND
+            return f"Codex: {CODEX_NOT_FOUND}"
         if state is not None and not any(_used(w) is not None for w in windows.values()):
             return f"Codex: {state}"
         return None
@@ -413,9 +436,10 @@ def statusline_text(statuses, thresholds, *, now, pace=None):
     Claude's and Codex's 5-hour and weekly windows from the local readings,
     with the 5-hour reset in local time and, when ``pace`` holds an earlier
     reading of the same window, when it fills at that pace. A missing reading
-    is said in plain words ("shows after your first message", "sign in to
-    Codex", "Codex not found", "no 5-hour limit on your plan") or "unknown",
-    never as 0%. When Claude is near its limit the line ends with that fact
+    is said in plain words ("shows after your first message", "not signed in
+    (run codex login)", "not found", "no 5-hour limit on your plan") or
+    "unknown", never as 0%, and an old reading ends that tool's part with
+    "(as of 14:02)". When Claude is near its limit the line ends with that fact
     and the user's options (wait, or ask Codex for a review), nothing more:
     the status line cannot start a job.
     """
@@ -429,33 +453,34 @@ def statusline_text(statuses, thresholds, *, now, pace=None):
         if lead is not None:
             parts.append(lead)
             continue
-        seven = _window_text(windows.get("seven_day"), now, name=name)
+        seven_window = windows.get("seven_day")
+        seven = _window_text(seven_window, now, name=name)
         if _plan_without_five_hour(name, status, windows):
-            parts.append(f"Codex: {NO_FIVE_HOUR} / 7d {seven}")
+            parts.append(f"Codex: {NO_FIVE_HOUR} / 7d {seven}{_as_of([seven_window], now)}")
             continue
         five_window = windows.get("five_hour")
         five = _window_text(five_window, now, name=name)
         resets = _moment((five_window or {}).get("resets_at"))
-        if five.endswith(("left", "(stale)")) and resets is not None:
+        if five.endswith("left") and resets is not None:
             five += f", resets {local_clock(resets, now)}"
         if full is not None:
-            five += f", at this pace full by about {local_clock(full, now)}"
-        parts.append(f"{label} 5h {five} / 7d {seven}")
+            five += f", {PACE_WORDS} {local_clock(full, now)}"
+        parts.append(f"{label} 5h {five} / 7d {seven}{_as_of([five_window, seven_window], now)}")
     return " | ".join(parts) + _handoff_suffix(statuses, thresholds, now)
 
 
 def statusline_segment(statuses, thresholds, *, now, pace=None):
     """The compact ModelQuad part for a status line the user already has.
 
-    For example "Codex 5h 70% left | Claude 5h 38% left": each provider's
-    5-hour window (or its weekly one when the plan has no 5-hour limit), the
-    same plain-language states as :func:`statusline_text`, and the
-    near-limit note when it applies. Plain ASCII, so any status line can append it.
+    For example "Claude 5h 38% left | Codex 5h 70% left": each provider's
+    5-hour window (or its weekly one when the plan has no 5-hour limit), in
+    the same order and words as :func:`statusline_text`, and the near-limit
+    note when it applies. Plain ASCII, so any status line can append it.
     """
     now = _moment(now)
     by_name = {status.name: status for status in statuses}
     parts = []
-    for name, label in (("codex", "Codex"), ("claude", "Claude")):
+    for name, label in (("claude", "Claude"), ("codex", "Codex")):
         status = by_name.get(name)
         windows, full = _provider_view(status, thresholds, now, pace)
         lead = _lead_state(name, status, windows)
@@ -463,10 +488,13 @@ def statusline_segment(statuses, thresholds, *, now, pace=None):
             parts.append(lead)
             continue
         if _plan_without_five_hour(name, status, windows):
-            parts.append(f"Codex week {_window_text(windows.get('seven_day'), now, name=name)}")
+            seven_window = windows.get("seven_day")
+            parts.append(f"Codex 7d {_window_text(seven_window, now, name=name)}"
+                         f"{_as_of([seven_window], now)}")
             continue
-        five = _window_text(windows.get("five_hour"), now, name=name)
+        five_window = windows.get("five_hour")
+        five = _window_text(five_window, now, name=name)
         if full is not None:
-            five += f", full by about {local_clock(full, now)}"
-        parts.append(f"{label} 5h {five}")
+            five += f", {PACE_WORDS} {local_clock(full, now)}"
+        parts.append(f"{label} 5h {five}{_as_of([five_window], now)}")
     return " | ".join(parts) + _handoff_suffix(statuses, thresholds, now)

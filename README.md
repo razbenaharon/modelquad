@@ -36,8 +36,9 @@ Status: early, source-only release. Windows only.
   usage, in Claude Code's status line and in ModelQuad's replies, with the
   5-hour reset in your local time ("resets 15:00") and, once there are two
   readings, when the window fills at the current pace. Missing data is said in
-  plain words ("shows after your first message", "sign in to Codex", "Codex
-  not found", "no 5-hour limit on your plan") or as unknown, never as 0%.
+  plain words ("shows after your first message", "not signed in (run codex
+  login)", "not found", "no 5-hour limit on your plan") or as unknown, never
+  as 0%, and an old reading says when it was taken ("as of 14:02").
 - **A note when Claude is near its limit.** When Claude has used 80% of its
   5-hour window or 90% of its weekly window, ModelQuad says so, with the reset
   time and Codex's own usage, and that you can wait for the reset or ask Codex
@@ -301,7 +302,7 @@ because the status line is its only source of Claude's quota. Install,
 `modelquad onboard` and `modelquad doctor` print the exact one-line recipe for
 your setup. `modelquad usage-hook claude --segment` records the quota and
 prints only ModelQuad's compact part, for example
-`Codex 5h 70% left | Claude 5h 38% left`:
+`Claude 5h 38% left | Codex 5h 70% left`:
 
 - ccstatusline: add a Custom Command widget whose command is
   `modelquad usage-hook claude --segment`.
