@@ -374,23 +374,32 @@ def test_doctor_treats_a_withheld_capability_as_healthy_not_broken():
     """Restriction is by design; only a configured-but-not-working capability
     is something a user can and should repair."""
 
-    from modelquad.doctor import CheckStatus, run_doctor
+    from modelquad.doctor import CheckStatus, _capability_matrix_check
 
     from modelquad.registry import (
         WORKSPACE_DEVELOPMENT_GRANT, ProviderCapabilities, ProviderPlugin, UsageSourceKind,
     )
 
     shell_withheld = restricted("shell_grant_unbounded", "the shell grant cannot be bounded")
-    registry = default_registry()
-    registry.register(ProviderPlugin(
+    plugin = ProviderPlugin(
         id="test_files_only", display_name="Synthetic files-only worker",
         capabilities=ProviderCapabilities(review=True), usage_source_kind=UsageSourceKind.UNKNOWN,
         capability_profile={**WORKSPACE_DEVELOPMENT_GRANT,
                             "run_tests": shell_withheld, "run_builds": shell_withheld},
-    ))
-    checks = {c.name: c for c in run_doctor(Config(), registry=registry).checks}
-    check = checks["test_files_only worker capabilities"]
+    )
+    check = _capability_matrix_check(plugin)
 
+    assert check is not None and check.name == "test_files_only worker capabilities"
     assert check.status is CheckStatus.OK, "a deliberate restriction is not a fault"
     assert "withheld by ModelQuad" in check.detail
     assert "not supported by this runtime" not in check.detail
+
+
+def test_doctor_lists_worker_capabilities_only_for_a_provider_it_runs():
+    """Claude is the host, never a worker: the doctor must not print a
+    capability line for it that reads as if ModelQuad ran Claude."""
+
+    from modelquad.doctor import run_doctor
+
+    names = [c.name for c in run_doctor(Config(), registry=default_registry()).checks]
+    assert "claude worker capabilities" not in names

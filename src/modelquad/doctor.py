@@ -1063,7 +1063,10 @@ def run_doctor(
     }
     integrations_enabled = global_integrations_enabled()
     for plugin in active_registry.all():
-        matrix_check = _capability_matrix_check(plugin)
+        # Only a provider ModelQuad can run has worker capabilities to report;
+        # listing the host's would read as if Claude were a worker.
+        runs_as_worker = any(runtime.executor_factory is not None for runtime in plugin.agent_runtimes)
+        matrix_check = _capability_matrix_check(plugin) if runs_as_worker else None
         if matrix_check is not None:
             capability_checks.append(matrix_check)
         if plugin.id not in enabled_ids:
