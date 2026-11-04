@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""The experimental Claude Code plugin stays a thin, safe copy of the package."""
+"""The Claude Code plugin stays a thin, safe copy of the package."""
 
 import importlib.util
 import json

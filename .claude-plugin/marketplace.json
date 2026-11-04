@@ -1,6 +1,6 @@
 {
   "name": "modelquad",
-  "description": "ModelQuad for Claude Code (experimental, not yet the supported install)",
+  "description": "ModelQuad for Claude Code: read-only Codex second opinions, with both tools' quotas in view",
   "owner": {
     "name": "Raz Ben Aharon"
   },

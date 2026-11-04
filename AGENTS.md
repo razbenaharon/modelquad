@@ -13,6 +13,10 @@ here; the tool under development is not the instrument for developing it.
   `python scripts/check.py docs` checks these against the code.
 - Native Windows only, not WSL. Install, onboarding, repair and
   `service install` refuse to run elsewhere.
+- ModelQuad installs as a Claude Code plugin (`plugin/`, with
+  `modelquad install claude --plugin` for the status line);
+  `modelquad install claude` alone is the install without it
+  ([docs/PLUGIN.md](docs/PLUGIN.md)).
 - One MCP host (Claude Code) and one worker (the Codex CLI, under the user's
   own login). Codex runs read-only: review, exploration and architecture
   tasks only.

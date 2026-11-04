@@ -229,7 +229,10 @@ def _mcp_registration_check(host_id: str, target_dir: Path) -> DoctorCheck:
     raise ValueError(f"No verified MCP-registration check is defined for {host_id!r}")
 
 
-_PLUGIN_INSTALL = "claude plugin install modelquad --marketplace razbenaharon/modelquad"
+_PLUGIN_INSTALL = (
+    "claude plugin marketplace add <your ModelQuad checkout> and "
+    "claude plugin install modelquad@modelquad"
+)
 
 
 def _claude_via_plugin() -> bool:

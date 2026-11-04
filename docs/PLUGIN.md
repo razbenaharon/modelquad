@@ -1,12 +1,10 @@
-# Claude Code plugin (experimental)
+# Claude Code plugin
 
-This repository carries a Claude Code plugin in `plugin/` and a marketplace
-file in `.claude-plugin/marketplace.json`. It is experimental, not yet the
-supported install: the README offers it as an alternative ("Or as a Claude
-Code plugin"), `modelquad install claude` remains the main way to set
-ModelQuad up, and the plugin is not listed in any plugin directory. The
-marketplace line installs it from this repository once the repository is
-public.
+The Claude Code plugin is how ModelQuad is installed. It lives in `plugin/`,
+with a marketplace file in `.claude-plugin/marketplace.json`, so a checkout of
+this repository is a local plugin marketplace. The plugin is not listed in any
+plugin directory. `modelquad install claude` without `--plugin` remains
+available for a setup without it (README, "Without the plugin").
 
 ## What the plugin contains
 
@@ -29,7 +27,7 @@ public.
   anything.
 
 - **A quota band** (`plugin/hooks/quota-band.tsx`, a Claude Code hooks
-  module; experimental). Where no status line is drawn (the desktop app's
+  module). Where no status line is drawn (the desktop app's
   Code tab, an IDE, a phone), it shows Codex's 5-hour and weekly windows
   above the prompt, worded as the status line words them. It shows Codex
   only; Claude's own usage is in Claude's own settings. The figures are the
@@ -61,11 +59,14 @@ the templates; `tests/test_plugin_prototype.py` fails while a copy differs.
     git clone https://github.com/razbenaharon/modelquad
     cd modelquad
     pip install ".[service]"
-    claude plugin install modelquad --marketplace razbenaharon/modelquad
+    claude plugin marketplace add .
+    claude plugin install modelquad@modelquad
     modelquad install claude --plugin
+    modelquad doctor
 
-The last step is needed for the status line in a terminal, and to take back
-the copies an earlier `modelquad install claude` made. With `--plugin`, the
+`modelquad install claude --plugin` is needed for the status line in a
+terminal, and to take back the copies an earlier `modelquad install claude`
+made. With `--plugin`, the
 install keeps only the status line and removes ModelQuad's own server entry,
 commands and reminder, each with a backup, and only when it is provably
 ModelQuad's: a `modelquad` server entry the install did not write stays, and
@@ -95,13 +96,22 @@ The plugin's tool names differ, so a deny rule needs both forms:
 `"deny": ["mcp__modelquad", "mcp__plugin_modelquad_modelquad__*"]`. See
 [RECOMMENDED-SETTINGS.md](RECOMMENDED-SETTINGS.md).
 
-## Before this becomes a supported install
+## Tested
 
-- Live test round 5 (2026-10-27) passed: one server and one copy of each
-  command, the approval prompt in the terminal and in the desktop app, a
-  real Codex answer, both deny rules, and `modelquad install claude --plugin`
-  leaving one copy of each. Still to see live: the status line, the
-  SessionStart reminder, and the notice on a first call.
+- Live round 5 (2026-10-27): one server and one copy of each command, the
+  approval prompt in the terminal and in the desktop app, a real Codex
+  answer, both deny rules, and `modelquad install claude --plugin` leaving one
+  copy of each.
+- Live check (2026-11-04) on the installed 0.4.0 plugin: the terminal status
+  line showed both tools' quotas; the SessionStart reminder stayed silent with
+  no answers waiting; in auto mode Claude Code showed its approval prompt
+  before `modelquad_delegate`, and after approval a read-only Codex review
+  came back in about 40 s with the personal-account note. The first-call
+  notice did not appear there because the regular install had already
+  printed it; the plugin-only first call is covered by the tests.
+
+## Maintenance
+
 - Keep `plugin/.claude-plugin/plugin.json`'s `version` equal to the package
   version (`tests/test_plugin_prototype.py` checks it).
 - Validate with `claude plugin validate plugin --strict` and

@@ -96,7 +96,8 @@ Status: early, source-only release. Windows only.
   Claude Code session starts in that repository. The approval prompt still
   appears before each call.
 - This guidance reaches Claude through ModelQuad's MCP server instructions and
-  the `/modelquad` skill. ModelQuad writes nothing into your global
+  the guide skill (`/modelquad:guide` in the plugin, `/modelquad` without
+  it). ModelQuad writes nothing into your global
   `CLAUDE.md`.
 - The two tools that start Codex, `modelquad_delegate` and `modelquad_handoff`,
   are marked as needing your interaction (`anthropic/requiresUserInteraction`).
@@ -123,7 +124,7 @@ always read-only: a review, an exploration of the code or an architecture
 opinion.
 
 **The proposal.** Claude describes the steps to the `modelquad_split` tool
-(or you ask with `/modelquad-split`). For each step the reply says who takes
+(or you ask with `/modelquad:split`). For each step the reply says who takes
 it and why, in a fixed reason: steps that edit files or run commands are
 always Claude's, because Codex through ModelQuad is read-only. A review of
 Claude's own change, or another opinion that should not come from Claude, can
@@ -200,12 +201,12 @@ Code tab, with differences found in testing (Claude Code 2.1.296, October
 - **Status line, and so Claude's quota and Claude Code's version, appear only
   in a terminal session.** The desktop app's Code tab has no status line, so
   there Claude's quota stays unknown or goes stale; Codex's quota still shows,
-  for example with `/modelquad-quota`.
+  for example with `/modelquad:quota`.
 - **The approval prompt before each Codex call appears in both,** also in auto
   mode.
 - **The handoff form** appears in a terminal session. The desktop app's Code
   tab never shows MCP forms (it answers each one "decline" without showing
-  it), so there `/modelquad-handoff` takes Claude Code's approval prompt as
+  it), so there `/modelquad:handoff` takes Claude Code's approval prompt as
   your answer: that prompt lists the files, and only you can click it. If any
   other Claude Code cannot show the form, the handoff starts nothing and
   Claude falls back to asking you in the conversation. `modelquad_doctor` (the
@@ -233,19 +234,41 @@ Code tab, with differences found in testing (Claude Code 2.1.296, October
 
 ## Install
 
-From a checkout of this repository, in PowerShell:
+ModelQuad installs as a Claude Code plugin. From PowerShell:
 
+    git clone https://github.com/razbenaharon/modelquad
+    cd modelquad
     pip install ".[service]"
+    claude plugin marketplace add .
+    claude plugin install modelquad@modelquad
+    modelquad install claude --plugin
+    modelquad doctor
 
-The `service` extra is only needed for the optional local service, which runs
-background jobs and the startup reminder.
+- `pip install` puts the `modelquad` and `modelquad-mcp` commands on PATH. The
+  plugin has no programs of its own and runs these two. The `service` extra
+  is only needed for the optional local service, which runs background jobs
+  and the startup reminder.
+- `claude plugin marketplace add .` adds this checkout as a local plugin
+  marketplace, and `claude plugin install modelquad@modelquad` installs the
+  plugin from it. The plugin carries the server, the five commands
+  (`/modelquad:review`, `/modelquad:handoff`, `/modelquad:quota`,
+  `/modelquad:setup` and `/modelquad:split`), the guide skill Claude reads
+  (`/modelquad:guide`), the startup reminder, and, in the desktop app's Code
+  tab, a line above the prompt with Codex's quota.
+- `modelquad install claude --plugin` prints what ModelQuad sends where, then
+  adds the status line, which a plugin cannot set. It also takes back the
+  server, commands and reminder an earlier `modelquad install claude` added,
+  so Claude Code does not run them twice. The choice is saved, so `modelquad
+  repair` keeps it.
+- `modelquad doctor` checks the setup, including that the plugin is installed
+  and that the folder pip put the commands in is on the PATH Claude Code sees.
 
-Claude Code starts `modelquad` and `modelquad-mcp` by name, so the folder pip
-put them in must be on the PATH that Claude Code sees. `modelquad doctor`
-checks this.
+See [docs/PLUGIN.md](docs/PLUGIN.md) for what the plugin contains.
 
 To upgrade, close every Claude Code window first (in a terminal session, type
-`/exit`), then run the same `pip install` again. A running Claude Code keeps
+`/exit`), then run `git pull` and the same `pip install` again, and update the
+plugin with `claude plugin marketplace update modelquad` and
+`claude plugin update modelquad@modelquad`. A running Claude Code keeps
 `modelquad-mcp.exe` open, and Windows does not let pip replace a running
 program: the upgrade then fails halfway and leaves ModelQuad uninstalled until
 you run it again with Claude Code closed.
@@ -260,10 +283,7 @@ shows which folder is in use.
 ## Quick start
 
 1. Sign in to Claude Code and to the Codex CLI.
-2. Run `modelquad onboard`. It finds Claude Code and Codex, prints what
-   ModelQuad sends where, and writes the Claude Code integration listed below.
-   Add `--dry-run` to see the changes first. `modelquad install claude` writes
-   the same integration on its own and prints the same notice.
+2. Install as above.
 3. Restart Claude Code, then run `modelquad doctor --first-run`. It ends with
    a plain checklist of what is set up and what is left, including the
    Windows traps: `python` opening the Microsoft Store, the `Scripts` folder
@@ -278,30 +298,26 @@ running, `modelquad settings job-runner on` keeps delegated work running after
 you close the chat. It explains what that means and turns on only after you
 type `yes` (or pass `--yes` where there is no prompt).
 
-### Or as a Claude Code plugin (experimental)
+### Without the plugin
 
-The plugin is experimental, not yet the supported install: `modelquad install
-claude` above remains the main way to set ModelQuad up. It carries the server,
-the five commands (`/modelquad:review`, `/modelquad:handoff`,
-`/modelquad:quota`, `/modelquad:setup` and `/modelquad:split`), the guide skill
-Claude reads (`/modelquad:guide`), the startup reminder, and, in the desktop
-app's Code tab, a line above the prompt with Codex's quota. It still needs the
-package from the step above:
-
-    claude plugin install modelquad --marketplace razbenaharon/modelquad
-    modelquad install claude --plugin
-
-The second command adds the status line, which a plugin cannot set, and takes
-back the server, commands and reminder an earlier `modelquad install claude`
-added, so Claude Code does not run them twice. Someone who installs only the
-plugin sees the notice of what ModelQuad sends where on their first Codex
-call, which starts nothing. See [docs/PLUGIN.md](docs/PLUGIN.md).
+`modelquad install claude` writes the same server, commands and reminder into
+Claude Code's user configuration itself, together with the status line
+(listed below). Run it after `pip install`, instead of the three plugin
+commands. `modelquad onboard` does the same and first finds Claude Code and
+Codex. Both print what ModelQuad sends where before they write anything; add
+`--dry-run` to see the changes first. Without the plugin the commands are
+named `/modelquad-review`, `/modelquad-handoff`, `/modelquad-quota`,
+`/modelquad-setup` and `/modelquad-split`, and the guide skill `/modelquad`.
+To move from this install to the plugin, install the plugin and run
+`modelquad install claude --plugin`; `modelquad install claude --no-plugin`
+goes back.
 
 ## What it changes on your machine
 
 `modelquad install claude` (and `modelquad onboard`) change Claude Code's user
 configuration. They read every target file first, then write each changed
-file once. A file that is a link, is not UTF-8 text, cannot be read or is not
+file once. With `--plugin` it writes only the status line below, because
+the plugin carries the rest. A file that is a link, is not UTF-8 text, cannot be read or is not
 valid JSON is skipped with a reason; the other files still change.
 
 - `%USERPROFILE%\.claude.json`: an MCP server entry named `modelquad`, with
@@ -386,7 +402,10 @@ the file.
 
 1. `modelquad service stop`, then `modelquad service uninstall`, if you
    installed the service.
-2. `modelquad uninstall claude` removes the MCP entry (with its timeout), the
+2. If you installed the plugin, `claude plugin uninstall modelquad@modelquad`
+   removes it and `claude plugin marketplace remove modelquad` removes the
+   local marketplace.
+3. `modelquad uninstall claude` removes the MCP entry (with its timeout), the
    `SessionStart` hook, the status line ModelQuad added and the skill, and
    anything an earlier version added that install had not yet taken back (the
    `CLAUDE.md` block, the `PreToolUse` hook, the global timeout setting if
@@ -396,7 +415,7 @@ the file.
    `modelquad integrations off` removes the same wiring without putting back
    an earlier entry, and refuses later installs until
    `modelquad integrations on`.
-3. Delete what uninstall leaves in `%USERPROFILE%\.claude`, by these exact
+4. Delete what uninstall leaves in `%USERPROFILE%\.claude`, by these exact
    names: `usage-claude.json`, `usage-codex.json`, `quota-pace.json`,
    `usage-claude.json.lock`, `usage-codex.json.lock`,
    `usage-refresh-claude.lock` and `usage-refresh-codex.lock`. Do not delete
@@ -404,11 +423,11 @@ the file.
    keep their own files in the same folder (`daemon.lock` is Claude Code's).
    Also delete the `*.modelquad-backup-*` files, which install left beside
    each file it changed.
-4. Delete the state folder (`modelquad state` shows it).
-5. If you used `tools --fix-path`, remove the added folder from your user PATH.
+5. Delete the state folder (`modelquad state` shows it).
+6. If you used `tools --fix-path`, remove the added folder from your user PATH.
    If you added `modelquad usage-hook claude --segment` or `--quiet` to your
    own status line, remove it there.
-6. `pip uninstall modelquad`.
+7. `pip uninstall modelquad`.
 
 ## Privacy and network
 
@@ -521,8 +540,8 @@ maintainer directed, reviewed and tested the work and is responsible for it.
   setting for one repository.
 - [NETWORK.md](NETWORK.md): which connections ModelQuad and the programs it
   starts make.
-- [docs/PLUGIN.md](docs/PLUGIN.md): the Claude Code plugin in this repository
-  (experimental, not yet the supported install).
+- [docs/PLUGIN.md](docs/PLUGIN.md): the Claude Code plugin, how ModelQuad is
+  installed.
 - [SECURITY.md](SECURITY.md): how to report a vulnerability, and the security
   design.
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to contribute.
