@@ -57,8 +57,8 @@ import path:
 
 More about the scripts is in [scripts/README.md](scripts/README.md).
 
-Do not use ModelQuad itself while developing this repository: do not run
-`modelquad route` and do not call `modelquad_*` MCP tools. The tool under
+Do not use ModelQuad itself while developing this repository: do not ask it
+which tool fits a task and do not call `modelquad_*` MCP tools. The tool under
 development is not the tool for developing it.
 
 ## Safety invariants

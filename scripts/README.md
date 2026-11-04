@@ -10,7 +10,7 @@ fresh clone with nothing installed.
 
     python scripts/check.py --list
     python scripts/check.py fast        # docs + secrets, seconds
-    python scripts/check.py docs        # links resolve, AGENTS.md matches the code, commands run on Windows
+    python scripts/check.py docs        # links resolve, AGENTS.md matches the code, commands run on Windows, no banned phrases
     python scripts/check.py secrets     # credential shapes in authored source
     python scripts/check.py review      # fast + the tests the diff touches
     python scripts/check.py python      # the whole suite, import root pinned here

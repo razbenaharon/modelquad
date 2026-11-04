@@ -83,7 +83,8 @@ repository you might clone. So the file cannot:
 Other keys, such as `allow`, `auto_approve`, `permissions`, `proactive`,
 `trusted`, `include`, `files`, `model`, `effort` or `sandbox`, are unknown to
 schema 1. ModelQuad ignores them and acts on none of them. An unknown key
-alone does not refuse a call.
+alone does not refuse a call. `modelquad doctor` lists the keys it ignored, so
+a misspelt key does not go unnoticed, and shows what the file sets.
 
 ## Examples
 

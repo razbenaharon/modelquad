@@ -1,9 +1,12 @@
-# Claude Code plugin (experimental, not published)
+# Claude Code plugin (experimental)
 
 This repository carries a Claude Code plugin in `plugin/` and a marketplace
-file in `.claude-plugin/marketplace.json`. It is **not** the supported install
-yet: `modelquad install claude` remains the documented way to set ModelQuad
-up, and nothing here is published to any plugin directory.
+file in `.claude-plugin/marketplace.json`. Since 0.4.0 the README offers it as
+an experimental alternative ("Or as a Claude Code plugin"); it is **not** the
+supported install yet: `modelquad install claude` remains the main way to set
+ModelQuad up, and the plugin is not listed in any plugin directory. The
+marketplace line installs it from this repository once the repository is
+public.
 
 ## What the plugin contains
 
@@ -20,8 +23,10 @@ up, and nothing here is published to any plugin directory.
   `/modelquad:split`. All but the
   guide are commands only you start.
 - **The SessionStart reminder hook** (`modelquad hook-pending claude`), the
-  same one the installer adds. It only reports retained answers; it never
-  blocks or approves anything.
+  same one the installer adds. It reports retained answers and, when your
+  setting for the repository differs from your global one, one line about
+  Codex there ([REPO-POLICY.md](REPO-POLICY.md)); it never blocks or approves
+  anything.
 
 - **A quota band** (`plugin/hooks/quota-band.tsx`, a Claude Code hooks
   module; experimental). Where no status line is drawn (the desktop app's
@@ -29,8 +34,11 @@ up, and nothing here is published to any plugin directory.
   above the prompt, worded as the status line words them. Claude's own usage
   is already on show there, so the band leaves it out. The figures are the
   reading ModelQuad's server keeps in `~/.claude/usage-codex.json`, re-read
-  every minute and marked "(as of ...)" when older than 15 minutes. It draws
-  nothing in the terminal, which has the status line. It only displays: it
+  every minute and marked "(as of ...)" when older than 15 minutes. It names
+  the plan Codex itself reports, from a fixed list ("Codex (Plus) 5h ..."),
+  and says "Codex is off in this repository (.modelquad.toml)" when the
+  project's repository file sets `allowed = false`. It draws nothing in the
+  terminal, which has the status line. It only displays: it
   hooks no tool call, prompt or approval and starts nothing
   (`tests/test_plugin_prototype.py`); `claude plugin test plugin` runs its
   own tests.

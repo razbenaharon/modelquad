@@ -795,6 +795,177 @@ def _check_posix_only_commands() -> list[str]:
     return problems
 
 
+# ------------------------------------------------- wording: banned phrases
+
+#: The public text a reader takes as a description of the product: the
+#: top-level documents, `docs/`, the skills (the plugin's copies and the
+#: package templates they are synced from), and the MCP server's
+#: instructions. Paths ending in `/` are folders, scanned recursively.
+WORDING_SOURCES = (
+    "README.md",
+    "PRIVACY.md",
+    "NETWORK.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "docs/",
+    "plugin/skills/",
+    "src/modelquad/adapters/templates/claude/skills/",
+)
+WORDING_TEXT_SUFFIXES = frozenset({".md", ".txt"})
+#: Its text is the string constants assigned at module level, read with `ast`
+#: so this script never imports the product.
+WORDING_SERVER_INSTRUCTIONS = "src/modelquad/adapters/server_instructions.py"
+
+#: Between two words of a phrase: up to three other words, across line breaks.
+_GAP = r"(?:\W+\w+){0,3}?\W+"
+#: Hebrew has no `\b` for `re`: a Hebrew word starts after a non-Hebrew
+#: character, optionally with one or two prefix letters (ו ה ב ל מ ש כ).
+_HE_START = r"(?<![֐-׿])[והבלמשכ]{0,2}"
+_HE_END = r"(?![֐-׿])"
+
+
+def _he(stem: str, suffixes: str = "") -> str:
+    tail = f"(?:{suffixes})?" if suffixes else ""
+    return _HE_START + stem + tail + _HE_END
+
+
+#: Phrases the public text may not use, in any language and also not in the
+#: negative ("not a router" still says router). The owner's wording rules for
+#: public text, kept in sync by hand. Each entry is (what it bans, pattern);
+#: matching is case-insensitive. Whole words throughout, so "pro" inside
+#: "approval" or "route" inside "routine" never match; verbs that are ordinary
+#: on their own ("save", "skip", "combine") are banned only next to a word
+#: about usage, limits or plans.
+BANNED_PHRASES: tuple[tuple[str, str], ...] = (
+    # Usage as something to save or squeeze.
+    ("save quota or usage", rf"\bsav(?:e|es|ed|ing)\b{_GAP}(?:quota|usage)s?\b"),
+    ("quota or usage saved", r"\b(?:quota|usage)\s+sav(?:ed|ings?)\b"),
+    ("waste your quota", rf"\bwast(?:e|es|ed|ing)\b{_GAP}(?:quota|usage)\b"),
+    ("every last percent", r"\bevery\s+last\s+percent"),
+    ("stretch or extend a plan",
+     rf"\b(?:stretch|extend|maximi[sz]e)\w*{_GAP}(?:plan|subscription|quota|usage|limit)s?\b"),
+    ("get more out of a plan", rf"\bget\s+more\s+out\s+of\b"),
+    # Limits as an obstacle.
+    ("beat or bypass a limit",
+     rf"\b(?:beat|bypass|get\s+around|escape|skip|circumvent|never\s+hit)\w*{_GAP}limits?\b"),
+    ("keep coding when Claude runs out",
+     r"\b(?:keep|continue)\s+(?:coding|working|going)\s+(?:when|after)\b"),
+    ("runs out", r"\bwhen\s+(?:claude|codex|it|your\s+\w+)\s+runs?\s+out\b"),
+    ("continue after the limit", rf"\bafter\s+(?:the|a|your)\s+limit\b"),
+    ("failover", r"\bfail[\s-]?over\b"),
+    # More usage, or plans put together.
+    ("more usage", r"\bmore\s+usage\b"),
+    ("double your usage", r"\bdouble\s+your\b"),
+    ("unlimited", r"\bunlimited\b"),
+    ("combine or pool subscriptions",
+     rf"\b(?:combin|pool|merg|stack)\w*{_GAP}(?:subscription|plan|account|quota)s?\b"),
+    # Routing.
+    ("route, router, routing", r"\brout(?:e|es|ed|er|ers|ing)\b"),
+    ("load balancing", r"\bload[\s-]?balanc\w*"),
+    ("auto-switch", r"\bauto[\s-]?switch\w*"),
+    ("automatic switching", r"\bautomatic(?:ally)?\s+switch\w*"),
+    ("arbitrage", r"\barbitrage\b"),
+    # Money.
+    ("cheaper than", r"\bcheaper\s+than\b"),
+    ("for the price of", r"\bfor\s+the\s+price\s+of\b"),
+    # Standing with the providers.
+    ("official", r"\bofficial(?:ly)?\b"),
+    ("partner", r"\bpartner(?:s|ed|ing|ship|ships)?\b"),
+    ("integrated with", r"\bintegrated\s+with\b"),
+    ("endorsed", r"\bendorse(?:s|d|ment|ments)?\b"),
+    # Safety claims.
+    ("safe", r"\bsafe\b"),
+    ("secure", r"\bsecure(?:d|ly)?\b"),
+    ("guaranteed", r"\bguarantee(?:s|d)?\b"),
+    ("locked-down", r"\blocked[\s-]down\b"),
+    ("nothing leaves your computer", r"\bnothing\s+leaves\s+your\b"),
+    ("fully autonomous", r"\bfully\s+autonomous\b"),
+    # Hebrew.
+    ("לחסוך במכסה", _he(r"(?:לחסוך|חוסך|חיסכון|חסכון)\s+ב?(?:מכסה|מכסות|שימוש)")),
+    ("למתוח או להגדיל את המנוי",
+     _he(r"(?:למתוח|להגדיל|מותח|מגדיל)\s+(?:את\s+)?ה?(?:מנוי|מכסה)")),
+    ("לעקוף מגבלות", _he(r"(?:לעקוף|עוקף|עוקפת|עקיפת)\s+ה?(?:מגבלה|מגבלות|מכסה)")),
+    ("לא להיתקע במגבלה", _he(r"להיתקע\s+ב?ה?(?:מגבלה|מגבלות|מכסה)")),
+    ("להמשיך כשנגמרת המכסה", _he(r"כשנגמר(?:ת|ה)?\s+ה?(?:מכסה|מנוי)")),
+    ("יותר שימוש", _he(r"יותר\s+שימוש")),
+    ("לאחד מנויים", _he(r"(?:לאחד|איחוד|מאחד)\s+(?:את\s+)?ה?(?:מנויים|מנוי|מכסות)")),
+    ("ניתוב", _he("ניתוב", "ים")),
+    ("מעבר אוטומטי", _he(r"מעבר\s+אוטומטי")),
+    ("רשמי", _he("רשמי", "ת|ים|ות|יים")),
+    ("שותף", _he("(?:שותף|שותפ)", "ה|ים|ות|ויות|ות")),
+    ("בטוח", _he("בטוח", "ה|ים|ות")),
+    ("מאובטח", _he("מאובטח", "ת|ים|ות")),
+)
+
+#: Lines that must quote a banned word to deny it, exactly as they appear
+#: (stripped). Prefer rewording; every entry says why it cannot be reworded.
+BANNED_PHRASE_ALLOWED_LINES = frozenset({
+    # README "Not affiliated": the trademark disclaimer. Its wording is fixed
+    # by the owner's legal review ("keep the Not affiliated section
+    # unchanged"); "endorsed by or sponsored by" is the standard form a
+    # reader looks for.
+    "ModelQuad is an independent project. It is not affiliated with, endorsed by",
+})
+
+_BANNED = tuple((label, re.compile(pattern, re.IGNORECASE)) for label, pattern in BANNED_PHRASES)
+
+
+def _wording_files() -> list[Path]:
+    files: list[Path] = []
+    for source in WORDING_SOURCES:
+        path = REPO_ROOT / source.rstrip("/")
+        if source.endswith("/"):
+            if path.is_dir():
+                files.extend(
+                    p for p in sorted(path.rglob("*"))
+                    if p.is_file() and p.suffix.lower() in WORDING_TEXT_SUFFIXES
+                    and not EXCLUDED_DIRS.intersection(p.relative_to(REPO_ROOT).parts)
+                )
+        elif path.is_file():
+            files.append(path)
+    return files
+
+
+def _server_instruction_texts() -> list[tuple[int, str]]:
+    """(line, text) of every string constant assigned at module level."""
+    path = REPO_ROOT / WORDING_SERVER_INSTRUCTIONS
+    if not path.is_file():
+        return []
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    texts: list[tuple[int, str]] = []
+    for statement in tree.body:
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)) and statement.value is not None:
+            for node in ast.walk(statement.value):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    texts.append((node.lineno, node.value))
+    return texts
+
+
+def _banned_in(text: str) -> list[tuple[int, str, str]]:
+    """(1-based line, label, matched text) for each banned phrase in `text`."""
+    lines = text.splitlines()
+    found: list[tuple[int, str, str]] = []
+    for label, pattern in _BANNED:
+        for match in pattern.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            line = lines[line_no - 1].strip() if line_no <= len(lines) else ""
+            if line in BANNED_PHRASE_ALLOWED_LINES:
+                continue
+            found.append((line_no, label, " ".join(match.group(0).split())))
+    return sorted(found)
+
+
+def _check_banned_phrases() -> list[str]:
+    problems: list[str] = []
+    for doc in _wording_files():
+        for line_no, label, matched in _banned_in(doc.read_text(encoding="utf-8")):
+            problems.append(f"{_rel(doc)}:{line_no}: {matched!r} ({label})")
+    for line_no, text in _server_instruction_texts():
+        for _, label, matched in _banned_in(text):
+            problems.append(f"{WORDING_SERVER_INSTRUCTIONS}:{line_no}: {matched!r} ({label})")
+    return problems
+
+
 def check_docs() -> int:
     """Documentation invariants a human reviewer cannot reliably eyeball.
 
@@ -805,6 +976,7 @@ def check_docs() -> int:
         ("relative links resolve", _check_links()),
         ("AGENTS.md Current state matches the code", _check_current_state()),
         ("documented commands work on Windows", _check_posix_only_commands()),
+        ("public text uses none of the banned phrases", _check_banned_phrases()),
     )
     failed = False
     for label, problems in groups:
@@ -922,7 +1094,7 @@ def check_secrets() -> int:
 
 CHECKS = {
     "python": (check_python, "the Python suite, import root pinned to this worktree"),
-    "docs": (check_docs, "links resolve, AGENTS.md matches code, commands run on Windows"),
+    "docs": (check_docs, "links resolve, AGENTS.md matches code, commands run on Windows, no banned phrases"),
     "secrets": (check_secrets, "credential shapes in authored source"),
 }
 

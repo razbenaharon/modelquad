@@ -16,7 +16,7 @@ ModelQuad is a local MCP server for Claude Code. It lets Claude ask your own
 OpenAI Codex CLI for a read-only review, exploration or architecture opinion,
 and it shows Claude's and Codex's usage side by side. ModelQuad and the CLIs
 it drives run on your computer, under your own logins. It works alongside
-OpenAI's official Codex plugin for Claude Code: the plugin for when you want
+OpenAI's own Codex plugin for Claude Code: the plugin for when you want
 Codex to change code, ModelQuad for a read-only second opinion.
 
 Status: early, source-only release. Windows only.
@@ -46,6 +46,10 @@ Status: early, source-only release. Windows only.
   it resets within 30 minutes, the note says waiting may be simpler. When
   Codex has itself used 90% of either window, there is no note. The note
   starts nothing and does not change either provider's limits.
+- **A proposed division of the work.** For a task of several steps, Claude
+  can show who could take each step: Claude builds and runs, Codex reviews,
+  explores and advises, read-only. It starts nothing; see
+  [Division of work](#division-of-work).
 - **An approval prompt on every Codex call.** Claude Code asks you before each
   call that would start Codex.
 - **Optional background jobs.** With the local service running and background
@@ -59,7 +63,7 @@ Status: early, source-only release. Windows only.
   read-only (see
   [ModelQuad and OpenAI's Codex plugin](#modelquad-and-openais-codex-plugin)).
 - Not a proxy. ModelQuad does not extract your provider credentials or relay
-  provider traffic. It runs the official CLIs, which use their own logins.
+  provider traffic. It runs the provider CLIs, which use their own logins.
 - Other AI providers, a desktop window, a tray icon, an installer and team
   features are not supported.
 
@@ -104,38 +108,59 @@ Status: early, source-only release. Windows only.
   agree, uses `modelquad_delegate`, which Claude Code asks about first.
 - To block new Codex calls from Claude Code: `modelquad host disconnect claude`.
   Undo with `modelquad host connect claude`.
-- A repository can carry a `.modelquad.toml` file that narrows Codex use there:
-  Codex off, fewer task kinds, lower file limits, a work account only (one
-  Codex itself reports), or Claude calling Codex only when you ask. It
-  can never approve a call, add files or change how Codex runs, and a broken
-  file refuses Codex in that repository. See
-  [docs/REPO-POLICY.md](docs/REPO-POLICY.md).
+- A repository's `.modelquad.toml` and your own `modelquad settings repo off`
+  can turn Codex off in one repository (see [Division of work](#division-of-work)).
 - Treat Codex's answer as input to check, not as a verified result.
 
 ## Division of work
 
 For a task of several steps, Claude proposes a split of the work between the
-two tools you already use, and you approve each Codex call.
+two tools you already use, and you approve each Codex call. Codex's part is
+always read-only: a review, an exploration of the code or an architecture
+opinion.
 
-- Claude describes the steps to the `modelquad_split` tool (or you ask with
-  `/modelquad-split`). For each step the reply says who takes it and why, in
-  a fixed reason: steps that edit files or run commands are always Claude's,
-  because Codex through ModelQuad is read-only. A review of Claude's own
-  change, or another opinion that should not come from Claude, can be
-  proposed for Codex.
-- The proposal starts nothing. Each Codex step is its own call, with Claude
-  Code's approval prompt when it runs; there is no way to approve the whole
-  plan at once.
-- What decides is the kind of step, your `modelquad settings repo` choice
-  and the repository's `.modelquad.toml`. Both tools' quota and the account
-  kind of each plan are shown beside the proposal and never change it. When
-  Codex reports a limit reached, the reply says a Codex step would likely be
-  refused.
-- The step titles go back to Claude in the reply only; ModelQuad does not
-  store or log them.
+**The proposal.** Claude describes the steps to the `modelquad_split` tool
+(or you ask with `/modelquad-split`). For each step the reply says who takes
+it and why, in a fixed reason: steps that edit files or run commands are
+always Claude's, because Codex through ModelQuad is read-only. A review of
+Claude's own change, or another opinion that should not come from Claude, can
+be proposed for Codex. The proposal starts nothing. Each Codex step is its own
+call, with Claude Code's approval prompt when it runs; there is no way to
+approve the whole plan at once. What decides is the kind of step, your
+repository setting and the repository's `.modelquad.toml`. Both tools' quota
+and the account kind of each plan are shown beside the proposal and never
+change it. When Codex reports a limit reached, the reply says a Codex step
+would likely be refused. The step titles go back to Claude in the reply only;
+ModelQuad does not store or log them.
 
-Afterwards, `modelquad split summary [--project DIR] [--since 1d|7d]` (and a
-`split` block for this session in `modelquad_activity`) shows what happened,
+**Your plans.** `modelquad settings plan claude <plan>` and
+`modelquad settings plan codex <plan>` say which plan you are on, from a fixed
+list (`modelquad settings plan claude` alone prints it; `unset` removes the
+value). A plan Codex itself reports in its quota read comes before the one you
+set; otherwise the plan is unknown. `modelquad status` and `modelquad doctor`
+show the plans to you. Claude sees only the account kind (personal, workspace
+or unknown) and where it came from, in the account line on Codex calls and in
+`modelquad_status`; never the plan name. A plan never decides who takes a
+step and never starts or stops anything.
+
+**The repository file.** A repository can carry a `.modelquad.toml` that
+narrows Codex use there: Codex off, fewer task kinds, lower file limits, a
+work account only (one Codex itself reports), or Claude calling Codex only
+when you ask. It can never approve a call, add files, turn on Claude's own
+initiative or change how Codex runs, and a broken file refuses Codex in that
+repository. See [docs/REPO-POLICY.md](docs/REPO-POLICY.md).
+
+**Your own setting for a repository.**
+`modelquad settings repo on|off|offer-only|inherit [--project DIR]` records
+your choice for one repository: `off` (no Codex there), `offer-only` (Claude
+offers and calls only when you agree or ask), `on` (Claude may decide on its
+own there) or `inherit` (your global `modelquad settings proactive` applies).
+Only you can choose `on`. When the choice differs from your global setting,
+ModelQuad's startup reminder tells Claude in one line. Claude Code still asks
+you before every Codex call whatever you choose.
+
+**Afterwards.** `modelquad split summary [--project DIR] [--since 1d|7d]` (and
+a `split` block for this session in `modelquad_activity`) shows what happened,
 from ModelQuad's own history: the Codex requests for that project by kind,
 and how many were answered, withheld because Codex tried a tool, refused (by
 ModelQuad's rules, the repository's `.modelquad.toml`, your repo setting or
@@ -147,6 +172,19 @@ windows over the period, one column each and never added together, from the
 readings ModelQuad stored (at each Codex request, or on a timer with the
 background service). A window with fewer than two readings in the period
 reads unknown, and one that reset during the period says so.
+
+**What it never does.**
+
+- Approve a whole plan, or start a Codex step without Claude Code's approval
+  prompt for that call.
+- Let quota or a plan decide who takes a step, or start, queue or time any
+  work because of quota.
+- Hand a step to the other tool because one of them reports a limit.
+- Let a repository file approve a call, add files, turn on Claude's own
+  initiative, or change how Codex runs.
+- Send anything new anywhere: your plans and repository choices stay in
+  `preferences.json` in ModelQuad's state folder, keyed by a hash of the
+  repository, with no path or folder name. See [PRIVACY.md](PRIVACY.md).
 
 ## Terminal or desktop app
 
@@ -403,7 +441,7 @@ files, employer code), see
 
 ## ModelQuad and OpenAI's Codex plugin
 
-OpenAI publishes an official Codex plugin for Claude Code
+OpenAI publishes its own Codex plugin for Claude Code
 ([openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc)).
 ModelQuad works alongside it, and you can use both. The plugin lets Codex
 write code and offers its own reviews. ModelQuad adds:
@@ -414,8 +452,8 @@ write code and offers its own reviews. ModelQuad adds:
 - read-only Codex reviews, with an approval prompt on every call;
 - optional background jobs that keep running after you close the chat.
 
-ModelQuad is an independent project. It is not affiliated with or endorsed by
-OpenAI or Anthropic.
+ModelQuad is an independent project. It is not affiliated with OpenAI or
+Anthropic.
 
 ## Not affiliated
 
@@ -474,7 +512,8 @@ maintainer directed, reviewed and tested the work and is responsible for it.
 - [docs/RECOMMENDED-SETTINGS.md](docs/RECOMMENDED-SETTINGS.md): recommended
   Claude Code settings, in plain language.
 - [docs/REPO-POLICY.md](docs/REPO-POLICY.md): the `.modelquad.toml` file a
-  repository can use to narrow what ModelQuad does with Codex.
+  repository can use to narrow what ModelQuad does with Codex, and your own
+  setting for one repository.
 - [NETWORK.md](NETWORK.md): which connections ModelQuad and the programs it
   starts make.
 - [docs/PLUGIN.md](docs/PLUGIN.md): the experimental Claude Code plugin in this

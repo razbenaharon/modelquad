@@ -54,7 +54,7 @@ Only the latest release, and the `main` branch, receive security fixes.
 
 ## Security design today
 
-This section describes what the code does now. It is not a guarantee.
+This section describes what the code does now, not a promise about the future.
 
 **Local only.** ModelQuad has no server of its own. Its own processes connect
 only to loopback addresses: each entry point adds an audit hook that refuses
@@ -86,9 +86,9 @@ folder they are given.
   cross-site page. A service started without a verified secret refuses every
   request except the proof (`service/trust.py`, `tests/test_service_trust.py`).
 - FastAPI's documentation and schema pages are turned off.
-- The routes are the listener proof, health, the background-work setting, the
+- The endpoints are the listener proof, health, the background-work setting, the
   summary of waiting answers, and the job launch, diagnostics, fate and
-  release-fate routes. The launch route refuses every browser request, even
+  release-fate endpoints. The launch endpoint refuses every browser request, even
   one with the secret, and starts only a job ModelQuad has already prepared in
   the state folder.
 - Turning background work on through the API needs the consent that

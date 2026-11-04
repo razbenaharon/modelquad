@@ -248,7 +248,12 @@ sends to Anthropic:
 - The report of the `modelquad_doctor` tool, which includes local paths, such
   as where Claude Code and Codex are installed.
 - The startup reminder: job ids, statuses, task types, whether files may have
-  changed, and expiry times. Not answer text.
+  changed, and expiry times. Not answer text. When your setting for the
+  repository differs from your global one, one fixed line about Codex there.
+- The split summary, in the `split` block of `modelquad_activity`: counts of
+  this session's Codex requests by kind and outcome, the median time to an
+  answer, and each tool's percentage points used per window. No path, folder
+  name, prompt or answer.
 - The `/modelquad` skill and the MCP server instructions that provide Claude
   with ModelQuad's guidance.
 
@@ -283,7 +288,10 @@ session transcript. **ModelQuad never opens, reads or inspects that file**
   The payload's workspace path, transcript path and cost figures are not read.
 - **Startup reminder** (`modelquad hook-pending claude`, at session start):
   the event name and the working directory. The directory is hashed and used
-  only to ask the local service which answers are waiting for that project. It
+  only to ask the local service which answers are waiting for that project.
+  For the one line about Codex in this repository it also reads
+  `preferences.json`, the installation id, the repository's `.git` entry (to
+  find the repository, without starting Git) and its `.modelquad.toml`. It
   writes nothing.
 
 ### Other reads
@@ -307,6 +315,12 @@ session transcript. **ModelQuad never opens, reads or inspects that file**
   restrictions applied first: the `permissions.deny` lists of the Claude Code
   settings files named there, the `.modelquadignore` files named there, and Git's
   answer to `git check-ignore` for the listed paths.
+- **The repository's `.modelquad.toml`**, if there is one, on each Codex call,
+  for `modelquad_split`, `modelquad_status`, `modelquad status` and
+  `modelquad doctor`, and in the plugin's quota band
+  ([docs/REPO-POLICY.md](docs/REPO-POLICY.md)). Only the reason code of a
+  refusal is written to the history; the file's contents, path and key names
+  are not stored.
 
 ModelQuad does not read Claude Code or Codex conversation files, session
 folders or prompt history, or the contents of credential files. In this
@@ -409,7 +423,7 @@ Columns not described below hold fixed labels, numbers, times or ids.
 | `routing_decisions` | Which worker a request used, and the scores behind that | `providers_json`: per-provider scores and reasons. `evidence_json`: the quota readings and a snapshot of the host (Claude Code version, model id, session fingerprint, an uptime bucket, a size bucket for the handoff, a large-context flag; not the raw session id). `override_reason`: a fixed label |
 | `jobs` | One background job's process lifecycle | Runner and worker pids and start times, status, heartbeat and end times, recovery fields, and the Windows boot id and uptime when the job was reserved |
 | `job_fate_releases` | Your explicit release of a job whose outcome is unknown (`modelquad jobs release-fate`) | An actor label, the surface, a fixed reason, pid and boot evidence. Append-only: triggers refuse updates and deletes |
-| `provider_usage_history` | Quota readings over time: on each Codex call, on `modelquad status` and `modelquad route`, and every minute while the local service runs | `metadata_json`: the raw quota fields, including the Codex plan type, and `source_file`, the quota file it came from, with the path redacted |
+| `provider_usage_history` | Quota readings over time: on each Codex call, on `modelquad status` and on the command that shows which tool fits a task type, and every minute while the local service runs | `metadata_json`: the raw quota fields, including the Codex plan type, and `source_file`, the quota file it came from, with the path redacted |
 | `provider_health` | Checks of the provider programs, every minute while the local service runs | `detail`: the doctor text with paths redacted |
 | `settings` | Your choices | Background work on or off, and when you consented; which tools are disconnected; internal defaults |
 | `plan_decisions`, `outcome_revisions`, `repo_registrations`, `repo_policy_versions` | Part of schema 24 | Nothing writes them in this release |
@@ -430,8 +444,8 @@ written (`project_notes.private_result`, `closed_reason`).
 The hashes above are pseudonyms: they hide a value from casual reading, not
 from a targeted guess. Someone with a copy of the database can confirm a
 guessed folder path (unsalted hashes), and with `identity.json` too, a
-guessed session id. Deleting rows with SQLite does not guarantee that the
-bytes are erased from disk.
+guessed session id. Deleting rows with SQLite does not by itself erase the
+bytes from disk.
 
 ### What is not stored
 
@@ -493,7 +507,7 @@ delete history.
      `*.modelquad-backup-*` files. Check the backups first: they can contain
      secrets you put in your configuration.
 
-Deleting files is ordinary file deletion. ModelQuad does not securely erase
+Deleting files is ordinary file deletion. ModelQuad does not overwrite
 disk blocks.
 
 ## Limits

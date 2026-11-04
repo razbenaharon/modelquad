@@ -149,10 +149,10 @@ control; use `serverCommand` when the block must hold. To decide exactly
 which servers may run at all, use an allowlist with
 `allowManagedMcpServersOnly`, or a fixed `managed-mcp.json`.
 
-The guarantee that a person approves each Codex call is Claude Code's own
+What makes a person approve each Codex call is Claude Code's own
 approval prompt: both tools that start Codex are marked as requiring user
 interaction, which no allow rule or mode skips. The extra confirmation form
-the handoff tool shows is a second check, not the guarantee.
+the handoff tool shows is a second check, not the main one.
 
 See Claude Code's documentation on managed settings and on controlling MCP
 server access (`managed-mcp`) for where the managed settings file lives on

@@ -23,6 +23,15 @@ here; the tool under development is not the instrument for developing it.
   Code asks the user before every call that would start Codex. Quota is
   display-only: when Claude is near its limit, a note says so (wait for the
   reset, or ask Codex for a review) and starts nothing.
+- Division of work: `modelquad_split` (and `/modelquad-split`) proposes who
+  takes each step and starts nothing; `modelquad split summary` reports
+  afterwards from history; `modelquad settings plan` and
+  `modelquad settings repo` keep declared plans and per-repository choices
+  in `preferences.json` (`plans.py`, `repo_settings.py`, `split.py`,
+  `split_summary.py`).
+- A checked-in `.modelquad.toml` can only narrow Codex use in its repository
+  and fails closed when broken (`repo_policy.py`, `docs/REPO-POLICY.md`).
+- Public text passes a banned-phrase check (`python scripts/check.py docs`).
 - No telemetry. ModelQuad's own processes connect only to loopback.
 
 ## Layout
