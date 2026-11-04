@@ -815,6 +815,44 @@ WORDING_TEXT_SUFFIXES = frozenset({".md", ".txt"})
 #: Its text is the string constants assigned at module level, read with `ast`
 #: so this script never imports the product.
 WORDING_SERVER_INSTRUCTIONS = "src/modelquad/adapters/server_instructions.py"
+#: Code whose strings people or Claude read: tool titles and descriptions,
+#: replies, notices, refusals, CLI help and output. Read with `ast`, never
+#: imported. Scanned: every string literal (f-string parts included) that
+#: holds a space, so identifiers, keys and codes ("routing_mode", "safe_id")
+#: never match. Skipped: docstrings, which are for developers, except the
+#: docstring of a `modelquad_*` function, which is an MCP tool's description.
+WORDING_CODE_SOURCES = (
+    "src/modelquad/mcp/server.py",
+    "src/modelquad/mcp/jobs_tools.py",
+    "src/modelquad/mcp/presentation.py",
+    "src/modelquad/split.py",
+    "src/modelquad/split_summary.py",
+    "src/modelquad/disclosure.py",
+    "src/modelquad/onboarding.py",
+    "src/modelquad/doctor.py",
+    "src/modelquad/cli.py",
+    "src/modelquad/repo_policy.py",
+    "src/modelquad/repo_settings.py",
+    "src/modelquad/plans.py",
+    "src/modelquad/assistance.py",
+    "src/modelquad/adapters/pending_reminder.py",
+    "src/modelquad/adapters/file_security.py",
+    "src/modelquad/execution/noshell.py",
+    "src/modelquad/execution/base.py",
+    "src/modelquad/usage/claude.py",
+)
+#: Scanned as plain text: the desktop band's source.
+WORDING_PLAIN_CODE_SOURCES = ("plugin/hooks/",)
+WORDING_PLAIN_CODE_SUFFIXES = frozenset({".tsx"})
+#: A stored value a scanned string must be able to name, quoted as code
+#: (`routing`, 'routing:7', "routing"). Only these exact quoted tokens are
+#: skipped; the bare word still fails. Keep this list tiny, and say why.
+BANNED_PHRASE_ALLOWED_IDENTIFIERS = frozenset({
+    # The history keeps two record kinds, "routing" and "execution"
+    # (service/db.py); `modelquad_activity_detail` and `modelquad history
+    # --detail` take the kind as typed. Renaming it would break stored data.
+    "routing",
+})
 
 #: Between two words of a phrase: up to three other words, across line breaks.
 _GAP = r"(?:\W+\w+){0,3}?\W+"
@@ -905,6 +943,10 @@ BANNED_PHRASE_ALLOWED_LINES = frozenset({
     # unchanged"); "endorsed by or sponsored by" is the standard form a
     # reader looks for.
     "ModelQuad is an independent project. It is not affiliated with, endorsed by",
+    # presentation.py `_REFUSAL_LINES`: the start of a closed reason code that
+    # routing_policy.py writes and history stores; the table maps it to a
+    # plain sentence, so a person never reads it.
+    "routing is paused",
 })
 
 _BANNED = tuple((label, re.compile(pattern, re.IGNORECASE)) for label, pattern in BANNED_PHRASES)
@@ -941,6 +983,57 @@ def _server_instruction_texts() -> list[tuple[int, str]]:
     return texts
 
 
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    """ids of the docstring constants to skip: all but the MCP tools' own."""
+    skipped: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        first = node.body[0] if node.body else None
+        if not (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            continue
+        is_tool = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("modelquad_")
+        if not is_tool:
+            skipped.add(id(first.value))
+    return skipped
+
+
+_QUOTED_IDENTIFIER = re.compile(r"""([`'"])([A-Za-z_]+)(?=[`'":])""")
+
+
+def _mask_allowed_identifiers(text: str) -> str:
+    """Blank each allow-listed identifier where it is quoted as code."""
+    def blank(match: re.Match[str]) -> str:
+        if match.group(2) in BANNED_PHRASE_ALLOWED_IDENTIFIERS:
+            return match.group(1) + "_" * len(match.group(2))
+        return match.group(0)
+    return _QUOTED_IDENTIFIER.sub(blank, text)
+
+
+def _code_texts() -> list[tuple[str, int, str]]:
+    """(source, line, text) of the people- and model-facing strings in code."""
+    texts: list[tuple[str, int, str]] = []
+    for source in WORDING_CODE_SOURCES:
+        path = REPO_ROOT / source
+        if not path.is_file():
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        skipped = _docstring_nodes(tree)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and id(node) not in skipped and re.search(r"\s", node.value.strip())):
+                texts.append((source, node.lineno, _mask_allowed_identifiers(node.value)))
+    for source in WORDING_PLAIN_CODE_SOURCES:
+        folder = REPO_ROOT / source.rstrip("/")
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.rglob("*")):
+            if path.is_file() and path.suffix.lower() in WORDING_PLAIN_CODE_SUFFIXES:
+                texts.append((_rel(path), 1, path.read_text(encoding="utf-8")))
+    return texts
+
+
 def _banned_in(text: str) -> list[tuple[int, str, str]]:
     """(1-based line, label, matched text) for each banned phrase in `text`."""
     lines = text.splitlines()
@@ -963,6 +1056,9 @@ def _check_banned_phrases() -> list[str]:
     for line_no, text in _server_instruction_texts():
         for _, label, matched in _banned_in(text):
             problems.append(f"{WORDING_SERVER_INSTRUCTIONS}:{line_no}: {matched!r} ({label})")
+    for source, first_line, text in _code_texts():
+        for line_no, label, matched in _banned_in(text):
+            problems.append(f"{source}:{first_line + line_no - 1}: {matched!r} ({label})")
     return problems
 
 

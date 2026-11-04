@@ -247,6 +247,15 @@ def test_public_text_uses_none_of_the_banned_phrases():
         ("README.md", "עם ניתוב בין הכלים.\n", "ניתוב"),
         ("src/modelquad/adapters/server_instructions.py",
          '_INTRO = (\n    "ModelQuad is an "\n    "auto-switch for your plans."\n)\n', "auto-switch"),
+        # Code people and Claude read: string literals, read with ast.
+        ("src/modelquad/mcp/presentation.py",
+         'def line():\n    return {"note": "A safe second opinion."}\n', "safe"),
+        ("src/modelquad/cli.py", 'HELP = f"Use the official {name} CLI."\n', "official"),
+        ("src/modelquad/execution/noshell.py",
+         '_GUIDANCE = {"x": ("Open it "\n    "securely.")}\n', "secure"),
+        ("src/modelquad/mcp/server.py",
+         'def modelquad_status():\n    """Shows the router state."""\n', "route, router, routing"),
+        ("plugin/hooks/quota-band.tsx", 'const NOTE = "Never hit a limit again";\n', "beat or bypass a limit"),
     ],
 )
 def test_the_docs_check_fails_on_a_planted_banned_phrase(tmp_path, capsys, relative, text, label):
@@ -271,6 +280,37 @@ def test_ordinary_words_that_contain_a_banned_one_pass(tmp_path):
     )
     module = _fresh_check(_tree(tmp_path, {"README.md": text}))
     assert module._check_banned_phrases() == []
+
+
+def test_code_identifiers_and_developer_docstrings_pass(tmp_path):
+    """In code, only text a reader sees is scanned.
+
+    A literal without a space is an identifier, key or code; a docstring is
+    for developers unless it is a `modelquad_*` tool's description; and an
+    allow-listed stored value passes only where it is quoted as code.
+    """
+    source = (
+        '"""Module docstring about the router."""\n'
+        'MODE = "routing_mode"\n'
+        'KIND = "safe"\n'
+        'def _helper():\n'
+        '    """Internal: the routing record."""\n'
+        '    return "`kind` is \\"routing\\" or \\"execution\\"; try \'routing:7\'."\n'
+    )
+    module = _fresh_check(_tree(tmp_path, {"src/modelquad/mcp/server.py": source}))
+    assert module._code_texts(), "the wording guard read no code strings"
+    assert module._check_banned_phrases() == []
+
+    module._bind_repo(_tree(tmp_path / "bare", {
+        "src/modelquad/mcp/server.py": 'X = "Pick a routing mode."\n'}))
+    problems = module._check_banned_phrases()
+    assert problems == ["src/modelquad/mcp/server.py:1: 'routing' (route, router, routing)"], problems
+
+
+def test_the_allowed_identifiers_stay_tiny():
+    module = _fresh_check(REPO_ROOT)
+    assert module.BANNED_PHRASE_ALLOWED_IDENTIFIERS <= {"routing"}
+    assert len(module.BANNED_PHRASE_ALLOWED_LINES) <= 3
 
 
 def test_an_allow_listed_line_passes_and_only_that_line(tmp_path):
