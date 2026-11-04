@@ -4,7 +4,7 @@ Build and test instructions for contributors and coding agents. What ModelQuad
 does and how to use it is in [README.md](README.md).
 
 **Developing this repository never uses ModelQuad itself.** Do not run
-`modelquad route`, and do not call any `modelquad_*` MCP tool while working
+`modelquad advise` (or its old name `route`), and do not call any `modelquad_*` MCP tool while working
 here; the tool under development is not the instrument for developing it.
 
 ## Current state

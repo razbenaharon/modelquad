@@ -384,7 +384,7 @@ def test_interactive_onboarding_never_asks_for_a_routing_mode(tmp_path, monkeypa
     assert result.routing_mode == "automatic"
     assert service_history.get_routing_mode(db_path) == "automatic"
     assert any("Welcome!" in line for line in printed)
-    assert any("ModelQuad Routing: Active" in line for line in printed)
+    assert any("Connections to your AI tools: on" in line for line in printed)
 
 
 def test_first_run_establishes_automatic_without_being_asked(tmp_path, monkeypatch):
@@ -441,7 +441,7 @@ def test_retired_saved_mode_is_reported_as_automatic(tmp_path, monkeypatch):
     )
 
     summary = " ".join(printed)
-    assert "ModelQuad Routing: Active" in summary
+    assert "Connections to your AI tools: on" in summary
     assert "'ask'" not in summary
     assert "--reset-routing" not in summary
 

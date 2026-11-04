@@ -221,8 +221,6 @@ def _launch_refusal(task_type, reason, *, decision_id=None, provider=None,
             requested_provider=provider, status="refused", failure_kind="policy_refused",
             detail=reason, source="mcp", host=host, invocation_mode=invocation_mode,
             working_directory=working_directory,
-            **(call["repo_context"].attempt_fields(capability=call.get('capability', 'delegate'))
-               if call and call.get("repo_context") else {}),
         )
     except Exception:
         row_id = None
@@ -273,8 +271,6 @@ def _launch_failures(function):
                 decision_id=bound.arguments.get("decision_id"),
                 provider=bound.arguments.get("provider"),
                 invocation_mode=bound.arguments.get("invocation_mode"),
-                **(call["repo_context"].facts(capability=call.get('capability', 'delegate'))
-                   if call.get("repo_context") else {}),
             )
         finally:
             _launch_call.reset(token)
@@ -697,8 +693,8 @@ def _delegate_payload(
     mode = policy.routing_mode
     paused = policy.routing_paused
     resolved_mode, mode_source = resolve_invocation_mode(invocation_mode)
-    # Lineage: when the caller passes the decision_id a prior
-    # modelquad_route returned, THAT identity is preserved end to end so the
+    # Lineage: when the caller passes the decision_id a prior advisory
+    # decision returned, THAT identity is preserved end to end so the
     # outcome joins the candidate set and quota evidence that caused it. No
     # decision_id means direct delegation -- a fresh id is minted and the
     # record honestly says no prior route happened. An id that does not
@@ -1021,7 +1017,7 @@ def _delegate_after_policy(
         from ..execution.base import READ_ONLY_TASK_TYPES
         from ..models import TaskType
         # Writable launches still earn their existing availability/runtime/
-        # capability refusals before the beta restriction is considered.
+        # capability refusals before the read-only restriction is considered.
         if TaskType(task_type) not in READ_ONLY_TASK_TYPES:
             baseline_consumption = _resolve_consumption_evidence(prompt, parsed_capsule, expected_consumption)
             _require_job_eligibility(manager, task_type, statuses, provider, agent_runtime,
@@ -2626,7 +2622,7 @@ def modelquad_delegation_status(
       you delegated with, which you still hold after a failed tool call. All
       three are needed together; they identify the logical request.
     - `attempt_id` -- from a duplicate refusal, or from a previous answer here.
-    - `decision_id` -- the id `modelquad_route` returned, if you passed it.
+    - `decision_id` -- the id a reply here, or a refusal, returned.
 
     Or ask about a DIRECTORY instead of a delegation: pass `working_directory`
     ALONE and the answer's `workspace` field says whether any delegation may

@@ -21,7 +21,7 @@ DISTRIBUTION_NAME = "modelquad"
 MCP_SERVER_NAME = "modelquad"
 MCP_SERVER_TOML_KEY = "modelquad"
 
-# Prefix for MCP tool names: modelquad_route, modelquad_delegate, ...
+# Prefix for MCP tool names: modelquad_status, modelquad_delegate, ...
 TOOL_PREFIX = "modelquad"
 
 # Console entry points.

@@ -24,7 +24,7 @@ def dispatch_pending(argv: Sequence[str]) -> int | None:
     # A worker returns before importing the handler or touching stdin/state.
     if os.environ.get("MODELQUAD_WORKER") == "1":
         return 0
-    if len(argv) != 2 or argv[1] not in {"claude", "codex"}:
+    if len(argv) != 2 or argv[1] != "claude":
         return 0
     try:
         from .adapters.pending_reminder import run_hook

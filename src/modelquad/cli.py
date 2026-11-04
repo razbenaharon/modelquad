@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Command-line interface for setup, diagnosis, settings and routing advice."""
+"""Command-line interface for setup, diagnosis, settings and task-fit advice."""
 
 from __future__ import annotations
 
@@ -1777,7 +1777,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--history-db",
         type=Path,
         default=None,
-        help="SQLite database for shared routing/execution history "
+        help="SQLite database for ModelQuad's history "
         f"(default: {service_db.DEFAULT_DB_PATH}).",
     )
     parser.add_argument(
@@ -1832,9 +1832,15 @@ def build_parser() -> argparse.ArgumentParser:
     status = subcommands.add_parser("status", help="Show Claude's and Codex's quota, your plans and this folder's Codex setting.")
     status.add_argument("--global", action="store_true", dest="global_status", help="Include host integrations and control-plane health.")
     status.add_argument("--json", action="store_true", dest="as_json", help="Print status as JSON.")
-    route = subcommands.add_parser("route", help="Show which tool fits a task type.")
-    route.add_argument("task_type", choices=[task.value for task in TaskType])
-    route.add_argument("--json", action="store_true", dest="as_json", help="Print the routing result as JSON.")
+    # `advise` is the command; `route`, its earlier name, still works but is
+    # not listed (a parser added without help gets no help line, and the
+    # usage line below leaves it out).
+    advice_help = "Show which tool fits a task type. Starts nothing."
+    for advice_name in ("advise", "route"):
+        listed = {"help": advice_help} if advice_name == "advise" else {}
+        advise = subcommands.add_parser(advice_name, description=advice_help, **listed)
+        advise.add_argument("task_type", choices=[task.value for task in TaskType])
+        advise.add_argument("--json", action="store_true", dest="as_json", help="Print the advice as JSON.")
     privacy_cmd = subcommands.add_parser(
         "privacy",
         help="Show what this installation stores locally, and reset the pseudonymous installation id.",
@@ -1992,7 +1998,7 @@ def build_parser() -> argparse.ArgumentParser:
         "earlier builds installed. Exits 0 and prints nothing; not intended to be run manually.",
     )
     pending_hook = subcommands.add_parser("hook-pending", help="Metadata-only startup context for the Host agent.")
-    pending_hook.add_argument("host", choices=("claude", "codex"))
+    pending_hook.add_argument("host", choices=("claude",))
     # The same question `modelquad_delegation_status(working_directory=...)`
     # answers, at a shell. The consumer this protects is frequently not a model
     # at all: it is an operator or a script about to run a gate, review a diff
@@ -2089,7 +2095,13 @@ def build_parser() -> argparse.ArgumentParser:
         service_command = subcommands.add_parser(command_name, help=help_text)
         _add_service_options(service_command)
         service_command.add_argument("--managed-child", action="store_true", help=argparse.SUPPRESS)
+    # The usage line lists the commands people use; hidden aliases still parse.
+    subcommands.metavar = "{" + ",".join(name for name in subcommands.choices if name not in _HIDDEN_COMMANDS) + "}"
     return parser
+
+
+#: Commands that still work but are not listed: earlier names kept for scripts.
+_HIDDEN_COMMANDS = frozenset({"route"})
 
 
 #: Commands Claude Code runs as hooks or as its status line. They must never
@@ -2467,7 +2479,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
         if history_enabled:
             service_history.record_provider_usage(db_path, statuses)
         return 0
-    if args.command == "route":
+    if args.command in ("advise", "route"):
         from .netpolicy import providers_refused_by_policy
 
         result = Router(config).route(
@@ -2486,7 +2498,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
             route_decision_id = new_decision_id()
             service_history.record_provider_usage(db_path, statuses)
             # The CLI has no MCP clientInfo, and which hosts that costs is
-            # now runtime-specific. A `modelquad route` run from inside a
+            # now runtime-specific. A `modelquad advise` run from inside a
             # Claude Code shell is still observable, because that host was
             # spawned with an environment that says so. The same run inside
             # Codex is NOT: Codex scrubs the environment it spawns processes
@@ -2528,7 +2540,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
                     from .routing_policy import pause_label
                     print(pause_label(state.get('routing_paused_since')))
             except service_history.LaunchStateUnavailable:
-                print('Routing control state unavailable.')
+                print("ModelQuad could not read whether Codex calls are paused.")
             if not recorded:
                 print("Advice was not recorded; no persisted decision identity.", file=sys.stderr)
         return 0

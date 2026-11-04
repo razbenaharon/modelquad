@@ -23,7 +23,6 @@ from datetime import datetime
 BYTE_CAP = 32 * 1024
 ROW_CAP = 20
 HOOK_BUDGET = 1.5
-CODEX_DELIVERY_EVIDENCE = 'one recorded run, codex-cli 0.162.0-alpha.2'
 _TASKS = frozenset({'architecture', 'implementation', 'exploration', 'debugging',
                     'testing', 'review', 'trivial'})
 _STATUSES = frozenset({'finished', 'failed', 'stopped', 'interrupted', 'timed_out', 'unknown'})
@@ -101,12 +100,6 @@ def serialize_claude(text):
     return {'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': text}}
 
 
-def serialize_codex(text):
-    # Same envelope, qualified by a native Codex delivery run.
-    # Keep serializers separate for future provider schema changes.
-    return {'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': text}}
-
-
 def valid_cwd(cwd):
     if not (isinstance(cwd, str) and bool(cwd) and len(cwd) <= 4096
             and not any(ord(c) < 32 for c in cwd) and Path(cwd).is_absolute()):
@@ -139,7 +132,8 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, fetch=N
         return 0
     deadline = clock() + HOOK_BUDGET
     try:
-        if host not in {'claude', 'codex'}:
+        # Claude Code is the one host (AGENTS.md); any other host id prints nothing.
+        if host != 'claude':
             return 0
         # Pipe reads can block even with a byte cap. The daemon reads only the
         # bounded payload; the calling thread waits only the remaining budget.
@@ -190,8 +184,7 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, fetch=N
         texts = [text for text in (advice, pending) if text]
         if not texts:
             return 0
-        serializer = serialize_claude if host == 'claude' else serialize_codex
-        output = json.dumps(serializer('\n'.join(texts)), separators=(',', ':')) + '\n'
+        output = json.dumps(serialize_claude('\n'.join(texts)), separators=(',', ':')) + '\n'
         if len(output.encode('utf-8')) <= BYTE_CAP and (advice or clock() < deadline):
             stdout.write(output)
     except Exception:

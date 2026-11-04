@@ -67,7 +67,12 @@ starts. Provider traffic is made by the provider CLIs. See
 standard input and output. It does not listen on a port. The two tools that
 start Codex, `modelquad_delegate` and `modelquad_handoff`, are marked
 `anthropic/requiresUserInteraction`, so Claude Code asks the user before every
-call (`tests/test_oss_export_surface.py`). ModelQuad adds no permission rule for its tools. The job tools answer only
+call (`tests/test_oss_export_surface.py`). Two more tools belong to the
+handoff window: `modelquad_handoff_confirm` is the window's Approve / Decline
+button, marked app-only so a host keeps it from the model, and
+`modelquad_handoff_wait` starts Codex only after that button was pressed. It
+refuses in a client that renders no window (`tests/test_handoff_widget.py`).
+ModelQuad adds no permission rule for its tools. The job tools answer only
 for jobs started from the project folder they are given. A folder argument
 that is not a local folder (a network share such as `\\host\share`, a device
 path, or a link to one) is refused before anything opens it, so no tool makes

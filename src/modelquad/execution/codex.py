@@ -230,7 +230,7 @@ class CodexExecutor(Executor):
                 error=(f"Codex runs read-only consultations only; a {request.task_type.value} "
                        "task cannot be delegated."),
                 task_status=WorkerTaskStatus.BLOCKED,
-                task_status_reason="beta_read_only_required",
+                task_status_reason="task_type_not_read_only",
                 safe_to_retry=False, metadata={"worker_started": False},
             )
         resolved = self._resolve()

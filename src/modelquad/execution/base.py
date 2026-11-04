@@ -690,13 +690,13 @@ NOSHELL_PRELAUNCH_REFUSALS: frozenset[str] = frozenset({
 #: own terminal refusal; `network_policy_refused` is `netpolicy`'s, which is
 #: what its gate returns to an executor that would have called a provider's
 #: API from this process. `read_only_resume_unpinned` is Codex's refusal to
-#: resume a session, and `beta_read_only_required` its refusal of a task type
+#: resume a session, and `task_type_not_read_only` its refusal of a task type
 #: that is not read-only. Host launch refusals are recorded before a worker
 #: starts by _launch_refusal as policy_refused, outside this result set.
 POLICY_REFUSAL_REASONS: frozenset[str] = frozenset(
     {"routing_refused",
      NETWORK_POLICY_REFUSED, READ_ONLY_RESUME_UNPINNED,
-     "action_authority_unmapped", "beta_read_only_required",
+     "action_authority_unmapped", "task_type_not_read_only",
      *NOSHELL_PRELAUNCH_REFUSALS}
 )
 

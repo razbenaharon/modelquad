@@ -399,7 +399,7 @@ def require_read_only(task_type) -> None:
     from .models import TaskType
     from .routing_policy import LaunchRefused
     if TaskType(task_type) not in READ_ONLY_TASK_TYPES:
-        raise LaunchRefused("beta_read_only_required")
+        raise LaunchRefused("task_type_not_read_only")
 
 
 def closed_reason(reason, *, capability='delegate'):
@@ -408,7 +408,7 @@ def closed_reason(reason, *, capability='delegate'):
     from .execution.noshell import REFUSAL_LABELS as NOSHELL_REFUSAL_LABELS
     allowed = {*ATTEMPT_FAILURE_REASONS, *POLICY_REFUSAL_REASONS,
                *NOSHELL_REFUSAL_LABELS,
-               'beta_read_only_required', 'worker_reported',
+               'task_type_not_read_only', 'worker_reported',
                'review_completed', 'review_worker_reported', 'review_malformed',
                'review_correction_failed', 'correction_failed', 'correction_completed',
                'independence_unavailable', 'requested_tests_not_verified'}

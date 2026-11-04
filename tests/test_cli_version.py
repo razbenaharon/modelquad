@@ -89,3 +89,11 @@ def test_other_commands_do_not_pay_for_the_build_identity(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", refuse)
     build_parser().parse_args(["route", "trivial"])
+
+
+def test_advise_is_the_command_and_route_still_works_unlisted(capsys):
+    parser = build_parser()
+    assert parser.parse_args(["advise", "review"]).command == "advise"
+    assert parser.parse_args(["route", "review"]).command == "route"
+    text = parser.format_help()
+    assert "advise" in text and "route" not in text

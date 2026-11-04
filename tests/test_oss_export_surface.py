@@ -52,3 +52,17 @@ def test_delegate_schema_has_only_read_only_release_arguments():
     assert properties["timeout"]["exclusiveMinimum"] == 0
     assert properties["timeout"]["maximum"] == 840
 
+
+def test_no_tool_points_to_a_tool_that_does_not_exist():
+    tools = server._tool_manager._tools
+    for tool in tools.values():
+        assert "modelquad_route" not in (tool.description or ""), tool.name
+
+
+def test_security_md_names_every_tool_that_can_start_codex():
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "SECURITY.md").read_text(encoding="utf-8")
+    for name in ("modelquad_delegate", "modelquad_handoff", "modelquad_handoff_wait",
+                 "modelquad_handoff_confirm"):
+        assert f"`{name}`" in text, name

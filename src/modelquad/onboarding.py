@@ -968,11 +968,12 @@ def run_onboarding(
     print_fn("")
     print_fn("Setup Summary:")
     print_fn(f"  Connected providers: {', '.join(connected_providers) if connected_providers else 'none'}")
-    print_fn("  ModelQuad Routing: Active" if integrations_enabled
+    print_fn("  Connections to your AI tools: on" if integrations_enabled
              else "  Connections to your AI tools: off by choice")
     if integrations_enabled:
         print_fn(
-            f"You're ready -- keep using your AI tools normally; {PRODUCT_NAME} works underneath."
+            f"You're ready. In Claude Code, Claude can offer to ask Codex for a read-only second "
+            f"opinion through {PRODUCT_NAME}; Claude Code asks you before each call."
         )
     else:
         print_fn("Connections to your AI tools remain off. Run modelquad integrations on to enable them.")

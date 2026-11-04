@@ -341,7 +341,7 @@ def test_writable_tasks_are_refused_before_any_process(worker, task_type):
     result = executor.execute(replace(request, task_type=task_type))
     run.assert_not_called()
     assert calls == []
-    assert result.task_status_reason == "beta_read_only_required"
+    assert result.task_status_reason == "task_type_not_read_only"
     assert result.metadata["worker_started"] is False
     assert attempt_resolution(result) == ("refused", "policy_refused")
 

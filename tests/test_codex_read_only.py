@@ -103,7 +103,7 @@ def test_a_write_task_type_is_refused_before_any_process(tmp_path, task_type, se
     assert run.calls == []
     assert result.success is False
     assert result.task_status is WorkerTaskStatus.BLOCKED
-    assert result.task_status_reason == "beta_read_only_required"
+    assert result.task_status_reason == "task_type_not_read_only"
     assert result.metadata["worker_started"] is False
     assert "read-only consultations only" in result.error
     assert attempt_resolution(result) == ("refused", "policy_refused")
@@ -149,7 +149,7 @@ def test_resuming_a_read_only_task_type_is_refused_before_any_process(tmp_path, 
 
 def test_the_policy_refusals_are_closed_labels():
     assert "read_only_resume_unpinned" in POLICY_REFUSAL_REASONS
-    assert "beta_read_only_required" in POLICY_REFUSAL_REASONS
+    assert "task_type_not_read_only" in POLICY_REFUSAL_REASONS
     assert base_module.READ_ONLY_RESUME_UNPINNED == "read_only_resume_unpinned"
     # Every no-shell pre-launch refusal is a closed policy refusal with a message.
     assert base_module.NOSHELL_PRELAUNCH_REFUSALS == noshell.PRELAUNCH_REFUSALS
