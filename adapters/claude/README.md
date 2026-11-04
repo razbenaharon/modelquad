@@ -4,7 +4,9 @@
 `src/modelquad/adapters/templates/claude/`; this directory intentionally
 does not duplicate them.
 
-- `skills/modelquad/SKILL.md` becomes `~/.claude/skills/modelquad/SKILL.md`.
+- The six skills in `skills/` (`modelquad` and the commands `modelquad-review`,
+  `modelquad-handoff`, `modelquad-quota`, `modelquad-setup` and
+  `modelquad-split`) become `~/.claude/skills/<name>/SKILL.md`.
 - `mcp/mcp-servers.json` is merged into `~/.claude.json` (a sibling of
   `~/.claude/`) as the `modelquad` MCP server entry, with its own tool
   `timeout`, without removing other servers.
@@ -27,6 +29,8 @@ modelquad install claude
 
 Use a different client configuration directory with
 `modelquad install claude --target-dir <directory>`, and preview either with
-`--dry-run`. `modelquad uninstall claude` removes what install wrote and puts
+`--dry-run`. With the Claude Code plugin, `modelquad install claude --plugin`
+keeps only the status line, and `--no-plugin` goes back to the regular install
+(see `docs/PLUGIN.md`). `modelquad uninstall claude` removes what install wrote and puts
 back a `modelquad` entry that install replaced. The README at the repository
 root lists every file and setting install changes.

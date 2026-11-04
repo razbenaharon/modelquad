@@ -5,8 +5,8 @@ Build details and the project's safety rules are in [AGENTS.md](AGENTS.md).
 
 ## Before you start
 
-- **Scope.** Version 1 supports one host, Claude Code, and one worker, the
-  OpenAI Codex CLI. Support for another host or another provider needs an
+- **Scope.** ModelQuad supports one host, Claude Code, and one second tool,
+  the OpenAI Codex CLI. Support for another host or another provider needs an
   issue first, so the scope can be discussed before any code is written.
   Pull requests that add a provider without an agreed issue may be closed.
 - **Larger changes.** For anything bigger than a small fix, open an issue

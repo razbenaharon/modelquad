@@ -57,7 +57,9 @@ their traffic.
   This is the one Codex call in which ModelQuad names itself, as `modelquad`
   with its version.
   - The MCP server does this once when it starts and then every 240 seconds
-    (about every 4 minutes) while it runs. Claude Code sessions share one
+    (about every 4 minutes) while it runs, once the notice of what ModelQuad
+    sends where has been shown (a plugin-only install reads nothing before
+    its first Codex call). Claude Code sessions share one
     reading: a session skips its read when another one read less than 230
     seconds earlier.
   - `modelquad usage-refresh` and the `modelquad_usage_refresh` tool do it on

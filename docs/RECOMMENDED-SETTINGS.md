@@ -127,7 +127,8 @@ PowerShell, for your user account:
 [Environment]::SetEnvironmentVariable('MODELQUAD_CODEX_QUOTA_REFRESH', '0', 'User')
 ```
 
-Codex's quota then updates only when you run `modelquad usage-refresh`.
+Codex's quota then updates only when you run `modelquad usage-refresh` or
+Claude calls the `modelquad_usage_refresh` tool.
 
 ## For administrators
 

@@ -94,7 +94,8 @@ starts the Codex CLI.
      is skipped;
    - a `.modelquadignore` (gitignore syntax) in any of those folders that
      holds the file covers it (`modelquad_ignored`). Its patterns are
-     relative to the folder it sits in.
+     relative to the folder it sits in. If one of these files exists but
+     cannot be read, no file is sent (`modelquadignore_unreadable`).
 
    A skipped file does not stop the call; the task runs without it, and
    Codex is not told its name.
@@ -113,7 +114,7 @@ starts the Codex CLI.
 5. **Credential files are never sent**, whatever the request says. Listing
    one refuses the whole call before Codex starts; nothing is sent. This
    covers names that
-   start with `.env`, `auth.json`, `credentials`, `credentials.json`,
+   start with `.env`, the exact names `auth.json`, `credentials`, `credentials.json`,
    `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pypirc`, `.netrc`, `_netrc`,
    `.git-credentials`, `pip.conf`, `pip.ini`, `nuget.config`, `kubeconfig`,
    `application_default_credentials.json`, files ending in `.pem`, `.key`,
@@ -150,9 +151,10 @@ starts the Codex CLI.
    `GITHUB_ENTERPRISE_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
    `AZURE_*` secrets, passwords, keys, tokens and connection strings,
    `GOOGLE_APPLICATION_CREDENTIALS`, `DATABASE_URL`, and any variable whose
-   name looks like a secret (it ends in `TOKEN`, `API_KEY` or `DSN`, or
-   contains `SECRET`, `PASSWORD`, `PRIVATE_KEY`, `ACCESS_KEY`, `CREDENTIALS`
-   or `CONNECTION_STRING`). Every `OPENAI_*` and `CODEX_*` variable stays,
+   name looks like a secret (it ends in `TOKEN`, `API_KEY`, `APIKEY`,
+   `_DSN` or `_DATABASE_URL`, or contains `TOKEN_`, `SECRET`, `PASSWORD`,
+   `PASSWD`, `PRIVATE_KEY`, `ACCESS_KEY`, `CREDENTIALS` or
+   `CONNECTION_STRING`). Every `OPENAI_*` and `CODEX_*` variable stays,
    because `OPENAI_API_KEY` and `CODEX_API_KEY` are a way to sign Codex itself
    in. ModelQuad adds `MODELQUAD_WORKER=1`. The `codex --version` and
    `codex features list` checks run with the same environment, in an empty
@@ -173,8 +175,8 @@ starts the Codex CLI.
     whether you approved through the delegate prompt or the handoff form, is
     kept in the history (see [The history database](#the-history-database));
     never the contents.
-12. **What you approved is what is sent.** Right after you approve (or when
-    the handoff window shows the files), ModelQuad takes the same digest of
+12. **What you approved is what is sent.** Right after you approve,
+    ModelQuad takes the same digest of
     each file it would send. If, when Codex is about to start, a file's text
     differs or a file not sent then would be sent now, the call is refused
     and nothing is sent.
@@ -189,7 +191,7 @@ includes your plan type. ModelQuad stores it in `usage-codex.json` and in the
 history database. Neither status replies nor history entries returned to
 Claude Code include it (see below). Only its kind reaches Claude Code: the
 handoff form and the delegate reply carry one short line, "Codex account:
-personal ChatGPT plan", "workspace plan" or "unknown", and for a personal plan
+personal", "work" or "unknown", and for a personal plan
 the reminder "If this is work code, check you may send it to a personal
 account."
 
@@ -206,7 +208,9 @@ account kind and its source ("reported by Codex", "you set" or "unknown");
 never the plan name. Only the CLI shows plan names.
 
 - The MCP server reads once when it starts and then every 240 seconds (about
-  every 4 minutes) while it runs. Claude Code sessions share one reading: a
+  every 4 minutes) while it runs, but only once the notice of what ModelQuad
+  sends where has been shown: until then (a plugin-only install before its
+  first Codex call) it does not read. Claude Code sessions share one reading: a
   session skips its read when another one read less than 230 seconds earlier.
 - `modelquad usage-refresh` and the `modelquad_usage_refresh` tool read on
   demand, at most once a minute unless forced.
@@ -259,10 +263,11 @@ sends to Anthropic:
 
 ### Model training
 
-Anthropic's and OpenAI's terms each forbid using their output to train the
-other's models. With ModelQuad, text Claude wrote goes to OpenAI and Codex's
-answers go to Anthropic. We recommend turning off model training with both
-providers while you use ModelQuad:
+Each provider's terms forbid using its output to train models that compete
+with it, and ModelQuad passes text in both directions: text Claude wrote goes
+to OpenAI, and Codex's answers go to Anthropic. Turn off model training with
+both providers while you use ModelQuad, and do not use its answers or history
+as training data:
 
 - ChatGPT data controls: <https://chatgpt.com/#settings/DataControls>
 - Claude privacy settings: <https://claude.ai/settings/data-privacy-controls>
@@ -275,7 +280,7 @@ and your settings.
 
 ### Hooks and the status line
 
-`modelquad install claude` adds three commands to Claude Code's settings. Each
+`modelquad install claude` adds two commands to Claude Code's settings. Each
 receives a JSON payload from Claude Code that includes the path of the
 session transcript. **ModelQuad never opens, reads or inspects that file**
 (`tests/test_hook_transcript_boundary.py`).
@@ -302,6 +307,9 @@ session transcript. **ModelQuad never opens, reads or inspects that file**
   this purpose; variables that carry tokens, paths or endpoints are on a named
   refusal list (`hostobs.CLAUDE_ENV_REFUSED`).
 - **The MCP client name and version** Claude Code sends when it connects.
+- **Claude Code's plugin record** (`.claude\plugins\installed_plugins.json`),
+  read-only, so `modelquad doctor` and install can tell whether the plugin is
+  installed. An unreadable record reads as unknown.
 - **Two keys of Claude Code's user settings** (`settings.json`): `model` and
   `effortLevel`.
 - **The model settings in Codex's `config.toml`** (in `CODEX_HOME`, or
@@ -336,8 +344,9 @@ Paths are relative to `%USERPROFILE%`.
 |---|---|---|
 | `.claude\usage-claude.json` | Claude's 5-hour and weekly used percentages, reset times, and when they were observed | The status line command |
 | `.claude\usage-codex.json` | Codex's 5-hour and weekly used percentages, reset times, plan type, when they were read, and why a read failed | The MCP server's background read, `modelquad usage-refresh` |
+| `.claude\quota-pace.json` | The first quota reading of each current 5-hour window, for the status line's pace hint | The status line command |
 | `.claude\usage-*.json.lock`, `.claude\usage-refresh-*.lock` | Empty lock files | The same writers |
-| `.claude.json`, `.claude\settings.json`, `.claude\skills\modelquad*\SKILL.md` (five skills) | The Claude Code integration listed in [README.md](README.md) | `modelquad install claude` |
+| `.claude.json`, `.claude\settings.json`, `.claude\skills\modelquad*\SKILL.md` (six skills) | The Claude Code integration listed in [README.md](README.md) | `modelquad install claude` |
 | `<file>.modelquad-backup-<UTC time>` beside a changed file | A full copy of the file before ModelQuad changed or removed it. It holds whatever the file held, including secrets you put there, such as `env` values of MCP servers in `.claude.json` | Install and uninstall (`adapters/backup.py`) |
 | Windows Task Scheduler, task `ModelQuad_Service` | Starts the local service when you sign in | `modelquad service install` |
 | Your user `Path` variable (`HKCU\Environment`) | The folder of an installed but unreachable tool | `modelquad tools --fix-path` |
@@ -382,7 +391,7 @@ service (`modelquad service stop`) before you delete anything here.
 | `host-observation-claude.json` | The last status-line facts: Claude Code version, model id and display name, large-context flag, a 16-character session fingerprint, time | Overwritten on each update | Low; the raw session id is not written |
 | `host-integrations.json` | Whether global host integrations are on or off | Kept | No |
 | `preferences.json` | Your settings: proactive use on or off, whether the plugin install is in use, the plans you set with `modelquad settings plan` (values from a fixed list), and your per-repository choices from `modelquad settings repo` (one word each, keyed by a hash of the repository made with your installation id; no path or folder name) | Kept until you change or unset them | Low: the names of your plans |
-| `gate-state\` | One empty marker per Claude Code session, named by the session fingerprint | Markers older than 7 days are removed on the next hook run | No |
+| `data-flow-notice.json` | That the notice of what ModelQuad sends where was shown, where (install, onboard or the first Codex call) and when | Kept, so the notice is shown once | No |
 | `service.pid`, `service*.lock`, `service.launch-unconfirmed` | The service's process id, start time and launch command line, which includes the Python interpreter's path; lock and marker files | Replaced on each service start | Low: a local path |
 | `logs\job-runner.log`, `logs\job-runner.log.1` | Runner events (UTC time, job id, a fixed label or an exception class name) and the runner's error output | Rotated above 1 MiB when opened, one older file kept | Possibly: a Python traceback can contain paths and lines of code |
 | `logs\service-diagnostics.log`, `logs\cli-diagnostics.log` (with `.1` and `.lock`) | Fixed-vocabulary start and exit events of windowless processes | About 1 MiB per file, one older file kept | No |
@@ -459,7 +468,7 @@ bytes from disk.
 | Absolute paths do not reach the history | `privacy.py`, `service/history.py`; `tests/test_privacy_paths.py` |
 | The raw Claude Code session id is not stored. It becomes a 16-character HMAC keyed by the installation id | `hostobs.session_fingerprint` |
 | Provider credential files are not opened, copied or sent to Codex. Sign-in checks test only whether they exist. Two kinds of copies can still hold secrets you put in configuration: `host-registration-backup.json` and the `*.modelquad-backup-*` files | `provider_connection.py`, `execution/noshell.py`, `adapters/registration.py` |
-| Only six named environment variables of the Claude Code process are read | `hostobs.CLAUDE_ENV_ALLOWLIST`; `tests/test_host_observability.py` |
+| Only six named environment variables of the Claude Code process are read to observe Claude Code. ModelQuad also reads its own `MODELQUAD_*` settings, `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, checks whether `OPENAI_API_KEY` is set, and passes Codex the filtered environment described above | `hostobs.CLAUDE_ENV_ALLOWLIST`; `tests/test_host_observability.py` |
 | Nothing is collected for telemetry | ModelQuad has no telemetry code |
 
 ## The installation id
@@ -495,8 +504,10 @@ delete history.
 - **Everything**:
   1. `modelquad service stop`, then `modelquad service uninstall`, to stop the
      local service and remove its sign-in task.
-  2. `modelquad uninstall --global`, to remove ModelQuad's wiring from Claude
-     Code. (`modelquad integrations off` does the same and keeps it off.)
+  2. `modelquad uninstall claude`, to remove ModelQuad's wiring from Claude
+     Code. (`modelquad integrations off` removes the same wiring and refuses
+     later installs until `modelquad integrations on`.) If you installed the
+     plugin, also run `claude plugin uninstall modelquad`.
   3. Close the Claude Code sessions that use ModelQuad, then delete the state
      folder that `modelquad privacy` names.
   4. Delete `usage-claude.json`, `usage-codex.json`, `quota-pace.json`,

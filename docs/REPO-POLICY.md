@@ -50,7 +50,8 @@ codex = "default"
 ```
 
 - `account = "workspace"` allows Codex only when Codex itself reports a work
-  plan (team, business, enterprise or education) in its quota read. A plan you
+  plan (`team`, `business`, `enterprise`, `edu`, `education` or `k12`, exactly as
+  Codex names it) in its quota read. A plan you
   set with `modelquad settings plan codex <plan>` does not count here, because
   a statement is not evidence. The reading must be a successful one from the
   last 5 minutes (the background refresh keeps it that recent; `modelquad
@@ -140,7 +141,7 @@ The reason codes are:
 | `repo_policy_codex_off` | `[codex] allowed = false` |
 | `repo_policy_kind_removed` | the task kind is not in `task_kinds` |
 | `repo_policy_account_workspace_required` | `account = "workspace"` and Codex has not reported a work plan |
-| `repo_policy_invalid` | not valid TOML, a missing or unknown schema, or a wrong value |
+| `repo_policy_invalid` | not UTF-8 text, not valid TOML, a missing or unknown schema, or a wrong value |
 | `repo_policy_unreadable` | a link, not a plain file, larger than 8 KiB, or unreadable |
 | `repo_policy_file_outside_repo` | a file named for Codex sits in another Git repository (a nested clone or a submodule) below the working folder, whose own file and settings that call would skip |
 

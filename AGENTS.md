@@ -92,7 +92,7 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
 4. **Unknown stays unknown.** Do not invent a quota percentage, a freshness
    or a capability. Absent evidence reads unknown, not a confident zero.
 5. **Do not extract or proxy provider credentials.** ModelQuad drives the
-   official provider CLIs as subprocesses under the user's own login. The
+   provider CLIs as subprocesses under the user's own login. The
    copies install keeps for an exact uninstall (`host-registration-backup.json`
    and the `*.modelquad-backup-*` files) can hold secrets the user put in
    configuration: keep them private and never show their contents

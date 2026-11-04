@@ -1,9 +1,9 @@
 # Claude Code plugin (experimental)
 
 This repository carries a Claude Code plugin in `plugin/` and a marketplace
-file in `.claude-plugin/marketplace.json`. Since 0.4.0 the README offers it as
-an experimental alternative ("Or as a Claude Code plugin"); it is **not** the
-supported install yet: `modelquad install claude` remains the main way to set
+file in `.claude-plugin/marketplace.json`. It is experimental, not yet the
+supported install: the README offers it as an alternative ("Or as a Claude
+Code plugin"), `modelquad install claude` remains the main way to set
 ModelQuad up, and the plugin is not listed in any plugin directory. The
 marketplace line installs it from this repository once the repository is
 public.
@@ -31,8 +31,8 @@ public.
 - **A quota band** (`plugin/hooks/quota-band.tsx`, a Claude Code hooks
   module; experimental). Where no status line is drawn (the desktop app's
   Code tab, an IDE, a phone), it shows Codex's 5-hour and weekly windows
-  above the prompt, worded as the status line words them. Claude's own usage
-  is already on show there, so the band leaves it out. The figures are the
+  above the prompt, worded as the status line words them. It shows Codex
+  only; Claude's own usage is in Claude's own settings. The figures are the
   reading ModelQuad's server keeps in `~/.claude/usage-codex.json`, re-read
   every minute and marked "(as of ...)" when older than 15 minutes. It names
   the plan Codex itself reports, from a fixed list ("Codex (Plus) 5h ..."),
@@ -58,7 +58,9 @@ the templates; `tests/test_plugin_prototype.py` fails while a copy differs.
 
 ## Installing with the plugin
 
-    pip install <this repository>
+    git clone https://github.com/razbenaharon/modelquad
+    cd modelquad
+    pip install ".[service]"
     claude plugin install modelquad --marketplace razbenaharon/modelquad
     modelquad install claude --plugin
 

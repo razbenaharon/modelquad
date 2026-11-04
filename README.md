@@ -15,7 +15,7 @@ A second opinion from Codex inside Claude Code, on Windows.
 ModelQuad is a local MCP server for Claude Code. It lets Claude ask your own
 OpenAI Codex CLI for a read-only review, exploration or architecture opinion,
 and it shows Claude's and Codex's usage side by side. ModelQuad and the CLIs
-it drives run on your computer, under your own logins. It works alongside
+it drives run on your computer, under your own sign-ins. It works alongside
 OpenAI's own Codex plugin for Claude Code: the plugin for when you want
 Codex to change code, ModelQuad for a read-only second opinion.
 
@@ -30,8 +30,9 @@ Status: early, source-only release. Windows only.
   When Codex says other files would have helped, the reply lists them (only
   existing files that ModelQuad's rules would send), and Claude can offer you
   a follow-up call with them. Nothing is sent until you approve that call.
-- **Progress phases while Codex works.** Claude Code shows packing, start,
-  periodic working-time and answer/withheld phases without task or file content.
+- **Progress while Codex works.** Claude Code shows its progress (preparing
+  the files, started, still working, answered, withheld or not started), never
+  the task or file text.
 - **Both quotas in the status line.** Claude's and Codex's 5-hour and weekly
   usage, in Claude Code's status line and in ModelQuad's replies, with the
   5-hour reset in your local time ("resets 15:00") and, once there are two
@@ -89,7 +90,7 @@ Status: early, source-only release. Windows only.
   there, `offer-only` keeps Claude to offering, `on` lets Claude decide on its
   own there, and `inherit` goes back to the global setting. With no choice it
   shows what applies. A repository's own `.modelquad.toml` can still make
-  Claude ask less, never more. The setting is stored in `preferences.json`
+  Claude offer Codex less often, never more. The setting is stored in `preferences.json`
   under a keyed hash of the repository, never its path or name. `off` applies
   from the next call; the other choices reach Claude as one line when a new
   Claude Code session starts in that repository. The approval prompt still
@@ -102,10 +103,12 @@ Status: early, source-only release. Windows only.
   Claude Code shows its approval prompt before every call, also in auto mode
   and in bypass-permissions mode. ModelQuad adds no permission rule for its
   tools.
-- `modelquad_handoff` then shows a prompt of its own. Codex starts only if you
-  tick the box and accept. If your Claude Code cannot show that form, nothing
-  starts, and Claude asks you in the conversation instead and, only if you
-  agree, uses `modelquad_delegate`, which Claude Code asks about first.
+- In a terminal, `modelquad_handoff` then shows the handoff form. Codex starts
+  only if you tick the box and accept. In the desktop app's Code tab, which
+  shows no forms, Claude Code's approval prompt is your answer, and Codex then
+  starts. In any other Claude Code that cannot show the form, nothing starts:
+  Claude asks you in the conversation instead and, only if you agree, uses
+  `modelquad_delegate`, which Claude Code asks about first.
 - To block new Codex calls from Claude Code: `modelquad host disconnect claude`.
   Undo with `modelquad host connect claude`.
 - A repository's `.modelquad.toml` and your own `modelquad settings repo off`
@@ -166,7 +169,7 @@ and how many were answered, withheld because Codex tried a tool, refused (by
 ModelQuad's rules, the repository's `.modelquad.toml`, your repo setting or
 Codex's own limit) or not answered, with the median time to an answer. For
 Claude it says only that ModelQuad does not measure Claude's own work;
-declines in Claude Code's approval prompt and in the handoff window are not
+declines in Claude Code's approval prompt and in the handoff form are not
 counted. Quota is each tool's percentage points used in each of its own
 windows over the period, one column each and never added together, from the
 readings ModelQuad stored (at each Codex request, or on a timer with the
@@ -182,9 +185,11 @@ reads unknown, and one that reset during the period says so.
 - Hand a step to the other tool because one of them reports a limit.
 - Let a repository file approve a call, add files, turn on Claude's own
   initiative, or change how Codex runs.
-- Send anything new anywhere: your plans and repository choices stay in
-  `preferences.json` in ModelQuad's state folder, keyed by a hash of the
-  repository, with no path or folder name. See [PRIVACY.md](PRIVACY.md).
+- Keep your plans or repository choices anywhere but your computer: they stay
+  in `preferences.json` in ModelQuad's state folder, keyed by a hash of the
+  repository, with no path or folder name. Claude sees only each account's
+  kind (personal, work or unknown), never the plan name, and the repository's
+  Codex setting. See [PRIVACY.md](PRIVACY.md).
 
 ## Terminal or desktop app
 
@@ -203,11 +208,8 @@ Code tab, with differences found in testing (Claude Code 2.1.296, October
   it), so there `/modelquad-handoff` takes Claude Code's approval prompt as
   your answer: that prompt lists the files, and only you can click it. If any
   other Claude Code cannot show the form, the handoff starts nothing and
-  Claude falls back to asking you in the conversation.
-- **A handoff window** (the files and Approve / Decline buttons, for a Claude
-  Code that renders MCP Apps) is built but switched off: in testing (October
-  2026) the desktop app drew it empty and its Approve press never reached
-  ModelQuad. `modelquad_doctor` (the MCP tool) says how this session asks.
+  Claude falls back to asking you in the conversation. `modelquad_doctor` (the
+  MCP tool) says how this session asks.
 - **Progress while Codex works** shows where Claude Code displays MCP progress;
   it was not visible in the desktop app's Code tab.
 
@@ -278,8 +280,11 @@ type `yes` (or pass `--yes` where there is no prompt).
 
 ### Or as a Claude Code plugin (experimental)
 
-The ModelQuad plugin carries the server, the six commands (as
-`/modelquad:review` and the like), the startup reminder, and, in the desktop
+The plugin is experimental, not yet the supported install: `modelquad install
+claude` above remains the main way to set ModelQuad up. It carries the server,
+the five commands (`/modelquad:review`, `/modelquad:handoff`,
+`/modelquad:quota`, `/modelquad:setup` and `/modelquad:split`), the guide skill
+Claude reads (`/modelquad:guide`), the startup reminder, and, in the desktop
 app's Code tab, a line above the prompt with Codex's quota. It still needs the
 package from the step above:
 
@@ -516,8 +521,8 @@ maintainer directed, reviewed and tested the work and is responsible for it.
   setting for one repository.
 - [NETWORK.md](NETWORK.md): which connections ModelQuad and the programs it
   starts make.
-- [docs/PLUGIN.md](docs/PLUGIN.md): the experimental Claude Code plugin in this
-  repository (not yet a supported install).
+- [docs/PLUGIN.md](docs/PLUGIN.md): the Claude Code plugin in this repository
+  (experimental, not yet the supported install).
 - [SECURITY.md](SECURITY.md): how to report a vulnerability, and the security
   design.
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to contribute.

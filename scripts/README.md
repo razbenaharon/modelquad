@@ -13,6 +13,7 @@ fresh clone with nothing installed.
     python scripts/check.py docs        # links resolve, AGENTS.md matches the code, commands run on Windows, no banned phrases
     python scripts/check.py secrets     # credential shapes in authored source
     python scripts/check.py review      # fast + the tests the diff touches
+    python scripts/check.py focused     # compile, import, and the tests the diff touches
     python scripts/check.py python      # the whole suite, import root pinned here
     python scripts/check.py all
 
@@ -32,5 +33,7 @@ Its own tests: `tests/test_development_policy.py` and `tests/test_devenv.py`.
 - `windowwatch.py`: records console windows opened while something runs; the
   manual observation tool behind the no-window tests. It has no test of its
   own: run it by hand when a console window needs to be measured again.
+- `sync_plugin.py`: copies the packaged Claude skills and MCP entry into
+  `plugin/`; `tests/test_plugin_prototype.py` fails while a copy differs.
 - `third_party_inventory.py`: generates the third-party dependency and licence
   inventory in `THIRD_PARTY.md`.

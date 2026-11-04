@@ -43,9 +43,13 @@ jobs:
           persist-credentials: false
 
       - name: Set up an isolated state root
-        # paths.py reads %LOCALAPPDATA%. Pointed outside the checkout so the
-        # suite never inherits or writes real user state. Exported through
-        # $GITHUB_ENV because the `runner` context does not exist at job level.
+        # Programs ModelQuad starts may still read %LOCALAPPDATA%; it points
+        # outside the checkout so the suite never inherits or writes real user
+        # state. ModelQuad's own state root is under %USERPROFILE%
+        # (statecontext.py), checked below; the tests isolate HOME,
+        # USERPROFILE and LOCALAPPDATA themselves (tests/conftest.py).
+        # Exported through $GITHUB_ENV because the `runner` context does not
+        # exist at job level.
         run: |
           $root = "$env:RUNNER_TEMP\modelquad-ci-state"
           New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -55,9 +59,11 @@ jobs:
       - name: Assert no inherited ModelQuad state
         # A CI pass must never be explained by leftover configuration.
         run: |
-          if (Test-Path "$env:LOCALAPPDATA\ModelQuad") {
-            Write-Error "Pre-existing ModelQuad state found in the isolated root; the run would not be clean."
-            exit 1
+          foreach ($stateRoot in @("$env:LOCALAPPDATA\ModelQuad", "$env:USERPROFILE\.local\share\modelquad", "$env:USERPROFILE\.modelquad")) {
+            if (Test-Path $stateRoot) {
+              Write-Error "Pre-existing ModelQuad state found at $stateRoot; the run would not be clean."
+              exit 1
+            }
           }
           if ($env:MODELQUAD_WORKER) {
             Write-Error "MODELQUAD_WORKER is set; the recursion guard would change delegation behavior."
