@@ -136,7 +136,7 @@ def _codex_stale_path_check(which: Callable[[str], str | None]) -> DoctorCheck |
     return DoctorCheck(
         "codex CLI version",
         CheckStatus.WARN,
-        f"The codex on PATH is {chosen.stale_path_version}, older than the official "
+        f"The codex on PATH is {chosen.stale_path_version}, older than the "
         f"Codex install ({chosen.version}) that ModelQuad runs. Your own terminal may "
         "still run the older one; update or remove it if that is not intended.",
     )

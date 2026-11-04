@@ -255,9 +255,9 @@ def public_plans(views: dict[str, PlanView]) -> dict[str, dict[str, str]]:
 
 
 _CODEX_LINES = {
-    PERSONAL: ("Codex account: personal ChatGPT plan{source}. "
+    PERSONAL: ("Codex account: personal{source}. "
                "If this is work code, check you may send it to a personal account."),
-    WORKSPACE: "Codex account: workspace plan{source}.",
+    WORKSPACE: "Codex account: work{source}.",
     UNKNOWN: "Codex account: unknown.",
 }
 _KIND_WORDS = {PERSONAL: "personal account", WORKSPACE: "work account"}

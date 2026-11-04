@@ -13,7 +13,7 @@ read ModelQuad's own history and nothing else:
   median time to an answer is over the answered ones.
 * Claude: one sentence. ModelQuad sees only what goes to Codex, so it does
   not measure Claude's own work, and a decline in Claude Code's own approval
-  prompt never reaches it. A decline in the handoff window is not stored
+  prompt never reaches it. A decline in the handoff form is not stored
   either; the summary says so instead of counting it. A refusal is counted
   when it was recorded: ``modelquad_delegate`` records each one, while
   ``modelquad_handoff`` refuses before its form and records nothing then (the
@@ -86,8 +86,8 @@ CLAUDE_LINE = ("Claude: everything else in this period. ModelQuad does not measu
                "own work (not measured).")
 PROMPT_DECLINES_LINE = ("Declines in Claude Code's own approval prompt are not visible to "
                         "ModelQuad and are not counted.")
-HANDOFF_DECLINES_LINE = ("Declines in the handoff window, and handoff requests refused before "
-                         "its form: not recorded by ModelQuad.")
+HANDOFF_DECLINES_LINE = ("Declines in the handoff form, and handoff requests refused before "
+                         "the form: not recorded by ModelQuad.")
 QUOTA_NOTE = ("Each provider and window is shown on its own, in percentage points of that "
               "window; they are not added together.")
 _USER_OFF = "user_repo_codex_off"

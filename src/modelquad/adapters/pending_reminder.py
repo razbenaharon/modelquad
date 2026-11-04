@@ -78,21 +78,23 @@ def validate_summary(payload):
 def reminder_text(summary):
     validate_summary(summary)
     boolean = lambda v: 'true' if v else 'false'
-    lines = [f"ModelQuad retained delegated work for this project: count={summary['count']}; more={boolean(summary['more'])}."]
+    # The summary keeps `may_have_changed_files` (the store's schema), but the
+    # reminder does not print it: Codex through ModelQuad is read-only and
+    # runs in an empty temporary folder, so it changes no project file.
+    lines = [f"ModelQuad kept Codex answers for this project: count={summary['count']}; more={boolean(summary['more'])}."]
     lines.extend(
         f"job_id={r['job_id']}; status={r['job_status']}; task_type={r['task_type']}; "
-        f"may_have_changed_files={boolean(r['may_have_changed_files'])}; "
         f"expires_at={r['expires_at']}; expiring_soon={boolean(r['expiring_soon'])}."
         for r in summary['jobs'])
     lines.append(
-        'Host agent: refresh with modelquad_job_list_pending(project_directory=current absolute project directory). '
-        'Collect relevant handles with modelquad_job_collect, independently verify the result, '
-        'and tell the user what you found. Inspect possible project changes; explain observed '
-        'changes before building on them. Acknowledge with modelquad_job_acknowledge using the '
-        'collection receipt only after use. If collection is expired or acknowledged, report '
-        'that race truthfully. If verification fails, report the failure; do not build on or '
-        'acknowledge an unused result. Never auto-apply output or acknowledge because this hook fired. '
-        'A finished status does not establish success or that all processes ended.')
+        'Claude: refresh with modelquad_job_list_pending(project_directory=current absolute project directory). '
+        'Collect relevant handles with modelquad_job_collect, verify the answer yourself, '
+        'and tell the user what you found. Codex through ModelQuad is read-only; it changed no files. '
+        'Acknowledge with modelquad_job_acknowledge using the '
+        'collection receipt only after use. If an answer has expired or was already acknowledged, '
+        'say so. If verification fails, report the failure; do not build on or '
+        'acknowledge an unused answer. Never apply an answer or acknowledge it because this reminder appeared. '
+        'A finished status does not prove the answer is right or that every Codex process ended.')
     return '\n'.join(lines)
 
 

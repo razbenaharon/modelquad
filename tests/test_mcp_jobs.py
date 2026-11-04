@@ -1421,10 +1421,10 @@ def test_service_unavailable_runs_once_with_honest_note(synthetic, tmp_path, mon
     explanation = ('is not running' if reason in {'service_absent', 'service_unreachable'}
                    else 'cannot keep work running after this session closes' if reason == 'service_contained'
                    else 'did not accept this task')
-    ending = ("When this session's ModelQuad server process ends, the task's worker is stopped; "
+    ending = ("When this session's ModelQuad server process ends, Codex is stopped for this task; "
               "anything Windows started outside ModelQuad's control for it may keep running."
               if os.name == 'nt' else
-              "Ending this session's ModelQuad server process may leave the task's worker running.")
+              "Ending this session's ModelQuad server process may leave Codex running for this task.")
     assert response['runner_note'] == ('Ran inside this session: the ModelQuad background service '
                                       + explanation + ', so this task depends on this session. ' + ending)
     assert len(probes) == len(executions) == 1

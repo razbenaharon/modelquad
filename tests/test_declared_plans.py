@@ -132,7 +132,7 @@ def test_observed_codex_plan_beats_the_declared_one_for_the_notice(state, capsys
     plans.write_declared("codex", "enterprise")
     views = plans.current(state.usage)
     assert views["codex"].public() == {"kind": "personal", "source": "reported by Codex"}
-    assert mcp._codex_account_line().startswith("Codex account: personal ChatGPT plan.")
+    assert mcp._codex_account_line().startswith("Codex account: personal.")
     assert cli.main(["settings", "plan"]) == 0
     assert "Codex reports plus; you set enterprise." in capsys.readouterr().out
 
@@ -140,7 +140,7 @@ def test_observed_codex_plan_beats_the_declared_one_for_the_notice(state, capsys
 def test_declared_codex_plan_counts_when_codex_reports_none(state):
     plans.write_declared("codex", "business")
     assert plans.current(state.usage)["codex"].public() == {"kind": "workspace", "source": "you set"}
-    assert mcp._codex_account_line() == "Codex account: workspace plan (you set it)."
+    assert mcp._codex_account_line() == "Codex account: work (you set it)."
     observed(state.usage, "something-new")
     assert plans.current(state.usage)["codex"].source == "you set"
 
@@ -188,16 +188,16 @@ def test_personal_claude_and_work_codex_say_which_way(state):
 def test_unknown_claude_keeps_the_codex_only_line(state):
     observed(state.usage, "plus")
     assert mcp._codex_account_line() == (
-        "Codex account: personal ChatGPT plan. If this is work code, check you may send it "
+        "Codex account: personal. If this is work code, check you may send it "
         "to a personal account.")
     plans.write_declared("claude", "other")
-    assert mcp._codex_account_line().startswith("Codex account: personal ChatGPT plan.")
+    assert mcp._codex_account_line().startswith("Codex account: personal.")
 
 
 def test_same_kind_on_both_sides_keeps_the_codex_line(state):
     observed(state.usage, "business")
     plans.write_declared("claude", "team")
-    assert mcp._codex_account_line() == "Codex account: workspace plan."
+    assert mcp._codex_account_line() == "Codex account: work."
 
 
 def test_the_first_call_notice_carries_the_mismatch_line(state, monkeypatch):

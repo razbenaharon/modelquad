@@ -235,7 +235,7 @@ def test_execution_request_rejects_shell_metacharacters_in_session_id(tmp_path):
     try:
         _request(tmp_path, session_id="123 & echo PWNED > pwned.txt & ")
     except ValueError as exc:
-        assert "not safe" in str(exc).lower()
+        assert "does not pass to codex" in str(exc).lower()
     else:
         raise AssertionError("expected ValueError for unsafe session_id")
 
@@ -258,7 +258,7 @@ def test_execution_request_rejects_unsafe_model_id(tmp_path):
     try:
         _request(tmp_path, model="gpt-5 & calc.exe")
     except ValueError as exc:
-        assert "not safe" in str(exc).lower()
+        assert "not a valid codex model id" in str(exc).lower()
     else:
         raise AssertionError("expected ValueError for unsafe model id")
 

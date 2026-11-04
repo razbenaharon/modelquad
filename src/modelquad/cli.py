@@ -1700,7 +1700,7 @@ def _run_tools_command(args: argparse.Namespace) -> int:
                 if info.alternative_command:
                     print(f"  Or with {info.alternative_label}:")
                     print(f"      {info.alternative_command}")
-                print(f"  Official instructions: {info.docs_url}")
+                print(f"  Install instructions: {info.docs_url}")
 
         if connection.install is InstallState.NOT_APPLICABLE:
             plugin = plugins.get(connection.provider_id)
@@ -1747,7 +1747,7 @@ class _BuildVersionAction(argparse.Action):
 
 def _routing_mode_argument(value: str) -> str:
     if value not in service_history.VALID_ROUTING_MODES:
-        raise argparse.ArgumentTypeError("Routing mode must be automatic.")
+        raise argparse.ArgumentTypeError("This setting has one value: automatic.")
     return value
 
 
@@ -1756,7 +1756,7 @@ def build_parser() -> argparse.ArgumentParser:
         # Follow the name actually invoked, so help text under the legacy
         # `modelquad` alias keeps showing examples the user can paste back.
         prog=Path(sys.argv[0]).stem or CLI_COMMAND,
-        description="Show which tool fits a task, delegate explicitly, and install client adapters.",
+        description="See both tools' usage, check your setup, and connect ModelQuad to Claude Code.",
     )
     # The first thing anyone types at an unfamiliar CLI. Without it the
     # version was only reachable by reading the tail of `doctor`, and the
@@ -1783,7 +1783,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-history",
         action="store_true",
-        help="Disable history recording; worker launch is refused without lifecycle evidence. Advice remains available.",
+        help="Do not record history. Codex calls are then refused, because ModelQuad must record each one; advice still works.",
     )
     subcommands = parser.add_subparsers(dest="command", title="subcommands")
     integrations = subcommands.add_parser("integrations", help="Control global host integrations.")
@@ -2005,7 +2005,7 @@ def build_parser() -> argparse.ArgumentParser:
     # or commit a worktree, holding a path and no MCP client.
     workspace_cmd = subcommands.add_parser(
         "workspace",
-        help="Say whether a delegation may still be writing to a workspace.",
+        help="Say whether a Codex call from ModelQuad is still running for this folder.",
     )
     workspace_cmd.add_argument(
         "path",
@@ -2081,12 +2081,12 @@ def build_parser() -> argparse.ArgumentParser:
         "job-runner",
         help="Internal: run one detached delegation job (started by ModelQuad itself).",
     ))
-    jobs = subcommands.add_parser('jobs', help='Inspect or release an unknown worker-fate block.')
+    jobs = subcommands.add_parser('jobs', help='Inspect or release a background job ModelQuad could not confirm ended.')
     job_actions = jobs.add_subparsers(dest='jobs_action', required=True)
-    fate = job_actions.add_parser('fate', help='Show worker-fate evidence and live Codex processes.')
+    fate = job_actions.add_parser('fate', help='Show what ModelQuad knows about how the job ended, and live Codex processes.')
     fate.add_argument('job_id')
     fate.add_argument('--json', action='store_true', dest='as_json')
-    release_fate = job_actions.add_parser('release-fate', help='Explicitly release one unknown worker-fate block.')
+    release_fate = job_actions.add_parser('release-fate', help='Release one job ModelQuad could not confirm ended.')
     release_fate.add_argument('job_id')
     release_fate.add_argument('--acknowledge-unknown-worker-fate', action='store_true')
     for command_name, help_text in (
@@ -2214,7 +2214,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
     if args.command == 'jobs':
         from .jobs.service_client import connect_management, Unavailable
         if args.jobs_action == 'release-fate' and not args.acknowledge_unknown_worker_fate:
-            print('The --acknowledge-unknown-worker-fate flag is required. Running processes may still change files.', file=sys.stderr)
+            print('The --acknowledge-unknown-worker-fate flag is required. A Codex process may still be running. It cannot change your project, but it may still use your Codex usage.', file=sys.stderr)
             return 2
         client = connect_management(_history_db_path(args))
         if isinstance(client, Unavailable):
@@ -2231,9 +2231,9 @@ def _run_command(argv: Sequence[str] | None) -> int:
             row = answer['release']
             print(f"Closed — workspace block released ({row['reason']}, {row['released_at']}).")
         elif answer['blocker'] is False:
-            print('This job has no unknown worker-fate block.')
+            print('ModelQuad knows how this job ended; there is nothing to release.')
         else:
-            print('ModelQuad cannot confirm this worker ended. Releasing this block lets diagnosis proceed; running processes may still change files.')
+            print('ModelQuad cannot confirm Codex ended for this job. Releasing it lets diagnosis go on. A Codex process may still be running; it cannot change your project, but it may still use your Codex usage.')
             listing = answer['live_codex']
             print(f"Live Codex processes on this computer ({listing['status']}, {listing['observed_at']}):")
             for process in listing['processes']:
@@ -2305,14 +2305,14 @@ def _run_command(argv: Sequence[str] | None) -> int:
         payload = {
             "modelquad_process": LOOPBACK_ONLY_REASON,
             "enforcement": "an audit hook refuses any other socket connection from this process",
-            "codex_cli": "a separate program that connects to OpenAI itself, under your own login",
+            "codex_cli": "a separate program that connects to OpenAI itself, under your own sign-in",
         }
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             print(f"{PRODUCT_NAME} network rule: {LOOPBACK_ONLY_REASON}.")
             print("An audit hook refuses any other socket connection from this process.")
-            print("The Codex CLI is a separate program that connects to OpenAI itself, under your own login.")
+            print("The Codex CLI is a separate program that connects to OpenAI itself, under your own sign-in.")
         return 0
     if args.command == "usage-refresh":
         from .usage.refresh import refresh_all

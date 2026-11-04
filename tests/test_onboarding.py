@@ -474,7 +474,7 @@ def test_retired_explicit_mode_is_refused_including_qa(tmp_path, mode):
 def test_invalid_explicit_routing_mode_still_raises(tmp_path, monkeypatch):
     registry = _make_stub_registry(tmp_path)
     _stub_doctor(monkeypatch)
-    with pytest.raises(ValueError, match="Invalid routing mode"):
+    with pytest.raises(ValueError, match="Invalid mode"):
         run_onboarding(
             selected_providers=["tool-a"],
             routing_mode="turbo",

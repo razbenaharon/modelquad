@@ -272,8 +272,7 @@ def validate_cli_token(value: str, field_name: str) -> None:
 
     if not _SAFE_TOKEN_PATTERN.match(value):
         raise ValueError(
-            f"{field_name} contains characters that are not safe to pass to a "
-            f"subprocess argument: {value!r}"
+            f"{field_name} contains characters ModelQuad does not pass to Codex: {value!r}"
         )
     if value.startswith("-"):
         raise ValueError(f"{field_name} must not start with '-': {value!r}")
@@ -347,7 +346,7 @@ class ExecutionRequest:
             if self.provider == 'codex':
                 from ..codex_config import safe_model_id
                 if safe_model_id(self.model) != self.model:
-                    raise ValueError('model is not safe: invalid Codex model id')
+                    raise ValueError('model is not a valid Codex model id')
             else:
                 validate_cli_token(self.model, "model")
         if self.reasoning_effort is not None:
@@ -938,8 +937,9 @@ def workspace_stability_note(
         }
         if not confirmed:
             note["warning"] = (
-                "This delegation " + interruption + " and the worker's death was NOT "
-                "confirmed, so a process of it may still be running and using quota."
+                "This Codex call " + interruption + " and ModelQuad could not confirm "
+                "Codex ended, so a Codex process may still be running and using quota. "
+                "Codex through ModelQuad is read-only, so it cannot change this folder."
             )
         return note
     ask = (

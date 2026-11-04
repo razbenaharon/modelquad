@@ -26,9 +26,10 @@ CLAUDE_PRIVACY_SETTINGS = "https://claude.ai/settings/data-privacy-controls"
 
 DATA_FLOW = (
     "Before you use ModelQuad",
-    "- Claude offers to ask Codex for a read-only opinion when it would help (with",
-    "  modelquad settings proactive on, it may decide on its own). Claude Code",
-    "  asks you before each call, also in auto and bypass-permissions modes.",
+    "- Claude offers to ask Codex for a read-only second opinion when it would",
+    "  help (with modelquad settings proactive on, it may decide on its own).",
+    "  Claude Code asks you before each call, also in auto and bypass-permissions",
+    "  modes.",
     "- For each call, ModelQuad reads the files the request names, inside the",
     "  working folder only. It skips credential files and replaces secret-looking",
     "  values. Your Codex CLI then sends the task and that text to OpenAI, under",
@@ -41,6 +42,8 @@ DATA_FLOW = (
     "  Codex CLI for them about every 4 minutes, with no prompt. To stop that, set",
     "  the environment variable MODELQUAD_CODEX_QUOTA_REFRESH to 0 and restart",
     "  Claude Code.",
+    "- Claude also sees the kind of each account (personal, work or unknown), never",
+    "  the plan name, and this repository's Codex setting.",
     "- Each provider's terms forbid using its output to train models that compete",
     "  with it. Turn off model training with both while you use ModelQuad:",
     f"    ChatGPT data controls: {CHATGPT_DATA_CONTROLS}",
@@ -58,7 +61,7 @@ DATA_FLOW = (
 
 BACKGROUND_WORK = (
     "Keep delegated work running after you close the chat",
-    "- A task you hand to Codex keeps running on this computer after Claude Code",
+    "- A task you send to Codex keeps running on this computer after Claude Code",
     "  closes, without a window, until it finishes or reaches its time limit.",
     "- It uses your Codex plan's usage while you are not watching.",
     "- Its answer is kept on this computer for up to 7 days, until you collect it.",

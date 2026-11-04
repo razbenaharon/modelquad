@@ -106,10 +106,10 @@ REFUSAL_MESSAGES = {
         "A file named in files does not exist. Name it relative to the working "
         "directory and ask again."),
     "supplied_files_over_limit": (
-        "The required files exceed the number or size of files ModelQuad sends to the "
-        "worker. Name fewer or smaller files, or split the request."),
+        "The required files exceed the number or size of files ModelQuad sends to "
+        "Codex. Name fewer or smaller files, or split the request."),
     "supplied_file_unavailable": (
-        "A required file could not be read safely: it is outside the working directory, a "
+        "A required file could not be read reliably: it is outside the working directory, a "
         "link, binary, undecodable, or it changed while it was read. Name a regular text "
         "file inside the working directory."),
     # Retired: task text no longer selects files. Kept as a closed label
@@ -118,20 +118,20 @@ REFUSAL_MESSAGES = {
         "The task text contains more than one 'Relevant files:' section, so the required "
         "files are ambiguous. Keep one section."),
     "rendered_prompt_cap": (
-        "The task and its required files exceed the worker prompt limit. Shorten the task, "
+        "The task and its required files exceed the size limit for one Codex request. Shorten the task, "
         "name fewer files, or split the request."),
     "codex_shim_only": (
         "Only the npm launcher (codex.cmd) was found, and the native codex.exe its package "
-        "ships is missing. Reinstall the npm package or install the official Codex CLI."),
+        "ships is missing. Reinstall the npm package or install the Codex CLI from OpenAI."),
     "codex_version_unsupported": (
         "The Codex CLI version could not be read or is older than " + MIN_CODEX_VERSION
         + ". Update the Codex CLI."),
     "codex_feature_unverified": (
         "The Codex CLI's feature listing did not confirm that its command, code, plugin and "
-        "app tools are turned off for this run."),
+        "app tools are turned off for this run. Update the Codex CLI, then run: modelquad doctor"),
     "codex_executable_unverified": (
         "The Codex executable could not be read, or it changed while ModelQuad was checking "
-        "it. Try again."),
+        "it. Try again. If it repeats, run: modelquad doctor"),
     "unsupported_platform": (
         "ModelQuad runs Codex only on native Windows, where it can contain and check the run."),
     "supplied_file_changed": (
@@ -169,9 +169,9 @@ REFUSAL_MESSAGES = {
         "You turned Codex off for this repository (modelquad settings repo off), so nothing "
         "was started. To allow it here again, run: modelquad settings repo inherit"),
     UNAVAILABLE: (
-        "The no-shell worker could not be started within its time budget, or its event "
-        "stream could not be verified as tool-free, so no answer was returned."),
-    VIOLATED: "The worker used a tool it is not allowed to use, so its answer was withheld.",
+        "Codex could not be started in time, or ModelQuad could not confirm it used no "
+        "tools, so no answer was returned. Try again; if it repeats, run: modelquad doctor"),
+    VIOLATED: "Codex tried to use a tool, which ModelQuad does not allow, so its answer was withheld.",
 }
 PRELAUNCH_REFUSALS = frozenset(REFUSAL_MESSAGES) - {UNAVAILABLE, VIOLATED}
 REFUSAL_LABELS = frozenset(REFUSAL_MESSAGES)
@@ -224,7 +224,7 @@ class OmissionDiagnostic:
         elif self._reason in _POLICY_GUIDANCE:
             guidance += " " + _POLICY_GUIDANCE[self._reason]
         else:
-            guidance += " Supply safe relevant context explicitly."
+            guidance += " Name the files to send in `files`."
         return {"path": self._path, "reason": self._reason,
                 "required": self._required, "limit_bytes": limit[1] if limit else None,
                 "guidance": guidance}

@@ -20,8 +20,8 @@ If ModelQuad notes Claude is near its limit, tell the user: they can wait for
 the reset or ask for a Codex review. Only if they ask, use `modelquad_handoff`.
 
 Codex through ModelQuad cannot write files or run shell commands. If the user
-wants Codex to make changes, use OpenAI's Codex plugin if it is installed, such
-as `/codex:rescue`.
+wants Codex to make changes, tell them they can run OpenAI's own Codex plugin
+themselves, such as `/codex:rescue`; ModelQuad does not start it.
 
 Give an absolute project directory to each `modelquad_job_*` call. Collect a
 retained answer only after a SessionStart reminder reports it; verify the answer

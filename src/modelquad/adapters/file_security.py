@@ -243,7 +243,7 @@ def _open(path: Path, access: int, sharing: int, creation: int, flags: int, attr
         elif code in (2, 3):
             error = FileNotFoundError(errno.ENOENT, "The file does not exist.", str(path))
         else:
-            _fail(code, "Cannot open the file securely.")
+            _fail(code, "Cannot open the file with ModelQuad's file checks (it may be a link or in use).")
         error.winerror = code
         raise error
     return handle

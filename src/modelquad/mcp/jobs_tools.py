@@ -201,11 +201,12 @@ def modelquad_job_collect(job_id: str, project_directory: str) -> dict:
     """Repeatably read the extracted answer; never apply or acknowledge it.
 
     Retained output returns job_id, receipt, job_status, worker_claim, output,
-    changed_files (currently null), partial, expires_at and expiring_soon,
-    output_truncated, original_bytes, tree_confirmed_dead and descendant_uncertainty.
+    partial, expires_at and expiring_soon, output_truncated, original_bytes,
+    tree_confirmed_dead and descendant_uncertainty.
     output_truncated=true means the answer's tail is lost; worker_claim and
     producer partial are preserved. tree_confirmed_dead other than true means
-    a process may still be writing. No success, exit_code
+    a Codex process may still be running (it cannot write to the project,
+    but it may still use Codex usage). No success, exit_code
     or executor metadata is claimed. Policy refusals also carry refused=True
     and reason from the attempt. Acknowledge separately after use.
     Second-opinion jobs add a content-free review catalog with current Host
@@ -224,8 +225,8 @@ def modelquad_job_wait(job_id: str, project_directory: str, wait_seconds: int | 
 
     Defaults to 50 seconds, clamped to 1..540. A terminal job returns the
     collect contract. output_truncated=true means the answer's tail is lost;
-    tree_confirmed_dead other than true means a process may still be writing.
-    While terminal is false, wait again with this tool.
+    tree_confirmed_dead other than true means a Codex process may still be
+    running (it cannot write to the project). While terminal is false, wait again with this tool.
     Second-opinion output and catalog registration are separate operations:
     a terminal wait can return catalog_status=unknown before registration.
     """

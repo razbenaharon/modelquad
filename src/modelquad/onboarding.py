@@ -666,7 +666,7 @@ def _resolve_routing_mode(
     if requested is not None:
         if requested not in VALID_ROUTING_MODES:
             raise ValueError(
-                f"Invalid routing mode {requested!r}; choose one of: {', '.join(VALID_ROUTING_MODES)}"
+                f"Invalid mode {requested!r}; choose one of: {', '.join(VALID_ROUTING_MODES)}"
             )
         return requested, True
 

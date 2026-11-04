@@ -255,7 +255,7 @@ def test_stay_with_host_renders_as_the_task_staying_put():
     # reads as a round trip through a worker.
     assert nodes[0]["label"] == "Claude Code"
     assert nodes[2]["label"] == "Stay with Claude Code"
-    assert {"label": "Where the task runs", "value": "Stays in this session"} in presentation["details"]["rows"]
+    assert {"label": "Where the task runs", "value": "Stayed with Claude"} in presentation["details"]["rows"]
 
 
 def test_no_eligible_provider_is_blocked_not_selected():
@@ -302,7 +302,7 @@ def test_an_unverified_completion_is_labelled_as_the_workers_own_claim():
         {"provider": "codex", "task_status": "completed", "evidence": {"verified": False}},
         task_type="testing",
     )
-    assert {"key": "evidence", "label": "Result", "value": "Reported by the worker"} in presentation["facts"]
+    assert {"key": "evidence", "label": "Result", "value": "Codex's own report (not checked by ModelQuad)"} in presentation["facts"]
 
 
 # --------------------------------------------------- 4. eligibility vs rank
@@ -617,7 +617,7 @@ def test_internal_resource_strategy_wording_never_reaches_the_card():
 
     strategy = next(r for r in presentation["reasons"] if r["kind"] == "strategy")
     assert strategy["text"] == "Your settings prefer Zeta for work like this"
-    assert {"label": "Routing preference", "value": "Use available capacity"} in presentation[
+    assert {"label": "Your preference", "value": "Use available capacity"} in presentation[
         "details"
     ]["rows"]
 
@@ -628,7 +628,7 @@ def test_the_preserve_strategy_is_stated_as_the_users_own_preference():
     presentation = build_route_presentation(decision)
     strategy = next(r for r in presentation["reasons"] if r["kind"] == "strategy")
     assert strategy["text"] == "Your settings prefer to save the capacity you have left"
-    assert {"label": "Routing preference", "value": "Save remaining capacity"} in presentation[
+    assert {"label": "Your preference", "value": "Save remaining capacity"} in presentation[
         "details"
     ]["rows"]
 
@@ -702,7 +702,7 @@ def test_the_disclosure_still_covers_every_question_it_is_supposed_to():
         "What this agent may do",
         "Capacity left",
         "Capacity reading",
-        "Routing preference",
+        "Your preference",
         "Handoff",
     } <= rows
 

@@ -139,7 +139,7 @@ from . import handoff_widget
 # The handoff approval page, for a client that renders MCP Apps (see handoff_widget).
 _apps = Apps()
 _apps.add_html_resource(handoff_widget.URI, handoff_widget.HTML, name="modelquad-handoff",
-                        title="Ask Codex for a second opinion")
+                        title="Ask Codex for a read-only second opinion")
 
 server = WorkerGuardMCPServer(MCP_SERVER_NAME, version=current_build_info().identity,
                               instructions=_server_instructions(), extensions=[_apps])
@@ -654,10 +654,10 @@ def _in_session_runner_note(reason=None, *, running=False) -> str:
         explanation = ""
     note = f"{prefix} inside this session: {explanation}this task depends on this session. "
     if _session_close_stops_worker():
-        return (note + "When this session's ModelQuad server process ends, the task's "
-                "worker is stopped; anything Windows started outside ModelQuad's "
+        return (note + "When this session's ModelQuad server process ends, Codex is "
+                "stopped for this task; anything Windows started outside ModelQuad's "
                 "control for it may keep running.")
-    return note + "Ending this session's ModelQuad server process may leave the task's worker running."
+    return note + "Ending this session's ModelQuad server process may leave Codex running for this task."
 
 
 @_launch_failures
@@ -711,7 +711,7 @@ def _delegate_payload(
     decision_id = lineage.decision_id
     if not lineage.valid:
         detail = (
-            f"{lineage.refusal_reason}: no routing decision {decision_id!r} exists"
+            f"{lineage.refusal_reason}: no advice record {decision_id!r} exists"
             if lineage.refusal_reason == "unknown_decision_id"
             else f"{lineage.refusal_reason}: {'; '.join(lineage.notes)}"
         )
@@ -1744,16 +1744,21 @@ def _report_needed_files(payload: dict[str, Any], working_directory: str) -> Non
 
 
 def _delegate_completion_notice(payload: dict[str, Any]) -> str:
-    """Return a closed, content-free terminal phase for one inline call."""
-    reason = payload.get("task_status_reason")
-    if payload.get("refused") and isinstance(reason, str) and reason.replace("_", "").isalnum():
-        return f"Codex refused: {reason}"
+    """Return a closed, content-free terminal phase for one inline call.
+
+    A person reads it in Claude Code's progress line, so it never carries a
+    reason code; why Codex was not started is in the reply's first lines.
+    """
+    from ..execution import noshell
+
     if payload.get("refused"):
-        return "Codex answer withheld"
+        reason = payload.get("task_status_reason")
+        after_start = payload.get("started") is True or reason in (noshell.UNAVAILABLE, noshell.VIOLATED)
+        return "Codex answer withheld" if after_start else "Codex was not started"
     return "Codex answered" if isinstance(payload.get("output"), str) and payload["output"] else "Codex answer withheld"
 
 
-@server.tool(title="Ask Codex for a second opinion", annotations=STARTS_CODEX, meta={"anthropic/requiresUserInteraction": True})
+@server.tool(title="Ask Codex for a read-only second opinion", annotations=STARTS_CODEX, meta={"anthropic/requiresUserInteraction": True})
 async def modelquad_delegate(
     task_type: str,
     prompt: str,
@@ -1859,7 +1864,7 @@ class HandoffApproval(BaseModel):
     hand_off: bool = Field(
         default=False,
         title="Ask Codex for a read-only second opinion",
-        description="Tick to let Codex, under your own login, answer this read-only task now.",
+        description="Tick to let Codex answer this read-only task now, under your own sign-in.",
     )
 
 
@@ -2052,8 +2057,8 @@ HANDOFF_QUESTION = "Ask Codex for a read-only second opinion on this task?"
 #: The first line of a handoff reply that started nothing, by the form's answer.
 _ANSWER_LINES = {
     "decline": "Codex was not started: you declined.",
-    "cancel": "Codex was not started: the approval form was closed without an answer.",
-    "unavailable": "Codex was not started: this Claude Code client could not show the approval form.",
+    "cancel": "Codex was not started: the handoff form was closed without an answer.",
+    "unavailable": "Codex was not started: this Claude Code client could not show the handoff form.",
 }
 
 #: What Claude does when this Claude Code client cannot show the handoff form
@@ -2072,7 +2077,7 @@ def _handoff_message(task_type: str, working_directory: str) -> tuple[str, dict 
     suggestion = payload.get("handoff_suggestion")
     lead = suggestion["message"] if isinstance(suggestion, dict) else HANDOFF_QUESTION
     folder = Path(working_directory).name or working_directory
-    return (f"{lead}\nTask: {task_type} in {folder}. Codex runs it under your own login. "
+    return (f"{lead}\nTask: {task_type} in {folder}. Codex runs it under your own sign-in. "
             "Nothing starts unless you tick the box and accept."), suggestion
 
 
@@ -2129,7 +2134,7 @@ def _handoff_form_text(task_type: str, prompt: str, working_directory: str, file
         files_line,
         _codex_account_line(),
         *(["Not sent: " + ", ".join(skipped)] if skipped else []),
-        f"Task: {task_type} in {folder}. Codex runs it under your own login. "
+        f"Task: {task_type} in {folder}. Codex runs it under your own sign-in. "
         "Nothing starts unless you tick the box and accept.",
         f"Task preview: {preview}",
     ))
@@ -2177,7 +2182,7 @@ def _approval_answer(outcome: Any) -> str:
     return "decline" if action == "decline" else "cancel"
 
 
-@server.tool(title="Ask Codex for a second opinion, after a form", annotations=STARTS_CODEX,
+@server.tool(title="Ask Codex for a read-only second opinion (asks you in a form first)", annotations=STARTS_CODEX,
              meta={"anthropic/requiresUserInteraction": True,
                    **({"ui": {"resourceUri": handoff_widget.URI}} if handoff_widget.ENABLED else {})})
 async def modelquad_handoff(
@@ -2192,10 +2197,12 @@ async def modelquad_handoff(
     files: FilesArgument = None,
     approval: Annotated[ElicitationResult[HandoffApproval], Resolve(_handoff_question)] = None,
 ) -> CallToolResult:
-    """Ask the user, in a form listing the files and their total size, before asking Codex
-    for a read-only second opinion (review, exploration or architecture). Only the files
-    in `files` (paths relative to working_directory, at most 32) are sent; a path named
-    only in the task text is not."""
+    """Ask the user, in the handoff form listing the files and their total size, before
+    asking Codex for a read-only second opinion (review, exploration or architecture).
+    In the desktop app's Code tab, which shows no forms, Claude Code's approval prompt
+    for this call is the user's answer, and Codex then starts. Only the files in `files`
+    (paths relative to working_directory, at most 32) are sent; a path named only in the
+    task text is not."""
     asked_at = _HANDOFF_ASKED_AT.pop(_request_key(ctx), None)
     # The checks run again here, after the user answered: an answer never
     # outlives a pause, a disconnect or a refusal that arrived meanwhile.
@@ -2490,10 +2497,10 @@ def _split_summary_block(workspace_key: str | None) -> dict[str, Any]:
 
 @server.tool(title="One activity record", annotations=READ_ONLY)
 def modelquad_activity_detail(kind: str, id: int, project_directory: str | None = None) -> dict:
-    """Return the full record for one routing or execution entry.
+    """Return the full record for one advice or Codex-call entry.
 
-    `kind` is "routing" or "execution" (entries from `modelquad_activity`,
-    raw worker stdout/stderr included). With `project_directory`, an entry
+    `kind` is "routing" (advice) or "execution" (a Codex call), as in the
+    entries from `modelquad_activity`; Codex's raw output is included. With `project_directory`, an entry
     from another project answers `not_found`.
     """
     workspace_key = None
@@ -2605,46 +2612,39 @@ def modelquad_delegation_status(
     decision_id: str | None = None,
     limit: int = 5,
 ) -> dict:
-    """What became of a delegation, for a caller that stopped waiting for it.
+    """What became of a Codex call whose tool call stopped waiting.
 
     Read-only. Nothing here starts, stops, retries or reconciles anything.
 
-    A tool call that fails for the CALLER -- the calling host's own patience
-    running out, the connection dropping -- says nothing whatever about the
-    WORKER, which keeps running under the budget `modelquad_delegate(timeout=...)`
-    gave it and records its own outcome when it ends. This is where that
-    outcome is collected. Never infer a delegation's fate from files left in
-    a workspace; ask here.
+    A tool call that fails for the caller (Claude Code's own patience running
+    out, the connection dropping) says nothing about Codex, which keeps
+    running under the budget `modelquad_delegate(timeout=...)` gave it and
+    records its own outcome when it ends. This is where that outcome is
+    collected.
 
-    Name the delegation with ANY of:
+    Name the call with ANY of:
 
-    - `task_type` + `working_directory` + `prompt` -- the same three arguments
-      you delegated with, which you still hold after a failed tool call. All
-      three are needed together; they identify the logical request.
-    - `attempt_id` -- from a duplicate refusal, or from a previous answer here.
-    - `decision_id` -- the id a reply here, or a refusal, returned.
+    - `task_type` + `working_directory` + `prompt`: the same three arguments
+      you called with. All three are needed together.
+    - `attempt_id`: from a duplicate refusal, or from a previous answer here.
+    - `decision_id`: the id a reply here, or a refusal, returned.
 
-    Or ask about a DIRECTORY instead of a delegation: pass `working_directory`
-    ALONE and the answer's `workspace` field says whether any delegation may
-    still be writing there -- `may_be_mutating`, `unknown`, or
-    `no_delegation_in_flight`. Ask that before running tests, reviewing a
-    diff, or committing in a workspace ModelQuad has delegated into: a worker
-    whose caller stopped waiting keeps running under the budget it was given,
-    and a gate that straddles its writes belongs to no tree state at all.
-    `unknown` is not a "no". ModelQuad can only speak for
-    delegations it started -- it says nothing about editors or other agents.
+    Or pass `working_directory` ALONE: the answer's `workspace` field says
+    whether a Codex call ModelQuad started for that folder is still running:
+    `may_be_mutating` (a Codex process is still alive; the name is kept from
+    older versions, and Codex through ModelQuad is read-only and cannot change
+    the folder), `unknown`, or `no_delegation_in_flight`. `unknown` is not a
+    "no". ModelQuad speaks only for Codex calls it started.
 
     Each match reports `state` (one of: running, unattended, delegating,
     completed, failed, blocked, partial, stopped, unknown),
-    `safe_to_retry`, `guidance`, and `result` -- the worker's terminal record
-    once it has one. `unattended` means the worker is still running and
-    nobody is waiting for it; it is NOT a failure. `safe_to_retry` is False
-    while a worker of that attempt may still be running, and null when that
-    could not be established -- neither is a "yes", because starting a second
-    worker on the same workspace is exactly what this answer prevents.
-    Unknown stays unknown: an identity that matches nothing returns no
-    attempts, which means this state store has no record of it, not that the
-    work failed.
+    `safe_to_retry`, `guidance`, and `result` (Codex's final record once it
+    has one). `unattended` means Codex is still running and nobody is
+    waiting for it; it is NOT a failure. `safe_to_retry` is False while a
+    Codex process of that attempt may still be running, and null when that
+    could not be established; neither is a "yes". Unknown stays unknown: an
+    identity that matches nothing means ModelQuad has no record of it, not
+    that the call failed.
     """
 
     # A lone `working_directory` is the WORKSPACE question, not half of a
