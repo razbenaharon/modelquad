@@ -82,7 +82,7 @@ version = { attr = "modelquad.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-modelquad = ["default.yaml"]
+modelquad = ["default.yaml", "settings_page.html"]
 "modelquad.adapters" = ["templates/**/*"]
 
 [tool.pytest.ini_options]

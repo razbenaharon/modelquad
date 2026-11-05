@@ -8,9 +8,10 @@ each changed file once, backing up its original bytes immediately before that
 write (see :mod:`staging`). A file that cannot be read safely is skipped with a
 plain reason; the others still proceed.
 
-The global footprint is deliberately small: the ``/modelquad`` skill and five
+The global footprint is deliberately small: the ``/modelquad`` skill and six
 user-only command skills (``/modelquad-review``, ``/modelquad-handoff``,
-``/modelquad-quota``, ``/modelquad-setup``, ``/modelquad-split``), the MCP
+``/modelquad-quota``, ``/modelquad-setup``, ``/modelquad-split``,
+``/modelquad-settings``), the MCP
 server entry (which carries its own tool ``timeout``), the status line when the
 user has none, and the SessionStart reminder. The model guidance comes from the
 MCP server's ``instructions`` (``server_instructions.py``), so nothing is
@@ -49,7 +50,8 @@ _MCP_KEY_PATH = ("mcpServers", MCP_SERVER_NAME)
 _SKILL_DIR = PRODUCT_SLUG
 # Commands only the user starts (``disable-model-invocation: true``). Each
 # still reaches Codex only through a tool Claude Code asks about.
-_COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("review", "handoff", "quota", "setup", "split"))
+_COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("review", "handoff", "quota", "setup", "split",
+                                                                     "settings"))
 _SKILL_DIRS = (_SKILL_DIR, *_COMMAND_SKILL_DIRS)
 # Command skills sit in folders a user could also choose, so each copy carries
 # this line in its frontmatter; install and uninstall touch only a file that

@@ -727,7 +727,7 @@ def test_no_adapter_wraps_atomic_write_in_a_dead_value_error_handler():
 
 
 _COMMAND_SKILLS = ("modelquad-review", "modelquad-handoff", "modelquad-quota", "modelquad-setup",
-                   "modelquad-split")
+                   "modelquad-split", "modelquad-settings")
 
 
 def test_claude_install_and_uninstall_cover_the_command_skills(tmp_path):

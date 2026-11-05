@@ -98,6 +98,12 @@ Status: early, source-only release. Windows only.
   from the next call; the other choices reach Claude as one line when a new
   Claude Code session starts in that repository. The approval prompt still
   appears before each call.
+- Prefer clicking to typing? `/modelquad:settings` in Claude Code (or
+  `modelquad settings open` in a terminal) opens a settings page in your
+  browser with these three settings. The page is served only on this
+  computer (`127.0.0.1`), answers only requests that carry a secret made for
+  that one run, and closes when you press Done or after 15 minutes without
+  use. Each choice is saved as you make it, to the same `preferences.json`.
 - This guidance reaches Claude through ModelQuad's MCP server instructions and
   the guide skill (`/modelquad:guide` in the plugin, `/modelquad` without
   it). ModelQuad writes nothing into your global
@@ -310,7 +316,7 @@ commands. `modelquad onboard` does the same and first finds Claude Code and
 Codex. Both print what ModelQuad sends where before they write anything; add
 `--dry-run` to see the changes first. Without the plugin the commands are
 named `/modelquad-review`, `/modelquad-handoff`, `/modelquad-quota`,
-`/modelquad-setup` and `/modelquad-split`, and the guide skill `/modelquad`.
+`/modelquad-setup`, `/modelquad-split` and `/modelquad-settings`, and the guide skill `/modelquad`.
 To move from this install to the plugin, install the plugin and run
 `modelquad install claude --plugin`; `modelquad install claude --no-plugin`
 goes back.
@@ -335,11 +341,12 @@ valid JSON is skipped with a reason; the other files still change.
     current project.
 - `%USERPROFILE%\.claude\skills\modelquad\SKILL.md`: the `/modelquad` skill.
 - `%USERPROFILE%\.claude\skills\modelquad-review`, `modelquad-handoff`,
-  `modelquad-quota`, `modelquad-setup` and `modelquad-split`: commands only
+  `modelquad-quota`, `modelquad-setup`, `modelquad-split` and `modelquad-settings`: commands only
   you start (`/modelquad-review` asks Codex about files you name,
   `/modelquad-handoff` hands the current read-only task to Codex,
   `/modelquad-quota` shows both quotas, `/modelquad-setup` explains any setup
-  problem, `/modelquad-split` shows a proposed division of a task). Claude
+  problem, `/modelquad-split` shows a proposed division of a task, `/modelquad-settings`
+  opens the settings page in your browser). Claude
   Code still asks before every Codex call.
 - Backups: before it changes an existing file, ModelQuad saves a full copy of
   the original bytes beside it, named `<file>.modelquad-backup-<time>`. JSON

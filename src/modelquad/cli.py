@@ -1124,6 +1124,47 @@ def _run_repo_setting(choice: str | None, project: str | None) -> int:
     return 0
 
 
+def _run_settings_page(project: str | None, *, no_browser: bool = False,
+                       open_browser=None) -> int:
+    """``modelquad settings open``: serve the one-time settings page until Done or idle."""
+    import webbrowser
+
+    from . import settings_page
+
+    folder = settings_page.project_folder(project)
+    if project is not None and folder is None:
+        print("That project folder does not exist or is not a local folder ModelQuad can use.",
+              file=sys.stderr)
+        return 2
+    try:
+        page = settings_page.SettingsPage(folder, DEFAULT_USAGE_DIRECTORY)
+    except OSError as exc:
+        print(f"The settings page could not start: {exc.strerror or exc}", file=sys.stderr)
+        return 1
+    opened = False
+    if not no_browser:
+        try:
+            opened = bool((open_browser or webbrowser.open)(page.url))
+        except Exception:  # noqa: BLE001 -- no browser means the address is printed instead
+            opened = False
+    if opened:
+        print("ModelQuad settings are open in your browser.")
+    else:
+        print("Open this address in your browser (it works only on this computer, "
+              "and only while this command runs):")
+        print(f"  {page.url}")
+    print("Press Done on the page when you finish. The page closes by itself after "
+          f"{settings_page.IDLE_SECONDS // 60} minutes without use.")
+    try:
+        ended = page.serve()
+    except KeyboardInterrupt:
+        ended = "interrupted"
+    print({"done": "Settings page closed. New Claude Code sessions use your settings.",
+           "idle": "Settings page closed after 15 minutes without use. Saved choices stay saved.",
+           "interrupted": "Settings page closed. Saved choices stay saved."}[ended])
+    return 0
+
+
 def _run_proactive_setting(enabled: bool) -> int:
     """Save who decides to consult Codex; the MCP server reads it at session start."""
     from .adapters.server_instructions import write_proactive
@@ -1809,6 +1850,14 @@ def build_parser() -> argparse.ArgumentParser:
     plan_cmd.add_argument('provider', nargs='?', choices=('claude', 'codex'))
     plan_cmd.add_argument('value', nargs='?', metavar='plan|unset',
                           help='A listed plan, or unset. Run without it to see the list.')
+    open_cmd = settings_actions.add_parser(
+        'open',
+        help='Open a settings page in your browser, served only on this computer. It closes '
+        'when you press Done or after 15 minutes without use.')
+    open_cmd.add_argument('--project', metavar='DIR',
+                          help="The project whose own Codex choice the page shows (default: the current folder).")
+    open_cmd.add_argument('--no-browser', action='store_true',
+                          help='Print the page address instead of opening the browser.')
     repo_cmd = settings_actions.add_parser(
         'repo',
         help='Your own Codex setting for one repository: on (Claude may decide on its own), '
@@ -2142,6 +2191,8 @@ def _run_command(argv: Sequence[str] | None) -> int:
         return _run_proactive_setting(args.choice == 'on')
     if args.command == 'settings' and args.settings_action == 'repo':
         return _run_repo_setting(args.choice, args.project)
+    if args.command == 'settings' and args.settings_action == 'open':
+        return _run_settings_page(args.project, no_browser=args.no_browser)
     if args.command == 'settings' and args.settings_action == 'plan':
         return _run_plan_setting(args.provider, args.value)
     if args.command == 'settings':

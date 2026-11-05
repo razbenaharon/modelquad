@@ -30,6 +30,7 @@ SKILLS = {
     "modelquad-quota": "quota",
     "modelquad-setup": "setup",
     "modelquad-split": "split",
+    "modelquad-settings": "settings",
 }
 
 
