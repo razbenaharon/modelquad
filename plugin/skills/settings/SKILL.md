@@ -1,6 +1,6 @@
 ---
 name: settings
-description: Open ModelQuad's settings page in the user's browser, where the user chooses who decides to ask Codex, this project's own choice and their plans. Claude changes nothing itself.
+description: Open ModelQuad's settings page in the user's browser to choose who decides to ask Codex, this project's choice and plans. Claude changes nothing.
 disable-model-invocation: true
 metadata:
   managed-by: modelquad

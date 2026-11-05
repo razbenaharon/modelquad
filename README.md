@@ -71,14 +71,17 @@ Status: early, source-only release. Windows only.
 - Other AI providers, a desktop window, a tray icon, an installer and team
   features are not supported.
 
-## Claude offers; you approve each call
+## Claude asks Codex at the right moments; you approve each call
 
-- By default, Claude offers a read-only Codex review when one would help, for
-  example after a multi-file change or a risky fix, or before a commit or PR,
-  and calls Codex only when you agree or ask. `modelquad settings proactive on`
-  lets Claude decide on its own to consult Codex (`off` goes back); it takes
-  effect in new Claude Code sessions. Either way, the approval prompt below
-  still appears before each call.
+- By default, Claude decides on its own to ask Codex for a read-only review at
+  set moments: when a change that touched several files is complete, before a
+  commit or PR, when a bug survived one fix attempt, or before a design choice
+  with real trade-offs. You need not ask, and you approve each call once, in
+  the prompt below. After Claude has changed three files without a Codex
+  review, the plugin reminds it of that moment; the reminder only adds a line
+  for Claude and never starts Codex. `modelquad settings proactive off` makes
+  Claude offer a review in one sentence instead and call only when you agree
+  or ask (`on` goes back); it takes effect in new Claude Code sessions.
 - `modelquad settings plan claude <plan>` and `modelquad settings plan codex
   <plan>` record which plan you are on (`unset` clears it; `modelquad settings
   plan` shows both). The values are a fixed list, printed by `modelquad

@@ -37,8 +37,9 @@ def _instruction_sources():
 
 
 SOURCES = tuple(_instruction_sources())
-# The rewritten companion instructions are about 25 plain lines each.
-SIZE_CEILING_BYTES = 1600
+# The rewritten companion instructions are about 25 plain lines each; the
+# named review moments take a few more (Claude Code's own cut is 4,096).
+SIZE_CEILING_BYTES = 1900
 FORBIDDEN_PROMISES = (
     "fix it for me",
     "apply the findings automatically",

@@ -12,13 +12,15 @@ from pathlib import Path
 import pytest
 
 from modelquad import plans, repo_settings, settings_page
-from modelquad.adapters.server_instructions import read_proactive
+from modelquad.adapters.server_instructions import read_proactive, write_proactive
 
 
 @pytest.fixture
 def page(tmp_path):
     project = tmp_path / "proj"
     project.mkdir()
+    # Start from "offer", so a refused change is seen as nothing turning it on.
+    write_proactive(False)
     running = settings_page.SettingsPage(project.resolve(), tmp_path / "usage")
     result = {}
     thread = threading.Thread(target=lambda: result.setdefault("ended", running.serve()), daemon=True)

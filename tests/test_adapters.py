@@ -95,30 +95,33 @@ def test_server_instructions_leave_the_delegation_decision_to_the_host():
         assert len(server_instructions(proactive)) < 4096
 
 
-def test_proactive_use_is_opt_in(tmp_path):
-    """Default: offer, and call only when the user agrees or asks. On: Claude may decide."""
+def test_claude_decides_by_default_and_off_makes_it_offer(tmp_path):
+    """Default: Claude consults Codex at the named moments. Off: offer, and call only
+    when the user agrees or asks. Either way Claude Code's prompt asks the user."""
     from modelquad.adapters.server_instructions import (
         read_proactive, server_instructions, write_proactive,
     )
 
     preferences = tmp_path / "state" / "preferences.json"
-    assert read_proactive(preferences) is False
-    assert server_instructions() == server_instructions(False)
-    default = " ".join(server_instructions(False).split())
-    assert "offer the user a Codex review" in default
-    assert "a multi-file change, a risky fix, before a commit or PR" in default
-    assert "only when the user agrees or asks" in default
-    assert "on its own" not in default
-
-    write_proactive(True, preferences)
     assert read_proactive(preferences) is True
     assert server_instructions() == server_instructions(True)
+    moments = ("a change that touched several files is complete", "before a commit or PR",
+               "a bug survived one fix attempt", "a design choice has real trade-offs")
     proactive = " ".join(server_instructions(True).split())
-    assert "Claude may decide on its own to consult Codex" in proactive
-    assert "Claude Code always asks the user before each ModelQuad Codex call." in proactive
+    for moment in moments:
+        assert moment in proactive
+    assert "consult Codex with `modelquad_delegate` yourself" in proactive
+    assert "Claude Code asks the user before each ModelQuad Codex call." in proactive
 
     write_proactive(False, preferences)
     assert read_proactive(preferences) is False
+    assert server_instructions() == server_instructions(False)
+    offer = " ".join(server_instructions(False).split())
+    for moment in moments:
+        assert moment in offer
+    assert "offer the user a Codex review" in offer
+    assert "only when the user agrees or asks" in offer
+    assert "yourself" not in offer
     preferences.write_text("not json", encoding="utf-8")
     assert read_proactive(preferences) is False
 

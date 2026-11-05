@@ -52,7 +52,7 @@ def test_plugin_server_is_the_packaged_entry():
     assert "env" not in servers["modelquad"]
 
 
-def test_plugin_ships_no_permissions_and_only_the_reminder_hook():
+def test_plugin_ships_no_permissions_and_only_the_reminder_hooks():
     # A plugin's server tools are approved like any other: every Codex call
     # keeps Claude Code's approval prompt, and nothing here pre-approves one.
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
@@ -61,7 +61,8 @@ def test_plugin_ships_no_permissions_and_only_the_reminder_hook():
     config = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     assert config["modules"] == ["./quota-band.tsx"]
     hooks = config["hooks"]
-    assert set(hooks) == {"SessionStart"}
+    # The startup reminder, and the review reminder (tests/test_review_reminder.py).
+    assert set(hooks) == {"SessionStart", "PostToolUse"}
     (entry,) = hooks["SessionStart"]
     (hook,) = entry["hooks"]
     assert hook["command"] == "modelquad" and hook["args"] == ["hook-pending", "claude"]

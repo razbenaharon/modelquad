@@ -448,6 +448,7 @@ def test_the_hook_carries_the_line_and_decides_nothing(tmp_path):
 def test_the_hook_keeps_the_line_when_the_service_cannot_answer(tmp_path):
     repo = git_repo(tmp_path / "repo")
     rs.write_mode(repo, "on")
+    write_proactive(False)
 
     def down(*args, **kwargs):
         raise OSError("service_absent C:\\private\\path")

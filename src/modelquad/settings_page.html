@@ -181,8 +181,8 @@ button:disabled { opacity: .6; cursor: default; }
   var state = null;
 
   var GLOBAL = [
-    { value: "off", title: "Claude offers, you decide", text: "Claude suggests a Codex opinion when it would help, and calls Codex when you agree or ask.", badge: "Default" },
-    { value: "on", title: "Claude may decide on its own", text: "Claude can call Codex without suggesting it first." }
+    { value: "on", title: "Claude decides when to ask", text: "At set moments, such as a finished multi-file change or before a commit, Claude calls Codex without suggesting it first. You still approve each call.", badge: "Default" },
+    { value: "off", title: "Claude offers, you decide", text: "Claude suggests a Codex opinion when it would help, and calls Codex when you agree or ask." }
   ];
   var REPO = [
     { value: "inherit", title: "Use my choice above", text: "This project follows the setting for every project." },

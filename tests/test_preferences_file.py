@@ -106,3 +106,14 @@ def test_an_unsaved_plugin_choice_is_reported_not_raised(monkeypatch):
     args = argparse.Namespace(plugin=True, dry_run=False)
     assert cli._remember_plugin_choice(args) == cli.PLUGIN_CHOICE_NOT_SAVED
     assert cli._remember_plugin_choice(argparse.Namespace(plugin=None, dry_run=False)) is None
+
+
+def test_claude_decides_by_default_and_only_a_stored_false_turns_it_off(tmp_path):
+    prefs = tmp_path / "preferences.json"
+    assert si.read_proactive(prefs) is True  # no file: the default
+    prefs.write_text(json.dumps({"plans": {"codex": "plus"}}), encoding="utf-8")
+    assert si.read_proactive(prefs) is True  # other settings, none for this one
+    si.write_proactive(False, prefs)
+    assert si.read_proactive(prefs) is False
+    prefs.write_text("not json", encoding="utf-8")
+    assert si.read_proactive(prefs) is False  # unreadable: the more careful mode

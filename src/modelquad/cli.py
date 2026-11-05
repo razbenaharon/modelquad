@@ -1840,7 +1840,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='Confirm you have read what turning it on means (needed when not typing at a prompt).')
     proactive_cmd = settings_actions.add_parser(
         'proactive',
-        help='Let Claude decide on its own to consult Codex (default off: Claude offers it). '
+        help='Let Claude decide on its own to consult Codex (default on; off: Claude offers it). '
         'Claude Code still asks you before each call.')
     proactive_cmd.add_argument('choice', choices=('on', 'off'))
     plan_cmd = settings_actions.add_parser(
@@ -2048,6 +2048,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pending_hook = subcommands.add_parser("hook-pending", help="Metadata-only startup context for the Host agent.")
     pending_hook.add_argument("host", choices=("claude",))
+    review_hook = subcommands.add_parser(
+        "hook-review", help="Advisory reminder of the Codex review moment for the Host agent.")
+    review_hook.add_argument("host", choices=("claude",))
     # The same question `modelquad_delegation_status(working_directory=...)`
     # answers, at a shell. The consumer this protects is frequently not a model
     # at all: it is an operator or a script about to run a gate, review a diff
@@ -2156,15 +2159,17 @@ _HIDDEN_COMMANDS = frozenset({"route"})
 #: Commands Claude Code runs as hooks or as its status line. They must never
 #: fail closed: a PreToolUse hook that exits with code 2 blocks the user's tool
 #: call, and argparse exits with 2 on a usage error.
-_FAIL_SAFE_HOOK_COMMANDS = frozenset({"hook-gate", "usage-hook"})
+_FAIL_SAFE_HOOK_COMMANDS = frozenset({"hook-gate", "hook-review", "usage-hook"})
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    from .cli_entry import dispatch_pending
+    from .cli_entry import dispatch_pending, dispatch_review
     from .windowless_diagnostics import command_for
 
     arguments = list(sys.argv[1:] if argv is None else argv)
     hook_result = dispatch_pending(arguments)
+    if hook_result is None:
+        hook_result = dispatch_review(arguments)
     if hook_result is not None:
         return hook_result
     if command_for(arguments) in _FAIL_SAFE_HOOK_COMMANDS:

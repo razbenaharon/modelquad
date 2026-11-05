@@ -9,8 +9,8 @@ ModelQuad complements Claude Code and OpenAI's Codex plugin for Claude Code.
 It can request a read-only Codex review, exploration, or architecture opinion.
 Claude Code asks the user before every ModelQuad Codex call.
 After an important task (a multi-file change, a risky fix, before a commit or
-PR), offer the user a Codex review. Call `modelquad_delegate` only when the
-user agrees or asks, unless the server instructions say proactive use is on.
+PR), ask Codex for a review as the server instructions say: by default call
+`modelquad_delegate` yourself; when they say to offer, call only on a yes.
 Pass the files Codex should read in `files` (paths relative to the working
 directory, at most 32); a file named only in the prompt is not sent.
 If a reply lists `files_needed`, offer the user a follow-up call with those

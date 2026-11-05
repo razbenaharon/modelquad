@@ -15,6 +15,22 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|mcp__.*modelquad_delegate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "modelquad",
+            "args": [
+              "hook-review",
+              "claude"
+            ],
+            "timeout": 3
+          }
+        ]
+      }
     ]
   },
   "modules": [

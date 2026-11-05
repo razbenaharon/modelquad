@@ -374,7 +374,7 @@ def test_cli_help_texts_carry_no_banned_phrase(capsys):
 def test_skills_have_one_line_descriptions_and_no_banned_phrase():
     skills = [*(ROOT / "plugin" / "skills").glob("*/SKILL.md"),
               *(ROOT / "src" / "modelquad" / "adapters" / "templates" / "claude" / "skills").glob("*/SKILL.md")]
-    assert len(skills) == 12
+    assert len(skills) == 14
     for path in skills:
         text = path.read_text(encoding="utf-8")
         assert banned_in(text) == [], path

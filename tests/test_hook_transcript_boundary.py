@@ -314,6 +314,9 @@ def test_session_start_repo_line_never_opens_the_transcript(tmp_path, capsys, mo
     (repo / ".git").mkdir(parents=True)
     (repo / ".modelquad.toml").write_text('schema = 1\n[offers]\ncodex = "default"\n', encoding="utf-8")
     repo_settings.write_mode(repo, choice)
+    # The global setting is "offer", so "offer-only" here matches it and adds no line.
+    from modelquad.adapters.server_instructions import write_proactive
+    write_proactive(False)
     monkeypatch.setattr(service_client, "read_pending_summary",
                         lambda *a, **kw: {"count": 0, "more": False, "jobs": []})
     canary = _write_canary(tmp_path)

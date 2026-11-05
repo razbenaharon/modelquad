@@ -178,7 +178,7 @@ def _stored(payload: dict) -> dict[str, str]:
 
 def read_modes(path: Path | None = None) -> dict[str, str]:
     """Every stored per-repo word, by key; malformed entries are dropped."""
-    from .adapters.server_instructions import _read_preferences
+    from .adapters.server_instructions import _read_preferences, read_proactive
 
     try:
         return _stored(_read_preferences(_preferences_path(path)))
@@ -356,13 +356,13 @@ def advice_line(working_directory, *, preferences: Path | None = None) -> str | 
     looked for in the nearest folder holding ``.git`` (the walk the gates use
     when Git cannot answer), so no Git process is needed here.
     """
-    from .adapters.server_instructions import _read_preferences
+    from .adapters.server_instructions import _read_preferences, read_proactive
 
     if local_reason(working_directory) is not None:
         return None  # A network share or a device folder is never opened.
     directory = Path(working_directory)
     payload = _read_preferences(_preferences_path(preferences))
-    global_proactive = payload.get("proactive") is True
+    global_proactive = read_proactive(_preferences_path(preferences))
     modes = _stored(payload)
     user_mode = read_mode(directory, modes=modes) if modes else None
     policy = local_policy(directory)

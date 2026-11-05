@@ -20,8 +20,12 @@ here; the tool under development is not the instrument for developing it.
 - One MCP host (Claude Code) and one worker (the Codex CLI, under the user's
   own login). Codex runs read-only: review, exploration and architecture
   tasks only.
-- By default Claude offers to ask Codex and calls it when the user agrees
-  or asks; `modelquad settings proactive on` lets Claude decide on its own.
+- By default Claude decides on its own to ask Codex at the moments the
+  instructions name (a multi-file change done, before a commit or PR, a bug
+  that survived one fix, a design trade-off), and a PostToolUse reminder
+  (`adapters/review_reminder.py`) names that moment after several files
+  change. `modelquad settings proactive off` makes Claude offer instead and
+  call only when the user agrees or asks.
   The guidance is the MCP server's `instructions`
   (`adapters/server_instructions.py`), not a global `CLAUDE.md` block. Claude
   Code asks the user before every call that would start Codex. Quota is

@@ -7,11 +7,13 @@ the tool names, for every session that has the server. That is where the
 model guidance lives, so installing ModelQuad no longer writes anything into
 the user's global ``~/.claude/CLAUDE.md`` (which applies to every project).
 
-Proactive use is opt-in. By default the instructions tell Claude to OFFER a
-Codex opinion and to call only when the user agrees or asks;
-``modelquad settings proactive on`` lets Claude decide to consult Codex on its
-own. Either way Claude Code asks the user before each call, because every
-tool that starts Codex is marked as requiring user interaction.
+By default Claude decides on its own to consult Codex at the moments the
+instructions name, so the user approves once, in Claude Code's prompt, rather
+than first answering an offer and then that prompt.
+``modelquad settings proactive off`` makes Claude OFFER instead and call only
+when the user agrees or asks. Either way Claude Code asks the user before each
+call, because every tool that starts Codex is marked as requiring user
+interaction.
 
 The setting is a small JSON file in this installation's state folder, read
 when the server builds its instructions (once per Claude Code session).
@@ -33,17 +35,19 @@ _INTRO = (
     "ModelQuad, Codex cannot write files or run shell commands."
 )
 _WHEN = (
-    "When a second opinion would help, such as on a hard bug or a design choice, or "
-    "after an important task (a multi-file change, a risky fix, before a commit or PR), "
+    "A second opinion helps at these moments: a change that touched several files is "
+    "complete, before you report it done; before a commit or PR; a bug survived one fix "
+    "attempt; a design choice has real trade-offs. A small, routine change needs none. "
 )
 _OFFER = _WHEN + (
-    "offer the user a Codex review in one short sentence. Call `modelquad_delegate` "
-    "only when the user agrees or asks for it. Claude Code asks the user before each "
-    "ModelQuad Codex call."
+    "At such a moment, offer the user a Codex review in one short sentence. Call "
+    "`modelquad_delegate` only when the user agrees or asks for it. Claude Code asks the "
+    "user before each ModelQuad Codex call."
 )
 _DECIDE = _WHEN + (
-    "Claude may decide on its own to consult Codex with `modelquad_delegate`. Claude "
-    "Code always asks the user before each ModelQuad Codex call."
+    "At such a moment, consult Codex with `modelquad_delegate` yourself; the user need "
+    "not ask, and you need not ask them first. Claude Code asks the user before each "
+    "ModelQuad Codex call. That prompt is their choice."
 )
 _FILES = (
     "Pass the files you want Codex to read in `files` (paths relative to the working "
@@ -139,14 +143,20 @@ def preferences_for_write(path: Path) -> dict:
     return _load_preferences(path)
 
 
+def proactive_from(payload: dict) -> bool:
+    """On unless the user turned it off: only a stored ``false`` means off."""
+
+    return payload.get(_PROACTIVE_KEY) is not False
+
+
 def read_proactive(path: Path | None = None) -> bool:
-    """Whether the user turned proactive use on. Anything unreadable means off."""
+    """Whether Claude may decide on its own. On by default; anything unreadable means off."""
 
     try:
         target = path or preferences_path()
+        return proactive_from(_load_preferences(target))
     except Exception:  # noqa: BLE001 -- the server must start whatever the state folder does
         return False
-    return _read_preferences(target).get(_PROACTIVE_KEY) is True
 
 
 def write_proactive(enabled: bool, path: Path | None = None) -> Path:
