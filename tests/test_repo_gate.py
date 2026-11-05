@@ -198,8 +198,13 @@ def test_a_kind_that_is_not_read_only_is_not_blamed_on_a_repository_file(tmp_pat
     assert rp.BUILTIN.refusal_for("implementation") is None
     payload = mcp._delegate_payload("implementation", "Change it.", str(repo), "codex")
     assert payload["refused"] is True and started == [], payload
-    # The capability check or the read-only gate answers, as with no file at all.
-    assert payload["reason"] in {"routing_refused", "task_type_not_read_only"}
+    # The capability check or the read-only gate answers, as with no file at all;
+    # on a machine without the Codex CLI (CI), the availability check answers first.
+    assert payload["reason"] in {
+        "routing_refused",
+        "task_type_not_read_only",
+        "provider_unavailable",
+    }
     assert payload.get("reason") != rp.KIND_REMOVED
     assert "modelquad.toml" not in json.dumps(payload)
 
