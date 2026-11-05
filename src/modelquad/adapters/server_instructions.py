@@ -60,8 +60,8 @@ _REST = (
     "Only collect retained answers when the SessionStart reminder reports them. Use "
     "`modelquad_job_wait` or `modelquad_job_status` for a handle, then collect and "
     "verify the answer before acknowledging it.",
-    "For a task of several steps, `modelquad_split` shows the user a proposed division; "
-    "it starts nothing.",
+    "Divide a task between Claude and Codex with `modelquad_split`, not by hand; it "
+    "starts nothing.",
     "If `MODELQUAD_WORKER=1`, do not call ModelQuad.",
 )
 

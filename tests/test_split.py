@@ -410,7 +410,7 @@ def test_the_tool_is_read_only_asks_for_nothing_and_says_so_plainly():
 @pytest.mark.parametrize("proactive", [False, True])
 def test_the_server_instructions_name_the_split_and_stay_small(proactive):
     text = server_instructions(proactive)
-    assert "`modelquad_split` shows the user a proposed division; it starts nothing." in text
+    assert "with `modelquad_split`, not by hand; it starts nothing." in text
     assert len(text.encode("utf-8")) <= 1600 and len(text) < 4096
     assert banned_in(text.replace("ModelQuad", "")) == []
 
