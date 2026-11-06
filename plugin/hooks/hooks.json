@@ -18,7 +18,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|mcp__.*modelquad_delegate",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|mcp__.*modelquad_delegate",
         "hooks": [
           {
             "type": "command",

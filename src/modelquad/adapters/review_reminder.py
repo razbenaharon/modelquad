@@ -3,16 +3,19 @@
 """Advisory PostToolUse context: a reminder of the review moment after several files change.
 
 Claude tends to forget an instruction it read at session start while it is
-deep in a task. After Claude has changed ``THRESHOLD`` different files in a
-session without a Codex review since, this hook adds one line of context
-naming the review moment; a ``modelquad_delegate`` call starts the count
-again. It is advisory (AGENTS.md invariant 6): it prints context or nothing,
+deep in a task, and a reminder given in the middle of the edits is forgotten
+by the end (a recorded trial of fresh sessions, 2026-11-06). So the hook
+counts the different files Claude changes in a session, and once there are
+``THRESHOLD`` without a Codex review since, it adds one line of context when
+Claude next runs a command (usually the tests, at the end of the change),
+at most ``MAX_REMINDERS`` times, and only after further edits since the last
+one. A ``modelquad_delegate`` call starts the count again. It is advisory (AGENTS.md invariant 6): it prints context or nothing,
 never a decision, never blocks or approves, and never opens the transcript
 path Claude Code hands it. It starts no process and never starts Codex.
 
 What it keeps: one small file per session under ``<state>/review-reminder/``,
 named by a digest of the session id, holding SHA-256 digests of the changed
-file paths (never the paths) and whether it already reminded. Files older than
+file paths (never the paths) and how often it reminded. Files older than
 two days are removed.
 """
 
@@ -30,21 +33,28 @@ from pathlib import Path
 BYTE_CAP = 8 * 1024 * 1024
 HOOK_BUDGET = 1.5
 THRESHOLD = 3
+MAX_REMINDERS = 2
 MAX_DIGESTS = 64
 KEEP_SECONDS = 2 * 24 * 3600
 FOLDER_NAME = "review-reminder"
 EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
+#: Running a command after the edits is usually the end of a change: the tests.
+RUN_TOOLS = frozenset({"Bash", "PowerShell"})
 DELEGATE_TOOL_SUFFIX = "modelquad_delegate"
 
 DECIDE = (
     "ModelQuad: you have changed {count} files in this session and Codex has not reviewed "
-    "them. When this change is complete, before you report it done, consult Codex with "
-    "`modelquad_delegate` (a review, with the changed files in `files`). Claude Code asks "
-    "the user first. A small or routine change needs none.")
+    "them. Before your final message on this change, call `modelquad_delegate` for a "
+    "review, with the changed files in `files`. Claude Code asks the user first; if they "
+    "decline, carry on without Codex. A change across this many files is not a small "
+    "one, so this applies to it.")
 OFFER = (
     "ModelQuad: you have changed {count} files in this session and Codex has not reviewed "
-    "them. When this change is complete, before you report it done, offer the user a Codex "
-    "review in one short sentence. A small or routine change needs none.")
+    "them. In your final message on this change, offer the user a Codex review in one "
+    "short sentence. A change across this many files is not a small one, so this "
+    "applies to it.")
+
+_EMPTY = {"files": [], "reminders": 0, "edits_since": 0}
 
 
 def _read_event(stdin, clock, deadline):
@@ -84,15 +94,20 @@ def _changed_path(event) -> str | None:
     return os.path.normcase(os.path.normpath(path))
 
 
+def _count(value) -> int:
+    return value if type(value) is int and 0 <= value <= 1000 else 0
+
+
 def _load(path: Path) -> dict:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {"files": [], "reminded": False}
+        return dict(_EMPTY, files=[])
     files = payload.get("files") if isinstance(payload, dict) else None
     if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
-        return {"files": [], "reminded": False}
-    return {"files": files[:MAX_DIGESTS], "reminded": payload.get("reminded") is True}
+        return dict(_EMPTY, files=[])
+    return {"files": files[:MAX_DIGESTS], "reminders": _count(payload.get("reminders")),
+            "edits_since": _count(payload.get("edits_since"))}
 
 
 def _save(path: Path, payload: dict) -> None:
@@ -148,7 +163,7 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
         if not isinstance(tool, str) or not isinstance(session, str) or not session:
             return 0
         is_delegate = tool.endswith(DELEGATE_TOOL_SUFFIX)
-        if tool not in EDIT_TOOLS and not is_delegate:
+        if tool not in EDIT_TOOLS and tool not in RUN_TOOLS and not is_delegate:
             return 0
         if state is None:
             from modelquad.paths import state_root
@@ -157,23 +172,34 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
         record = folder / f"{_digest(session)[:32]}.json"
         if is_delegate:
             if record.exists():
-                _save(record, {"files": [], "reminded": False})
+                _save(record, dict(_EMPTY, files=[]))
             return 0
-        changed = _changed_path(event)
-        if changed is None:
-            return 0
-        payload = _load(record)
-        digest = _digest(changed)
-        if digest not in payload["files"] and len(payload["files"]) < MAX_DIGESTS:
-            payload["files"].append(digest)
-        remind = len(payload["files"]) >= THRESHOLD and not payload["reminded"]
+        if tool in RUN_TOOLS:
+            if not record.exists():
+                return 0  # Nothing changed yet: a command alone keeps nothing.
+            payload = _load(record)
+            remind = (len(payload["files"]) >= THRESHOLD and payload["edits_since"] > 0
+                      and payload["reminders"] < MAX_REMINDERS)
+            if not remind:
+                return 0
+        else:
+            changed = _changed_path(event)
+            if changed is None:
+                return 0
+            payload = _load(record)
+            digest = _digest(changed)
+            if digest not in payload["files"] and len(payload["files"]) < MAX_DIGESTS:
+                payload["files"].append(digest)
+            payload["edits_since"] += 1
+            remind = False
         text = None
         if remind and clock() < deadline:
             chosen = (mode or _codex_allowed_mode)(event.get("cwd"))
             if chosen in ("decide", "offer"):
                 text = (DECIDE if chosen == "decide" else OFFER).format(
                     count=len(payload["files"]))
-            payload["reminded"] = True
+            payload["reminders"] += 1
+            payload["edits_since"] = 0
         _save(record, payload)
         _prune(folder, now())
         if text is not None and clock() < deadline:

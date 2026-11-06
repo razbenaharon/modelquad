@@ -110,7 +110,7 @@ def test_claude_decides_by_default_and_off_makes_it_offer(tmp_path):
     proactive = " ".join(server_instructions(True).split())
     for moment in moments:
         assert moment in proactive
-    assert "consult Codex with `modelquad_delegate` yourself" in proactive
+    assert "call `modelquad_delegate` yourself; do not wait for the user to ask" in proactive
     assert "Claude Code asks the user before each ModelQuad Codex call." in proactive
 
     write_proactive(False, preferences)
@@ -122,6 +122,9 @@ def test_claude_decides_by_default_and_off_makes_it_offer(tmp_path):
     assert "offer the user a Codex review" in offer
     assert "only when the user agrees or asks" in offer
     assert "yourself" not in offer
+    for text in (proactive, offer):
+        assert "If the user declines a ModelQuad call, do not run Codex any other way" in text
+        assert "not a shell command or another Codex tool" in text
     preferences.write_text("not json", encoding="utf-8")
     assert read_proactive(preferences) is False
 
