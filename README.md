@@ -24,6 +24,49 @@ Codex to change code, ModelQuad for a read-only second opinion.
 
 Status: early, source-only release. Windows only.
 
+## Who it is for
+
+Developers on Windows who already use Claude Code and the OpenAI Codex CLI,
+each under their own sign-in, and who want a second model to look over
+Claude's work: a review before a commit, an opinion on a design, a reading of
+unfamiliar code. Claude keeps doing the work; Codex only reads and advises.
+
+## How it works
+
+<p align="center">
+  <img src="docs/images/how-it-works.svg" alt="Claude asks, you approve, Codex reads the named files read-only, Claude checks the findings" width="820">
+</p>
+
+1. Claude reaches a moment where a second opinion helps (a change that
+   touched several files is done, a commit or PR is next, a bug survived one
+   fix, a design choice has real trade-offs), or you ask for one with
+   `/modelquad:review`.
+2. Claude Code asks you before the call starts Codex. You see the task and
+   the files it names.
+3. ModelQuad reads only those files, skips credential files and replaces
+   secret-looking values, and gives the text to your Codex CLI. Codex runs
+   read-only in an empty temporary folder, with no file, command, web or MCP
+   tools.
+4. Codex's answer comes back to Claude as findings to check, not as a
+   verified result. Claude checks each one against the code before changing
+   anything.
+
+In short:
+
+- **Install:** clone this repository, `pip install`, add the Claude Code
+  plugin (see [Install](#install)).
+- **Needs:** native Windows, Python 3.11 or newer, Git, Claude Code and the
+  Codex CLI, both signed in with your own accounts (see
+  [Requirements](#requirements)).
+- **Asks first:** an approval prompt before every call that starts Codex,
+  unless you turn on a standing grant for a folder yourself (see
+  [Working without prompts](#working-without-prompts)).
+- **Sends:** the task text and the files the call names go to OpenAI through
+  your Codex CLI; Codex's answer becomes part of your Claude conversation
+  (see [Privacy and network](#privacy-and-network)).
+- **Does not:** let Codex change files, change either provider's usage
+  limits, or connect anywhere but loopback from its own processes.
+
 ## What you get
 
 - **A read-only second opinion from Codex.** Claude Code can send Codex a
@@ -120,15 +163,19 @@ Status: early, source-only release. Windows only.
 - The two tools that start Codex, `modelquad_delegate` and `modelquad_handoff`,
   are marked as needing your interaction (`anthropic/requiresUserInteraction`).
   Claude Code shows its approval prompt before every call, also in auto mode
-  and in bypass-permissions mode, unless you turned the standing grant on for
-  that folder (below). ModelQuad adds no permission rule for its tools.
+  and in bypass-permissions mode. The standing grant (below), which only you
+  can turn on, removes that mark from `modelquad_delegate` in the folders it
+  covers; `modelquad_handoff` always keeps it. ModelQuad adds no permission
+  rule for its tools.
 
 ### Working without prompts
 
 - `modelquad settings auto on --yes` (in the repository, or with
   `--project DIR`; `--global` for every folder, including new ones) turns
   the standing grant on
-  after showing what it means. New Claude Code sessions there register the
+  after showing what it means. Run it in your own terminal: it refuses to
+  turn the grant on when run from inside Claude Code, and Claude is told
+  never to run it. New Claude Code sessions there register the
   Codex tool without the per-call mark, so Claude Code's own permissions
   apply. Add the rule it prints to `permissions.allow`, or answer "don't ask
   again" the first time Claude Code asks.
@@ -154,8 +201,8 @@ Status: early, source-only release. Windows only.
   `modelquad review verdict <decision_id> <F1> confirmed|refuted|undecidable`
   records your own verdict, which outranks Claude's.
 - `modelquad settings auto off` turns it off; a session that started with
-  the grant refuses its next Codex call. `modelquad settings repo <dir> off`
-  and a `.modelquad.toml` that turns Codex off outrank the grant.
+  the grant refuses its next Codex call. `modelquad settings repo off
+  [--project DIR]` and a `.modelquad.toml` that turns Codex off outrank the grant.
 - In a terminal, `modelquad_handoff` then shows the handoff form. Codex starts
   only if you tick the box and accept. In the desktop app's Code tab, which
   shows no forms, Claude Code's approval prompt is your answer, and Codex then
@@ -270,7 +317,9 @@ Code tab, with differences found in testing (Claude Code 2.1.296, October
 
 - Windows, native. WSL and other systems are not supported, and install
   refuses to run there.
-- Python 3.11 or newer.
+- Python 3.11 or newer. CI tests 3.11 and 3.12; 3.13 and 3.14 runs are
+  advisory.
+- Git for Windows, to clone and update this repository.
 - Claude Code, installed and signed in. Claude's quota comes from the status
   line data Claude Code provides with a Claude Pro or Max sign-in. With a Team,
   Enterprise or API-key sign-in, Claude's quota shows as unknown.
@@ -296,6 +345,8 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
     modelquad install claude --plugin
     modelquad doctor
 
+- ModelQuad is not published on PyPI. It installs only from a clone of this
+  repository; a `modelquad` package on PyPI is not this project.
 - `pip install` puts the `modelquad` and `modelquad-mcp` commands on PATH. The
   plugin has no programs of its own and runs these two. The `service` extra
   is only needed for the optional local service, which runs background jobs
@@ -319,9 +370,12 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
 See [docs/PLUGIN.md](docs/PLUGIN.md) for what the plugin contains.
 
 To upgrade, close every Claude Code window first (in a terminal session, type
-`/exit`), then run `git pull` and the same `pip install` again, and update the
-plugin with `claude plugin marketplace update modelquad` and
-`claude plugin update modelquad@modelquad`. A running Claude Code keeps
+`/exit`), then run `git pull` and the same `pip install` again, and refresh the
+plugin with `claude plugin marketplace update modelquad`, then
+`claude plugin uninstall modelquad@modelquad` and
+`claude plugin install modelquad@modelquad` (Claude Code keeps a copy of the
+plugin per version number, so an update alone can keep old files when the
+version did not change; `modelquad doctor` warns when the copy is older). A running Claude Code keeps
 `modelquad-mcp.exe` open, and Windows does not let pip replace a running
 program: the upgrade then fails halfway and leaves ModelQuad uninstalled until
 you run it again with Claude Code closed.
