@@ -283,3 +283,14 @@ def test_the_hook_never_approves_or_denies(tmp_path):
                _run_tests(tmp_path)]
     for output in outputs:
         assert "permissionDecision" not in output and '"approve"' not in output
+
+
+def test_fixes_after_a_review_are_not_reported_as_unreviewed(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+    _delegate(tmp_path, {"content": [{"type": "text", "text": "FINDING F1 | high | a.py:1 | bug | x"}]})
+    _edits(tmp_path, "a.py", "b.py", "d.py")  # fixing the findings
+    assert _stop(tmp_path, active=True) == ""
+    # The next change set starts clean and gets its own gate.
+    _edits(tmp_path, "e.py", "f.py", "g.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"

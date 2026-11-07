@@ -468,6 +468,13 @@ def private_result(result, *, model=None, model_source=None, reasoning_effort=No
             clean[name] = value
     if metadata.get('worker_source') == 'default':  # closed label, never prose
         clean['worker_source'] = 'default'
+    tokens = metadata.get('worker_tokens')
+    if type(tokens) is dict:  # Codex's own token counts: closed keys, integers only
+        counts = {key: tokens[key] for key in ('input_tokens', 'cached_input_tokens', 'output_tokens',
+                                               'reasoning_output_tokens')
+                  if type(tokens.get(key)) is int and 0 <= tokens[key] < 10**10}
+        if counts:
+            clean['worker_tokens'] = counts
     attempted = metadata.get('attempted_providers')
     if type(attempted) is list:
         clean['attempted_providers'] = [value for value in attempted[:32]

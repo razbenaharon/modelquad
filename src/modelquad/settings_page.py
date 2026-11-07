@@ -49,6 +49,8 @@ HOST = "127.0.0.1"
 #: The page closes itself after this long without a request.
 IDLE_SECONDS = 15 * 60
 _MAX_BODY_BYTES = 4096
+#: A refused request's body up to this size is read and dropped (see _discard_body).
+_DISCARD_LIMIT = 64 * 1024
 _HANDLER_TIMEOUT_SECONDS = 15
 _TOKEN_HEADER = "X-ModelQuad-Token"
 _PAGE_FILE = "settings_page.html"
@@ -259,7 +261,28 @@ def _handler_for(page: SettingsPage) -> type[BaseHTTPRequestHandler]:
             self._send(status, json.dumps(payload).encode("utf-8"), "application/json; charset=utf-8")
 
         def _refuse(self, status: int = 404) -> None:
+            self._discard_body()
             self._send(status, b"Not found.\n", "text/plain; charset=utf-8")
+
+        def _discard_body(self) -> None:
+            """Read and drop a refused request's small body before replying.
+
+            Windows resets a connection closed with unread data, and the client
+            then loses the reply. The bytes are never parsed: with one request
+            per connection (HTTP/1.0) they cannot become a second request.
+            """
+            if (self.command != "POST" or getattr(self, "_body_read", False)
+                    or self.headers.get("Transfer-Encoding") is not None):
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or "0")
+            except ValueError:
+                return
+            if 0 < length <= _DISCARD_LIMIT:
+                try:
+                    self.rfile.read(length)
+                except OSError:
+                    pass
 
         # ---------------------------------------------------------- checks
 
@@ -305,6 +328,7 @@ def _handler_for(page: SettingsPage) -> type[BaseHTTPRequestHandler]:
             if length < 0 or length > _MAX_BODY_BYTES:
                 return self._refuse(413)
             body = self.rfile.read(length)
+            self._body_read = True
             page.touch()
             if self.path == "/api/state":
                 return self._json(200, current_state(page.project, page.usage_directory))

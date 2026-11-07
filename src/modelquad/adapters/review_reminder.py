@@ -101,7 +101,7 @@ FAILED = ("ModelQuad: the Codex review of this change did not complete ({count} 
 _EMPTY = {"files": [], "reminders": 0, "edits_since": 0, "sensitive": False,
           "consulted": False, "gate": "none", "review": "none"}
 _GATES = ("none", "blocked", "reported")
-_REVIEWS = ("none", "done", "failed")
+_REVIEWS = ("none", "done", "fixups", "failed")
 _EVENTS = ("PostToolUse", "PreToolUse", "Stop")
 
 
@@ -253,6 +253,13 @@ def _context(event_name: str, text: str) -> str:
 
 def _stop(event, payload, cwd, session, standing) -> str | None:
     """The review gate's answer at Stop: a block, a message to the user, or None."""
+    if payload["review"] == "fixups":
+        # The change was reviewed and these edits fixed its findings. Close it.
+        payload.update(files=[], edits_since=0, reminders=0, sensitive=False, gate="none",
+                       review="none")
+        return None
+    if payload["review"] == "done":
+        payload["review"] = "none"  # The turn ended after a review; later edits are new work.
     count = len(payload["files"])
     pending = count >= THRESHOLD or (payload["sensitive"] and count >= 1)
     if not pending or not (standing or _granted)(cwd):
@@ -369,7 +376,9 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
             if SENSITIVE.search(relative):
                 payload["sensitive"] = True
             if payload["review"] == "done":
-                payload["review"] = "none"
+                # Edits after a review, before Claude stops, are the fixes for its
+                # findings: not a new change set to review again.
+                payload["review"] = "fixups"
             if payload["gate"] == "reported" and payload["review"] != "failed":
                 payload["gate"] = "none"  # A new change set after a reported one.
             _save(record, payload)
