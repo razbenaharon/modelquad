@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Copy the packaged Claude skills into the experimental plugin folder.
+"""Copy the packaged Claude skills and MCP entry into the plugin folder.
 
-The adapter templates under ``src/modelquad/adapters/templates/claude/skills``
-are the single source. A plugin namespaces its skills (``/modelquad:review``),
+The adapter templates under ``src/modelquad/adapters/templates/claude`` are
+the single source. A plugin namespaces its skills (``/modelquad:review``),
 so each copy only drops the ``modelquad-`` prefix from its ``name:`` line, and
-the guidance skill ``modelquad`` becomes ``guide``. Run after editing a
-template; ``tests/test_plugin_prototype.py`` fails while the copies differ.
+the guidance skill ``modelquad`` becomes ``guide``. The MCP entry is copied
+as it is: it already launches the bare ``modelquad-mcp`` that pip puts on
+PATH. Run after editing a template; ``tests/test_plugin_prototype.py`` fails
+while the copies differ.
 
     python scripts/sync_plugin.py
 """
@@ -17,7 +19,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "src" / "modelquad" / "adapters" / "templates" / "claude" / "skills"
+MCP_TEMPLATE = TEMPLATES.parent / "mcp" / "mcp-servers.json"
 PLUGIN_SKILLS = ROOT / "plugin" / "skills"
+PLUGIN_MCP = ROOT / "plugin" / ".mcp.json"
 #: Template folder -> skill name inside the plugin.
 SKILLS = {
     "modelquad": "guide",
@@ -25,6 +29,8 @@ SKILLS = {
     "modelquad-handoff": "handoff",
     "modelquad-quota": "quota",
     "modelquad-setup": "setup",
+    "modelquad-split": "split",
+    "modelquad-settings": "settings",
 }
 
 
@@ -42,6 +48,8 @@ def main() -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(plugin_copy(template, plugin_name))
         print(f"wrote {target.relative_to(ROOT).as_posix()}")
+    PLUGIN_MCP.write_bytes(MCP_TEMPLATE.read_bytes())
+    print(f"wrote {PLUGIN_MCP.relative_to(ROOT).as_posix()}")
     return 0
 
 

@@ -5,8 +5,8 @@ Build details and the project's safety rules are in [AGENTS.md](AGENTS.md).
 
 ## Before you start
 
-- **Scope.** Version 1 supports one host, Claude Code, and one worker, the
-  OpenAI Codex CLI. Support for another host or another provider needs an
+- **Scope.** ModelQuad supports one host, Claude Code, and one second tool,
+  the OpenAI Codex CLI. Support for another host or another provider needs an
   issue first, so the scope can be discussed before any code is written.
   Pull requests that add a provider without an agreed issue may be closed.
 - **Larger changes.** For anything bigger than a small fix, open an issue
@@ -57,15 +57,16 @@ import path:
 
 More about the scripts is in [scripts/README.md](scripts/README.md).
 
-Do not use ModelQuad itself while developing this repository: do not run
-`modelquad route` and do not call `modelquad_*` MCP tools. The tool under
+Do not use ModelQuad itself while developing this repository: do not ask it
+which tool fits a task and do not call `modelquad_*` MCP tools. The tool under
 development is not the tool for developing it.
 
 ## Safety invariants
 
 [AGENTS.md](AGENTS.md) lists safety invariants, for example: a worker never
 starts another worker, unknown values stay unknown, ModelQuad does not
-extract or proxy provider credentials, installed hooks are advisory only, and
+extract or proxy provider credentials, installed hooks never approve a tool call and only the two review gates may
+stop one, and
 every call that starts Codex asks the user. A change must not weaken them. If
 you think one is wrong, open an issue.
 

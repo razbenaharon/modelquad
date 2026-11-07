@@ -54,7 +54,7 @@ Only the latest release, and the `main` branch, receive security fixes.
 
 ## Security design today
 
-This section describes what the code does now. It is not a guarantee.
+This section describes what the code does now, not a promise about the future.
 
 **Local only.** ModelQuad has no server of its own. Its own processes connect
 only to loopback addresses: each entry point adds an audit hook that refuses
@@ -67,9 +67,31 @@ starts. Provider traffic is made by the provider CLIs. See
 standard input and output. It does not listen on a port. The two tools that
 start Codex, `modelquad_delegate` and `modelquad_handoff`, are marked
 `anthropic/requiresUserInteraction`, so Claude Code asks the user before every
-call (`tests/test_oss_export_surface.py`). ModelQuad adds no permission rule
-for its tools. The job tools answer only for jobs started from the project
-folder they are given.
+call (`tests/test_oss_export_surface.py`). Two more tools can start Codex, and
+both belong to a handoff window that is built but switched off in this
+version (`handoff_widget.ENABLED`): `modelquad_handoff_confirm` is the
+window's Approve / Decline button, marked app-only so a host keeps it from
+the model, and `modelquad_handoff_wait` starts Codex only after that button
+was pressed. It refuses in a client that renders no window
+(`tests/test_handoff_widget.py`).
+**The standing grant.** A user who wants Claude to consult Codex without a
+prompt for each call turns a standing grant on, for one repository or for
+every folder (`modelquad settings auto on --yes`, after a notice;
+`src/modelquad/grant.py`). A Claude Code session that starts in a granted
+folder then registers `modelquad_delegate` without
+`anthropic/requiresUserInteraction`, so Claude Code's own permissions apply:
+the user's allow rule, or "don't ask again" on the first prompt, lets the
+calls run. Every call re-checks the grant for its own folder and refuses
+when it is missing or was turned off; a repository set to Codex off, or a
+`.modelquad.toml` that turns Codex off, outranks it. No MCP tool can turn a
+grant on (`tests/test_standing_grant.py`). Codex stays read-only and
+tool-less either way.
+
+ModelQuad adds no permission rule for its tools. The job tools answer only
+for jobs started from the project folder they are given. A folder argument
+that is not a local folder (a network share such as `\\host\share`, a device
+path, or a link to one) is refused before anything opens it, so no tool makes
+Windows connect to another machine (`src/modelquad/localpath.py`).
 
 **Loopback service (optional).** `src/modelquad/service/`.
 
@@ -86,9 +108,9 @@ folder they are given.
   cross-site page. A service started without a verified secret refuses every
   request except the proof (`service/trust.py`, `tests/test_service_trust.py`).
 - FastAPI's documentation and schema pages are turned off.
-- The routes are the listener proof, health, the background-work setting, the
+- The endpoints are the listener proof, health, the background-work setting, the
   summary of waiting answers, and the job launch, diagnostics, fate and
-  release-fate routes. The launch route refuses every browser request, even
+  release-fate endpoints. The launch endpoint refuses every browser request, even
   one with the secret, and starts only a job ModelQuad has already prepared in
   the state folder.
 - Turning background work on through the API needs the consent that
@@ -154,9 +176,16 @@ What it does not protect:
 - At most one active attempt per request is allowed. A unique index in the
   database enforces it.
 
-**Hooks ModelQuad installs.** They are advisory. They never block or approve a
-Claude Code tool call, and they never open a conversation transcript, even
-when Claude Code passes its path (`tests/test_hook_transcript_boundary.py`).
+**Hooks ModelQuad installs.** They never approve a Claude Code tool call, and
+they never open a conversation transcript, even when Claude Code
+passes its path (`tests/test_hook_transcript_boundary.py`). All are advisory
+except two gates, only in a folder with the standing grant and at most once
+per change set each: the consultation gate may deny one edit (the first of a
+sensitive file, or the one that makes the change three files) until Codex is
+consulted, and the Stop review gate may block Claude once to ask for a Codex
+review, never while Claude is already continuing for a stop hook. A
+consultation or review that failed or was not done is told to the user and
+never stops the change again (`tests/test_review_reminder.py`).
 
 **Credentials.** ModelQuad does not extract or proxy provider credentials. The
 Codex CLI and Claude Code use their own logins. Two kinds of files can still
@@ -190,7 +219,8 @@ carries a `modelquad` folder could replace ModelQuad's own code. Keep
 `PYTHONPATH` absolute or unset; `modelquad doctor` warns about a relative
 entry.
 
-**Local data.** History, retained answers and logs stay on the machine. See
+**Local data.** History, retained answers, the review ledger and logs stay on
+the machine. See
 [PRIVACY.md](PRIVACY.md).
 
 **Releases.** ModelQuad is distributed as source only. There are no signed

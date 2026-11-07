@@ -194,3 +194,129 @@ def test_check_py_runs_a_real_check_against_a_rebound_tree():
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
     assert "checking " + str(REPO_ROOT.resolve()) in result.stdout
+
+
+# ------------------------------------------------ the banned-phrase guard
+
+
+def _fresh_check(tree: Path):
+    """A private copy of `check.py` bound to `tree`, so no other test sees the binding."""
+    spec = importlib.util.spec_from_file_location("_modelquad_check_wording", CHECK_PY)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module._bind_repo(tree)
+    return module
+
+
+def _tree(tmp_path: Path, files: dict[str, str]) -> Path:
+    root = tmp_path / "tree"
+    for relative, text in files.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    return root
+
+
+def test_public_text_uses_none_of_the_banned_phrases():
+    """README, docs/, the skills and the server instructions pass as they are.
+
+    A private copy bound to this repository: the shared fixture may have been
+    pointed at another tree by an earlier test.
+    """
+    module = _fresh_check(REPO_ROOT)
+    assert module._wording_files(), "the wording guard found nothing to scan"
+    assert module._server_instruction_texts(), "the wording guard read no server instructions"
+    problems = module._check_banned_phrases()
+    assert not problems, f"banned phrases in public text: {problems}"
+
+
+@pytest.mark.parametrize(
+    ("relative", "text", "label"),
+    [
+        ("README.md", "Use the official Codex plugin.\n", "official"),
+        ("README.md", "ModelQuad is not a router.\n", "route, router, routing"),
+        ("README.md", "Keep coding when Claude\nruns out.\n", "keep coding when Claude runs out"),
+        ("README.md", "It helps you save your Claude\nquota.\n", "save quota or usage"),
+        ("PRIVACY.md", "Combine both of your subscriptions.\n", "combine or pool subscriptions"),
+        ("docs/GUIDE.md", "A safe second opinion.\n", "safe"),
+        ("plugin/skills/split/SKILL.md", "Never hit a limit again.\n", "beat or bypass a limit"),
+        ("src/modelquad/adapters/templates/claude/skills/modelquad/SKILL.md",
+         "Unlimited reviews.\n", "unlimited"),
+        ("README.md", "כלי רשמי לעבודה.\n", "רשמי"),
+        ("README.md", "עם ניתוב בין הכלים.\n", "ניתוב"),
+        ("src/modelquad/adapters/server_instructions.py",
+         '_INTRO = (\n    "ModelQuad is an "\n    "auto-switch for your plans."\n)\n', "auto-switch"),
+        # Code people and Claude read: string literals, read with ast.
+        ("src/modelquad/mcp/presentation.py",
+         'def line():\n    return {"note": "A safe second opinion."}\n', "safe"),
+        ("src/modelquad/cli.py", 'HELP = f"Use the official {name} CLI."\n', "official"),
+        ("src/modelquad/execution/noshell.py",
+         '_GUIDANCE = {"x": ("Open it "\n    "securely.")}\n', "secure"),
+        ("src/modelquad/mcp/server.py",
+         'def modelquad_status():\n    """Shows the router state."""\n', "route, router, routing"),
+        ("plugin/hooks/quota-band.tsx", 'const NOTE = "Never hit a limit again";\n', "beat or bypass a limit"),
+    ],
+)
+def test_the_docs_check_fails_on_a_planted_banned_phrase(tmp_path, capsys, relative, text, label):
+    """`python scripts/check.py docs` fails, naming the file and the phrase."""
+    module = _fresh_check(_tree(tmp_path, {relative: text}))
+    problems = module._check_banned_phrases()
+    assert any(problem.startswith(relative + ":") and f"({label})" in problem for problem in problems), problems
+
+    assert module.check_docs() == module.EXIT_FAILED
+    out = capsys.readouterr().out
+    assert "FAIL  docs: public text uses none of the banned phrases" in out
+
+
+def test_ordinary_words_that_contain_a_banned_one_pass(tmp_path):
+    """Whole words only: no false hit inside a longer word or on a bare verb."""
+    text = (
+        "Your approval is asked for each call, a routine check.\n"
+        "Before it changes a file, ModelQuad saves a full copy. The choice is saved.\n"
+        "Safety rules and security reports. How the layers combine.\n"
+        "Claude Code's bypass-permissions mode still asks.\n"
+        "הרשמים שלי מהסשן.\n"
+    )
+    module = _fresh_check(_tree(tmp_path, {"README.md": text}))
+    assert module._check_banned_phrases() == []
+
+
+def test_code_identifiers_and_developer_docstrings_pass(tmp_path):
+    """In code, only text a reader sees is scanned.
+
+    A literal without a space is an identifier, key or code; a docstring is
+    for developers unless it is a `modelquad_*` tool's description; and an
+    allow-listed stored value passes only where it is quoted as code.
+    """
+    source = (
+        '"""Module docstring about the router."""\n'
+        'MODE = "routing_mode"\n'
+        'KIND = "safe"\n'
+        'def _helper():\n'
+        '    """Internal: the routing record."""\n'
+        '    return "`kind` is \\"routing\\" or \\"execution\\"; try \'routing:7\'."\n'
+    )
+    module = _fresh_check(_tree(tmp_path, {"src/modelquad/mcp/server.py": source}))
+    assert module._code_texts(), "the wording guard read no code strings"
+    assert module._check_banned_phrases() == []
+
+    module._bind_repo(_tree(tmp_path / "bare", {
+        "src/modelquad/mcp/server.py": 'X = "Pick a routing mode."\n'}))
+    problems = module._check_banned_phrases()
+    assert problems == ["src/modelquad/mcp/server.py:1: 'routing' (route, router, routing)"], problems
+
+
+def test_the_allowed_identifiers_stay_tiny():
+    module = _fresh_check(REPO_ROOT)
+    assert module.BANNED_PHRASE_ALLOWED_IDENTIFIERS <= {"routing"}
+    assert len(module.BANNED_PHRASE_ALLOWED_LINES) <= 3
+
+
+def test_an_allow_listed_line_passes_and_only_that_line(tmp_path):
+    """The allow-list is exact lines, never a file or a word."""
+    module = _fresh_check(tmp_path)
+    allowed = sorted(module.BANNED_PHRASE_ALLOWED_LINES)[0]
+    module._bind_repo(_tree(tmp_path, {"README.md": f"{allowed}\nIt is endorsed by nobody.\n"}))
+    problems = module._check_banned_phrases()
+    assert problems == ["README.md:2: 'endorsed' (endorsed)"], problems

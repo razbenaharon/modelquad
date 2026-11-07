@@ -95,30 +95,36 @@ def test_server_instructions_leave_the_delegation_decision_to_the_host():
         assert len(server_instructions(proactive)) < 4096
 
 
-def test_proactive_use_is_opt_in(tmp_path):
-    """Default: offer, and call only when the user agrees or asks. On: Claude may decide."""
+def test_claude_decides_by_default_and_off_makes_it_offer(tmp_path):
+    """Default: Claude consults Codex at the named moments. Off: offer, and call only
+    when the user agrees or asks. Either way Claude Code's prompt asks the user."""
     from modelquad.adapters.server_instructions import (
         read_proactive, server_instructions, write_proactive,
     )
 
     preferences = tmp_path / "state" / "preferences.json"
-    assert read_proactive(preferences) is False
-    assert server_instructions() == server_instructions(False)
-    default = " ".join(server_instructions(False).split())
-    assert "offer the user a Codex review" in default
-    assert "a multi-file change, a risky fix, before a commit or PR" in default
-    assert "only when the user agrees or asks" in default
-    assert "on its own" not in default
-
-    write_proactive(True, preferences)
     assert read_proactive(preferences) is True
     assert server_instructions() == server_instructions(True)
+    moments = ("a change that touched several files is complete", "before a commit or PR",
+               "a bug survived one fix attempt", "a design choice has real trade-offs")
     proactive = " ".join(server_instructions(True).split())
-    assert "Claude may decide on its own to consult Codex" in proactive
-    assert "Claude Code always asks the user before each ModelQuad Codex call." in proactive
+    for moment in moments:
+        assert moment in proactive
+    assert "call `modelquad_delegate` yourself; do not wait for the user to ask" in proactive
+    assert "Claude Code asks the user before each ModelQuad Codex call." in proactive
 
     write_proactive(False, preferences)
     assert read_proactive(preferences) is False
+    assert server_instructions() == server_instructions(False)
+    offer = " ".join(server_instructions(False).split())
+    for moment in moments:
+        assert moment in offer
+    assert "offer the user a Codex review" in offer
+    assert "only when the user agrees or asks" in offer
+    assert "yourself" not in offer
+    for text in (proactive, offer):
+        assert "If the user declines a ModelQuad call, do not run Codex any other way" in text
+        assert "not a shell command or another Codex tool" in text
     preferences.write_text("not json", encoding="utf-8")
     assert read_proactive(preferences) is False
 
@@ -131,7 +137,7 @@ def test_settings_proactive_command_saves_the_choice(tmp_path, capsys):
     assert read_proactive() is True
     out = capsys.readouterr().out
     assert "Claude may decide on its own to consult Codex" in out
-    assert "still asks you before each" in out
+    assert "asks you before each ModelQuad Codex call unless the standing grant" in out
     assert cli.main(["settings", "proactive", "off"]) == 0
     assert read_proactive() is False
 
@@ -194,8 +200,8 @@ def test_installed_host_instructions_state_the_advisory_contract(tmp_path, adapt
         assert "asks the user before" in flat, name
         assert "read-only" in flat, name
         assert re.search(r"not (?:as )?instructions", flat), name
-        # Writing changes belongs to OpenAI's Codex plugin, not to ModelQuad.
-        assert "`/codex:rescue`" in flat, name
+        # Claude writes the code; Codex through ModelQuad only reads and advises.
+        assert "Claude makes the code changes itself" in flat, name
         # Unchanged obligations: the worker guard and job scoping.
         assert "MODELQUAD_WORKER=1" in flat, name
         assert "`modelquad_job_*`" in flat and "absolute project directory" in flat, name
@@ -726,7 +732,8 @@ def test_no_adapter_wraps_atomic_write_in_a_dead_value_error_handler():
     assert offenders == []
 
 
-_COMMAND_SKILLS = ("modelquad-review", "modelquad-handoff", "modelquad-quota", "modelquad-setup")
+_COMMAND_SKILLS = ("modelquad-review", "modelquad-handoff", "modelquad-quota", "modelquad-setup",
+                   "modelquad-split", "modelquad-settings")
 
 
 def test_claude_install_and_uninstall_cover_the_command_skills(tmp_path):

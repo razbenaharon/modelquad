@@ -389,13 +389,13 @@ def usage(directory: Path, plan):
 
 
 @pytest.mark.parametrize("plan,line", [
-    ("plus", "Codex account: personal ChatGPT plan. If this is work code, check you may send it "
+    ("plus", "Codex account: personal. If this is work code, check you may send it "
              "to a personal account."),
-    ("pro", "Codex account: personal ChatGPT plan. If this is work code, check you may send it "
+    ("pro", "Codex account: personal. If this is work code, check you may send it "
             "to a personal account."),
-    ("business", "Codex account: workspace plan."),
-    ("enterprise", "Codex account: workspace plan."),
-    ("edu", "Codex account: workspace plan."),
+    ("business", "Codex account: work."),
+    ("enterprise", "Codex account: work."),
+    ("edu", "Codex account: work."),
     ("mystery", "Codex account: unknown."),
     (None, "Codex account: unknown."),
 ])
@@ -434,7 +434,7 @@ def test_handoff_form_lists_files_bytes_skips_and_account(project, isolate_usage
     size = (project / "src" / "app.py").stat().st_size
     assert f"Files to send (1, {size} bytes): src/app.py ({size} bytes)" in message
     assert "Not sent: config/secrets.txt (denied_by_claude_settings)" in message
-    assert ("Codex account: personal ChatGPT plan. If this is work code, check you may "
+    assert ("Codex account: personal. If this is work code, check you may "
             "send it to a personal account.") in message.splitlines()
     assert "plus" not in message.split("Codex account:")[1].split("\nTask:")[0]
     assert SECRET not in message

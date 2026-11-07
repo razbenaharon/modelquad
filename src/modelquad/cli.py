@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Command-line interface for setup, diagnosis, settings and routing advice."""
+"""Command-line interface for setup, diagnosis, settings and task-fit advice."""
 
 from __future__ import annotations
 
@@ -115,6 +115,34 @@ def render_status(statuses: Sequence[ProviderStatus]) -> None:
         for status in statuses
     ]
     _print_table(("Provider", "Available", "Remaining", "Freshness", "Observed at", "Reason"), rows)
+
+
+def render_status_summary(statuses: Sequence[ProviderStatus], config, usage_directory=None) -> None:
+    """Under the table: the status line's words, the plans and this folder's Codex setting."""
+    from datetime import datetime, timezone
+
+    from . import plans
+    from .assistance import handoff_suggestion, statusline_text
+    from .doctor import repository_checks
+
+    now = datetime.now(timezone.utc)
+    print()
+    print(f"Quota now: {statusline_text(statuses, config.freshness, now=now)}")
+    note = handoff_suggestion(statuses, config.freshness, now=now)
+    if note is not None:
+        print(f"Note: {note['message']}")
+    print("Plans:")
+    try:
+        for line in plans.human_lines(plans.current(Path(usage_directory or DEFAULT_USAGE_DIRECTORY))):
+            print(f"  {line}")
+    except Exception:  # noqa: BLE001 -- the table above already answered
+        print("  unknown. Set them with: modelquad settings plan")
+    print("This folder:")
+    try:
+        for check in repository_checks(Path.cwd()):
+            print(f"  {check.detail}")
+    except Exception:  # noqa: BLE001
+        print("  Could not check its Codex setting. Run: modelquad doctor")
 
 
 def _route_row(score: ProviderScore) -> tuple[str, ...]:
@@ -373,16 +401,75 @@ def _install_notices(as_json: bool) -> dict[str, object]:
     return fields
 
 
-def _mcp_registration_skipped(client: str, target_dir: Path, report: InstallReport) -> str | None:
+def _adapter_for(client: str, args: argparse.Namespace, factory=None) -> object:
+    """The adapter for one client, honouring a ``--plugin`` / ``--no-plugin`` given now."""
+
+    choice = getattr(args, "plugin", None)
+    if client == "claude" and choice is not None:
+        from .adapters.claude_adapter import ClaudeAdapter
+
+        return ClaudeAdapter(via_plugin=choice)
+    return factory() if factory is not None else get_adapter(client)
+
+
+def _note_notice_shown(args: argparse.Namespace, notices: dict, reports: list) -> None:
+    """Record that an install showed the data-flow notice, so Codex calls need not.
+
+    Only a real install that showed it and wrote something counts; a dry run,
+    or an install refused before writing, does not.
+    """
+
+    if args.dry_run or "data_flow_notice" not in notices or not reports:
+        return
+    from .disclosure import record_notice_shown
+
+    try:
+        record_notice_shown("install")
+    except OSError:
+        pass  # The first Codex call then shows the notice instead.
+
+
+PLUGIN_CHOICE_NOT_SAVED = (
+    "Installed, but the plugin choice was not saved (ModelQuad could not write its "
+    "preferences.json), so a later repair may install the direct server again. Run this "
+    "install again once the file can be written.")
+
+
+def _remember_plugin_choice(args: argparse.Namespace) -> str | None:
+    """Save ``--plugin`` / ``--no-plugin`` once an install has used it, so a repair keeps it.
+
+    Runs after the adapter changed files, so it never raises: a choice that
+    could not be saved is returned as the client's error line instead.
+    """
+
+    choice = getattr(args, "plugin", None)
+    if choice is None or args.dry_run:
+        return None
+    from .adapters.server_instructions import write_claude_plugin
+
+    try:
+        write_claude_plugin(choice)
+    except OSError:
+        return PLUGIN_CHOICE_NOT_SAVED
+    return None
+
+
+def _mcp_registration_skipped(
+    client: str, target_dir: Path, report: InstallReport, adapter: object = None
+) -> str | None:
     """The reason an install left the host unregistered, or None.
 
     Every other skipped action can be a deliberate preservation (a user's own
     status line), but without the MCP entry Claude Code cannot reach
-    ModelQuad at all, so the install has not done its job.
+    ModelQuad at all, so the install has not done its job. Beside the plugin
+    install registers nothing, and the plugin's server is the registration.
     """
 
     from .adapters.report import ActionKind
     from .hostruntime import json_mcp_config_path
+
+    if getattr(adapter, "via_plugin", False):
+        return None
 
     config_path = json_mcp_config_path(client, Path(target_dir))
     for action in report.actions:
@@ -447,15 +534,17 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
         # registration predating this installation. Ordinary uninstall keeps
         # its existing displaced-registration restoration contract.
         before = (None, None) if integrations_off else _registration_before_uninstall(client, target_dir, method_name)
+        adapter = (_adapter_for(client, args, descriptor.adapter_cls) if method_name == "install"
+                   else descriptor.adapter_cls())
         try:
             if method_name == "install":
                 from .adapters.registration import install_with_registration
 
                 report = install_with_registration(
-                    client, target_dir, descriptor.adapter_cls(), dry_run=args.dry_run
+                    client, target_dir, adapter, dry_run=args.dry_run
                 )
             else:
-                report = descriptor.adapter_cls().uninstall(target_dir, dry_run=args.dry_run)
+                report = adapter.uninstall(target_dir, dry_run=args.dry_run)
         except (OSError, ValueError, BackupPersistenceError) as exc:
             # A failed uninstall still owes the user their earlier registration.
             restore = None if integrations_off else _restore_displaced_registration(
@@ -467,8 +556,11 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
         restore = None if integrations_off else _restore_displaced_registration(
             client, target_dir, args, method_name, before
         )
+        not_saved = None
         if method_name == "install":
-            skipped = _mcp_registration_skipped(client, target_dir, report)
+            if client == "claude":
+                not_saved = _remember_plugin_choice(args)
+            skipped = _mcp_registration_skipped(client, target_dir, report, adapter)
             if skipped is not None:
                 results.append({"client": client, "detected": True, "report": report,
                                 "error": f"Not registered: {skipped}", "restore": None})
@@ -478,7 +570,7 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
                 "client": client,
                 "detected": True,
                 "report": report,
-                "error": None,
+                "error": not_saved,
                 "restore": restore,
                 "status_line_recipe": (
                     _status_line_recipe(client, target_dir) if method_name == "install" else None
@@ -486,6 +578,8 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
             }
         )
 
+    if method_name == "install":
+        _note_notice_shown(args, notices, [result for result in results if result.get("report")])
     incomplete: list[dict[str, str]] = []
     if integrations_off:
         from .adapters.report import ActionKind
@@ -647,9 +741,13 @@ def render_doctor(report: DoctorReport) -> None:
             [(check.name, check.status.value, check.detail) for check in report.checks],
         )
     else:
+        from .doctor import PERSON_ONLY_CHECKS
+
         sections: dict[str, list] = {"Core": []}
         for check in report.checks:
-            if check.name.startswith(core_prefixes):
+            if check.name in PERSON_ONLY_CHECKS:
+                section = "Plans and this repository"
+            elif check.name.startswith(core_prefixes):
                 section = "Core"
             else:
                 matching_ids = [
@@ -671,6 +769,10 @@ def render_doctor(report: DoctorReport) -> None:
 
     package_check = next((check for check in report.checks if check.name == f"{PRODUCT_NAME} package"), None)
     print(f"Package version: {package_check.detail if package_check is not None else 'n/a'}")
+    attention = [check.name for check in report.checks if check.status.value in ("missing", "warn")]
+    if attention:
+        print(f"Needs attention ({len(attention)}): {', '.join(attention)}. "
+              "Each one's Detail above says what to do.")
     print(f"Overall: {'HEALTHY' if report.ok else 'DEGRADED'}")
 
 
@@ -832,15 +934,16 @@ def _run_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             errors.append({"client": client, "error": OFF_GUIDANCE})
             continue
         before = _registration_before_uninstall(client, target_dir, method_name)
+        adapter = _adapter_for(client, args) if method_name == "install" else get_adapter(client)
         try:
             if method_name == "install":
                 from .adapters.registration import install_with_registration
 
                 report = install_with_registration(
-                    client, target_dir, get_adapter(client), dry_run=args.dry_run
+                    client, target_dir, adapter, dry_run=args.dry_run
                 )
             else:
-                report = get_adapter(client).uninstall(target_dir, dry_run=args.dry_run)
+                report = adapter.uninstall(target_dir, dry_run=args.dry_run)
         except (OSError, ValueError, BackupPersistenceError) as exc:
             errors.append({"client": client, "error": str(exc)})
             # A failed uninstall still owes the user their earlier registration.
@@ -853,10 +956,16 @@ def _run_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             restores.append(restore)
         reports.append(report)
         if method_name == "install":
+            if client == "claude":
+                not_saved = _remember_plugin_choice(args)
+                if not_saved is not None:
+                    errors.append({"client": client, "error": not_saved})
             recipes.append(_status_line_recipe(client, target_dir))
-            skipped = _mcp_registration_skipped(client, target_dir, report)
+            skipped = _mcp_registration_skipped(client, target_dir, report, adapter)
             if skipped is not None:
                 errors.append({"client": client, "error": f"Not registered: {skipped}"})
+    if method_name == "install":
+        _note_notice_shown(args, notices, reports)
     if args.as_json:
         if args.all_clients:
             print(
@@ -898,6 +1007,164 @@ def _run_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentPars
     return 1 if errors or failed_restore else 0
 
 
+def _run_plan_setting(provider: str | None, value: str | None) -> int:
+    """Show, set or unset the plan the user says they are on with each provider."""
+    from . import plans
+
+    if provider is not None and value is not None:
+        try:
+            plans.write_declared(provider, None if value.strip().casefold() == "unset" else value)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"The setting was not saved: {exc.strerror or exc}", file=sys.stderr)
+            return 1
+    views = plans.current(DEFAULT_USAGE_DIRECTORY)
+    print("Plans:")
+    for line in plans.human_lines(views):
+        print(f"  {line}")
+    if provider is not None and value is None:
+        print(f"{provider.capitalize()} plans you can set: "
+              f"{', '.join(plans.DECLARABLE_PLANS[provider])}, or unset.")
+    print("Stored only on this computer, in preferences.json. Claude sees only the account kind "
+          "(personal, workspace or unknown), never the plan name.")
+    return 0
+
+
+_REPO_MODE_TEXT = {
+    "on": "on: Claude may decide on its own to consult Codex in this repository.",
+    "off": "off: no Codex in this repository; ModelQuad refuses every Codex call here.",
+    "offer-only": ("offer-only: Claude offers Codex here when it would help and calls it "
+                   "when you agree or ask."),
+}
+
+
+_NOT_LOCAL_FOLDER = ("That folder is not a local folder ModelQuad can use (a network share, a "
+                     "device, or a link to one). Use the project's folder on a local drive.")
+
+
+def _run_split_summary(args: argparse.Namespace, config) -> int:
+    """``modelquad split summary``: read-only, from ModelQuad's own history."""
+    from datetime import datetime, timezone
+
+    from . import split_summary
+    from .adapters.pending_reminder import project_key
+
+    from .localpath import reason as local_reason
+
+    folder = Path(args.project) if args.project else Path.cwd()
+    # Before any file-system call: a network share is never opened.
+    if local_reason(os.path.abspath(folder)) is not None:
+        print(_NOT_LOCAL_FOLDER, file=sys.stderr)
+        return 2
+    if not folder.is_dir():
+        print("That project folder does not exist.", file=sys.stderr)
+        return 2
+    key = project_key(str(folder.resolve()))
+    if key is None:
+        print("That project folder cannot be used.", file=sys.stderr)
+        return 2
+    current = tuple(read_status(provider, refresh=False)
+                    for provider in build_providers(config, args.usage_directory))
+    summary = split_summary.summarize(
+        _history_db_path(args), workspace_key=key, period=args.since,
+        now=datetime.now(timezone.utc), current=current, thresholds=config.freshness)
+    if args.as_json:
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    else:
+        for line in summary["lines"]:
+            print(line)
+    return 0 if summary["known"] else 2
+
+
+def _run_repo_setting(choice: str | None, project: str | None) -> int:
+    """Show or set the user's own Codex setting for one repository."""
+    from . import repo_policy, repo_settings
+    from .adapters.server_instructions import read_proactive
+    from .localpath import reason as local_reason
+
+    folder = Path(project) if project else Path.cwd()
+    # Before any file-system call: a network share is never opened.
+    if local_reason(os.path.abspath(folder)) is not None:
+        print(_NOT_LOCAL_FOLDER, file=sys.stderr)
+        return 2
+    if not folder.is_dir():
+        print("That project folder does not exist.", file=sys.stderr)
+        return 2
+    if choice is not None:
+        try:
+            repo_settings.write_mode(folder, choice)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"The setting was not saved: {exc.strerror or exc}", file=sys.stderr)
+            return 1
+    mode = repo_settings.read_mode(folder)
+    if mode is None:
+        print("This repository: inherit (your global setting applies).")
+    else:
+        print(f"This repository: {_REPO_MODE_TEXT[mode]}")
+    global_proactive = read_proactive()
+    result = repo_settings.effective(global_proactive=global_proactive, user_mode=mode,
+                                     policy=repo_policy.load(folder))
+    if result.refusal is not None and result.refusal != repo_settings.USER_CODEX_OFF:
+        print(f"In effect: Codex is refused here by this repository's {repo_policy.FILE_NAME}.")
+    elif result.refusal is None:
+        print({repo_settings.PROACTIVE: "In effect: Claude may decide on its own to consult Codex.",
+               repo_settings.OFFER: "In effect: Claude offers Codex and calls it when you agree or ask.",
+               repo_settings.ON_REQUEST: ("In effect: Claude calls Codex only when you ask "
+                                          f"(this repository's {repo_policy.FILE_NAME}).")}[result.offer])
+    print("Choices: on, off, offer-only, inherit. Claude Code asks you before each "
+          "ModelQuad Codex call unless the standing grant is on (modelquad settings auto).")
+    print("Stored in this computer's preferences.json under a keyed hash of the repository, "
+          "never its path or name. off applies from the next call; Claude is told the rest when "
+          "a new Claude Code session starts here.")
+    return 0
+
+
+def _run_settings_page(project: str | None, *, no_browser: bool = False,
+                       open_browser=None) -> int:
+    """``modelquad settings open``: serve the one-time settings page until Done or idle."""
+    import webbrowser
+
+    from . import settings_page
+
+    folder = settings_page.project_folder(project)
+    if project is not None and folder is None:
+        print("That project folder does not exist or is not a local folder ModelQuad can use.",
+              file=sys.stderr)
+        return 2
+    try:
+        page = settings_page.SettingsPage(folder, DEFAULT_USAGE_DIRECTORY)
+    except OSError as exc:
+        print(f"The settings page could not start: {exc.strerror or exc}", file=sys.stderr)
+        return 1
+    opened = False
+    if not no_browser:
+        try:
+            opened = bool((open_browser or webbrowser.open)(page.url))
+        except Exception:  # noqa: BLE001 -- no browser means the address is printed instead
+            opened = False
+    if opened:
+        print("ModelQuad settings are open in your browser.")
+    else:
+        print("Open this address in your browser (it works only on this computer, "
+              "and only while this command runs):")
+        print(f"  {page.url}")
+    print("Press Done on the page when you finish. The page closes by itself after "
+          f"{settings_page.IDLE_SECONDS // 60} minutes without use.")
+    try:
+        ended = page.serve()
+    except KeyboardInterrupt:
+        ended = "interrupted"
+    print({"done": "Settings page closed. New Claude Code sessions use your settings.",
+           "idle": "Settings page closed after 15 minutes without use. Saved choices stay saved.",
+           "interrupted": "Settings page closed. Saved choices stay saved."}[ended])
+    return 0
+
+
 def _run_proactive_setting(enabled: bool) -> int:
     """Save who decides to consult Codex; the MCP server reads it at session start."""
     from .adapters.server_instructions import write_proactive
@@ -912,9 +1179,137 @@ def _run_proactive_setting(enabled: bool) -> int:
     else:
         print("Proactive use: off. Claude offers Codex when it would help and calls it "
               "when you agree or ask.")
-    print("Claude Code still asks you before each ModelQuad Codex call.")
+    print("Claude Code asks you before each ModelQuad Codex call unless the standing grant "
+          "is on (modelquad settings auto).")
     print("Takes effect in new Claude Code sessions (or after /mcp reconnects modelquad).")
     return 0
+
+
+def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
+    """Turn the standing grant on or off (grant.py), after its notice and a typed yes."""
+    from . import grant
+    from .disclosure import DATA_FLOW, print_lines
+
+    folder = None if args.everywhere else Path(args.project or Path.cwd())
+    if folder is not None and not folder.is_dir():
+        print(f"The folder does not exist: {folder}", file=sys.stderr)
+        return 2
+    if args.choice == "status":
+        on = grant.granted(folder)
+        print("Standing grant: " + ("on" if on else "off")
+              + ("" if folder is None else " for this repository"))
+        if on and folder is not None and not grant.allows(folder):
+            print("Codex is off in this repository, which outranks the grant.")
+        return 0
+    if args.choice == "on":
+        print_lines((*DATA_FLOW, *grant.NOTICE))
+        if not args.consent:
+            if not sys.stdin or not sys.stdin.isatty():
+                print("Not changed. After reading the notice above, run again with --yes.",
+                      file=sys.stderr)
+                return 2
+            try:
+                answer = input_fn("Type yes to turn the standing grant on: ")
+            except (EOFError, KeyboardInterrupt):
+                answer = ""
+            if answer.strip().lower() != "yes":
+                print("Not changed.", file=sys.stderr)
+                return 2
+    try:
+        scope = grant.write(args.choice == "on", directory=folder, everywhere=args.everywhere)
+    except (OSError, ValueError) as exc:
+        print(f"The setting was not saved: {getattr(exc, 'strerror', None) or exc}", file=sys.stderr)
+        return 1
+    if args.choice == "on":
+        print(f"Standing grant: on, for {scope}.")
+        print("For Claude Code to skip its prompt, add this rule to permissions.allow in your "
+              "Claude Code settings (or answer \"don't ask again\" on the first prompt):")
+        print("  " + grant.ALLOW_RULE)
+        print("Takes effect in new Claude Code sessions.")
+    else:
+        print(f"Standing grant: off, for {scope}. Codex calls ask you again in new sessions; "
+              "a session that started with the grant refuses its next call.")
+    return 0
+
+
+def _run_review_command(args: argparse.Namespace) -> int:
+    """``modelquad review report`` and ``modelquad review verdict``."""
+    from . import review_ledger
+
+    if args.review_action == "verdict":
+        try:
+            count = review_ledger.record_verdicts(args.decision_id, [{
+                "finding": args.finding, "verdict": args.verdict, "evidence": args.evidence,
+                "action": args.action, "note": args.note}], source="user")
+        except review_ledger.VerdictRefused as exc:
+            print(f"Not recorded: {exc}", file=sys.stderr)
+            return 2
+        except (OSError, sqlite3.Error, review_ledger.LedgerVersionError) as exc:
+            print(f"Not recorded: {exc}", file=sys.stderr)
+            return 1
+        print(f"Recorded your verdict ({count}). Your word outranks Claude's in the report.")
+        return 0
+    workspace = None if args.all_projects else review_ledger.workspace_id(
+        Path(args.project or Path.cwd()))
+    try:
+        data = review_ledger.report(days=args.days, workspace=workspace)
+    except (OSError, sqlite3.Error, review_ledger.LedgerVersionError) as exc:
+        print(f"The review ledger could not be read: {exc}", file=sys.stderr)
+        return 1
+    if args.as_json:
+        print(json.dumps(data, indent=2, sort_keys=True))
+        return 0
+    for line in review_report_lines(data, all_projects=args.all_projects):
+        print(line)
+    return 0
+
+
+def review_report_lines(data: dict, *, all_projects: bool = False) -> list[str]:
+    """The review report as plain lines. Unknown stays unknown."""
+    def value(item, unit=""):
+        return "unknown" if item is None else f"{item}{unit}"
+
+    f = data["findings"]
+    outcomes = ", ".join(f"{name} {count}" for name, count in sorted(data["runs_by_outcome"].items())) or "none"
+    triggers = ", ".join(f"{name} {count}" for name, count in sorted(data["runs_by_trigger"].items())) or "none"
+    gate = data["gate"]
+    lines = [
+        f"Codex reviews and consultations, last {data['days']:g} days"
+        + (" (all projects)" if all_projects else " (this project)"),
+        f"  Calls: {data['runs']} ({outcomes})",
+        f"  Why: {triggers}",
+        f"  Time: median {value(data['median_seconds'], ' s')}, total {value(data['total_seconds'], ' s')}",
+        f"  Codex tokens: in {value(data['input_tokens'])}, out {value(data['output_tokens'])}",
+        f"  Findings: {f['findings']}"
+        + (f" (and {data['runs_with_unknown_findings']} answer(s) not in the findings format)"
+           if data["runs_with_unknown_findings"] else ""),
+        f"    Confirmed with independent evidence (test, reproduction, CI or your verdict): "
+        f"{f['confirmed_independent']}",
+        f"    Confirmed by Claude's reading only (not proof): {f['confirmed_claude_only']}",
+        f"    Wrong (refuted): {f['refuted']}",
+        f"    Could not be decided: {f['undecidable']}",
+        f"    Not judged yet: {f['unjudged']}",
+        f"  Fixed after a finding: {f['fixed']} (fix verified by a test or reproduction: "
+        f"{f['fixed_and_verified']}); accepted, fix not recorded yet: {f['to_fix']}",
+        f"  Acted on although refuted: {f['refuted_but_acted_on']}",
+        f"  Review gate: asked {gate.get('blocked', 0)}, review done after asking "
+        f"{gate.get('review_done', 0)}, not done and reported {gate.get('not_done_reported', 0)}, "
+        f"review failed {gate.get('review_failed', 0)}, small changes skipped {gate.get('skipped_small', 0)}",
+        f"  Consultation gate: stopped {gate.get('consult_blocked', 0)}, consulted "
+        f"{gate.get('consult_done', 0)}, consultation failed {gate.get('consult_failed', 0)}, "
+        f"reminders {gate.get('consult_reminded', 0)}",
+    ]
+    if f["by_user"]:
+        lines.append(f"  Your own verdicts: {f['by_user']}")
+    if data.get("by_confidence"):
+        lines.append("  By Codex's stated confidence (its confidence is not proof):")
+        for name in ("high", "medium", "low", "not stated"):
+            bucket = data["by_confidence"].get(name)
+            if bucket:
+                lines.append(f"    {name}: {bucket['findings']} finding(s), confirmed "
+                             f"{bucket['confirmed']}, refuted {bucket['refuted']}, undecidable "
+                             f"{bucket['undecidable']}, not judged {bucket['unjudged']}")
+    return lines
 
 
 def _background_work_consented(args: argparse.Namespace, *, input_fn=input) -> bool:
@@ -1474,7 +1869,7 @@ def _run_tools_command(args: argparse.Namespace) -> int:
                 if info.alternative_command:
                     print(f"  Or with {info.alternative_label}:")
                     print(f"      {info.alternative_command}")
-                print(f"  Official instructions: {info.docs_url}")
+                print(f"  Install instructions: {info.docs_url}")
 
         if connection.install is InstallState.NOT_APPLICABLE:
             plugin = plugins.get(connection.provider_id)
@@ -1521,7 +1916,7 @@ class _BuildVersionAction(argparse.Action):
 
 def _routing_mode_argument(value: str) -> str:
     if value not in service_history.VALID_ROUTING_MODES:
-        raise argparse.ArgumentTypeError("Routing mode must be automatic.")
+        raise argparse.ArgumentTypeError("This setting has one value: automatic.")
     return value
 
 
@@ -1530,7 +1925,7 @@ def build_parser() -> argparse.ArgumentParser:
         # Follow the name actually invoked, so help text under the legacy
         # `modelquad` alias keeps showing examples the user can paste back.
         prog=Path(sys.argv[0]).stem or CLI_COMMAND,
-        description="Route local provider work, delegate explicitly, and install client adapters.",
+        description="See both tools' usage, check your setup, and connect ModelQuad to Claude Code.",
     )
     # The first thing anyone types at an unfamiliar CLI. Without it the
     # version was only reachable by reading the tail of `doctor`, and the
@@ -1551,13 +1946,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--history-db",
         type=Path,
         default=None,
-        help="SQLite database for shared routing/execution history "
+        help="SQLite database for ModelQuad's history "
         f"(default: {service_db.DEFAULT_DB_PATH}).",
     )
     parser.add_argument(
         "--no-history",
         action="store_true",
-        help="Disable history recording; worker launch is refused without lifecycle evidence. Advice remains available.",
+        help="Do not record history. Codex calls are then refused, because ModelQuad must record each one; advice still works.",
     )
     subcommands = parser.add_subparsers(dest="command", title="subcommands")
     integrations = subcommands.add_parser("integrations", help="Control global host integrations.")
@@ -1573,9 +1968,43 @@ def build_parser() -> argparse.ArgumentParser:
         help='Confirm you have read what turning it on means (needed when not typing at a prompt).')
     proactive_cmd = settings_actions.add_parser(
         'proactive',
-        help='Let Claude decide on its own to consult Codex (default off: Claude offers it). '
-        'Claude Code still asks you before each call.')
+        help='Let Claude decide on its own to consult Codex (default on; off: Claude offers it). '
+        'Claude Code asks you before each call unless the standing grant is on.')
     proactive_cmd.add_argument('choice', choices=('on', 'off'))
+    plan_cmd = settings_actions.add_parser(
+        'plan',
+        help='Say which plan you are on with Claude or Codex (shown to you; the account kind '
+        'goes in the notice on Codex calls). With no arguments, show both.')
+    plan_cmd.add_argument('provider', nargs='?', choices=('claude', 'codex'))
+    plan_cmd.add_argument('value', nargs='?', metavar='plan|unset',
+                          help='A listed plan, or unset. Run without it to see the list.')
+    open_cmd = settings_actions.add_parser(
+        'open',
+        help='Open a settings page in your browser, served only on this computer. It closes '
+        'when you press Done or after 15 minutes without use.')
+    open_cmd.add_argument('--project', metavar='DIR',
+                          help="The project whose own Codex choice the page shows (default: the current folder).")
+    open_cmd.add_argument('--no-browser', action='store_true',
+                          help='Print the page address instead of opening the browser.')
+    auto_cmd = settings_actions.add_parser(
+        'auto',
+        help="The standing grant: let Claude ask Codex without Claude Code's prompt for each "
+        'call, in this repository (or every folder with --global). status shows it.')
+    auto_cmd.add_argument('choice', choices=('on', 'off', 'status'))
+    auto_cmd.add_argument('--project', metavar='DIR',
+                          help='The project folder (default: the current folder).')
+    auto_cmd.add_argument('--global', action='store_true', dest='everywhere',
+                          help='Every folder, instead of one repository.')
+    auto_cmd.add_argument('--yes', action='store_true', dest='consent',
+                          help='Confirm you have read the notice (needed when not typing at a prompt).')
+    repo_cmd = settings_actions.add_parser(
+        'repo',
+        help='Your own Codex setting for one repository: on (Claude may decide on its own), '
+        'off (no Codex here), offer-only (Claude offers), inherit (the global setting). '
+        'With no choice, show it.')
+    repo_cmd.add_argument('choice', nargs='?', choices=('on', 'off', 'offer-only', 'inherit'))
+    repo_cmd.add_argument('--project', metavar='DIR',
+                          help='The project folder (default: the current folder).')
     host_cmd = subcommands.add_parser("host", help="Control which tools may start new work.")
     host_actions = host_cmd.add_subparsers(dest="host_action", required=True)
     from .routing_policy import VALID_HOST_IDS
@@ -1588,12 +2017,18 @@ def build_parser() -> argparse.ArgumentParser:
     host_reset.add_argument("--disconnect-all", action="store_true", required=True)
     host_status = host_actions.add_parser("status")
     host_status.add_argument("--json", action="store_true", dest="as_json")
-    status = subcommands.add_parser("status", help="Show normalized provider availability and usage.")
+    status = subcommands.add_parser("status", help="Show Claude's and Codex's quota, your plans and this folder's Codex setting.")
     status.add_argument("--global", action="store_true", dest="global_status", help="Include host integrations and control-plane health.")
     status.add_argument("--json", action="store_true", dest="as_json", help="Print status as JSON.")
-    route = subcommands.add_parser("route", help="Score providers for a task type.")
-    route.add_argument("task_type", choices=[task.value for task in TaskType])
-    route.add_argument("--json", action="store_true", dest="as_json", help="Print the routing result as JSON.")
+    # `advise` is the command; `route`, its earlier name, still works but is
+    # not listed (a parser added without help gets no help line, and the
+    # usage line below leaves it out).
+    advice_help = "Show which tool fits a task type. Starts nothing."
+    for advice_name in ("advise", "route"):
+        listed = {"help": advice_help} if advice_name == "advise" else {}
+        advise = subcommands.add_parser(advice_name, description=advice_help, **listed)
+        advise.add_argument("task_type", choices=[task.value for task in TaskType])
+        advise.add_argument("--json", action="store_true", dest="as_json", help="Print the advice as JSON.")
     privacy_cmd = subcommands.add_parser(
         "privacy",
         help="Show what this installation stores locally, and reset the pseudonymous installation id.",
@@ -1682,7 +2117,19 @@ def build_parser() -> argparse.ArgumentParser:
             dest="as_json",
             help="Print the adapter report as JSON.",
         )
-    doctor = subcommands.add_parser("doctor", help="Check optional CLIs, adapters, and usage sources.")
+        if command_name == "install":
+            via_plugin = adapter_command.add_mutually_exclusive_group()
+            via_plugin.add_argument(
+                "--plugin", action="store_true", dest="plugin", default=None,
+                help="The ModelQuad Claude Code plugin supplies the server, commands and "
+                "reminder: install only the status line, take back ModelQuad's own copies, "
+                "and remember the choice.",
+            )
+            via_plugin.add_argument(
+                "--no-plugin", action="store_false", dest="plugin",
+                help="Install the server, commands and reminder directly again (the default).",
+            )
+    doctor = subcommands.add_parser("doctor", help="Check the setup, your plans and this folder's .modelquad.toml, with what to do next.")
     doctor.add_argument("--json", action="store_true", dest="as_json", help="Print the doctor report as JSON.")
     doctor.add_argument(
         "--first-run", action="store_true", dest="first_run",
@@ -1739,14 +2186,17 @@ def build_parser() -> argparse.ArgumentParser:
         "earlier builds installed. Exits 0 and prints nothing; not intended to be run manually.",
     )
     pending_hook = subcommands.add_parser("hook-pending", help="Metadata-only startup context for the Host agent.")
-    pending_hook.add_argument("host", choices=("claude", "codex"))
+    pending_hook.add_argument("host", choices=("claude",))
+    review_hook = subcommands.add_parser(
+        "hook-review", help="Advisory reminder of the Codex review moment for the Host agent.")
+    review_hook.add_argument("host", choices=("claude",))
     # The same question `modelquad_delegation_status(working_directory=...)`
     # answers, at a shell. The consumer this protects is frequently not a model
     # at all: it is an operator or a script about to run a gate, review a diff
     # or commit a worktree, holding a path and no MCP client.
     workspace_cmd = subcommands.add_parser(
         "workspace",
-        help="Say whether a delegation may still be writing to a workspace.",
+        help="Say whether a Codex call from ModelQuad is still running for this folder.",
     )
     workspace_cmd.add_argument(
         "path",
@@ -1757,7 +2207,7 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_cmd.add_argument(
         "--json", action="store_true", dest="as_json", help="Print the raw answer as JSON."
     )
-    activity = subcommands.add_parser("activity", help="Show routing and delegated-execution history.")
+    activity = subcommands.add_parser("activity", help="Show ModelQuad's history: past Codex calls and their outcomes.")
     activity.add_argument("--limit", type=int, default=50, help="Maximum number of entries (default: 50).")
     activity.add_argument("--provider", help="Filter by provider.")
     activity.add_argument("--task-type", choices=[task.value for task in TaskType], help="Filter by task type.")
@@ -1775,6 +2225,42 @@ def build_parser() -> argparse.ArgumentParser:
             "e.g. --detail execution:42. Ignores every other filter/limit flag."
         ),
     )
+    review_cmd = subcommands.add_parser(
+        "review", help="What Codex's reviews found, what was verified and what it cost.")
+    review_actions = review_cmd.add_subparsers(dest="review_action", required=True)
+    review_report_cmd = review_actions.add_parser(
+        "report", help="Calls, findings by verdict and evidence, fixes, time and tokens.")
+    review_report_cmd.add_argument('--project', metavar='DIR',
+                                   help='The project folder (default: the current folder).')
+    review_report_cmd.add_argument('--all-projects', action='store_true',
+                                   help='Every project instead of one.')
+    review_report_cmd.add_argument('--days', type=float, default=30.0,
+                                   help='The period in days (default: 30).')
+    review_report_cmd.add_argument('--json', action='store_true', dest='as_json', help='Print JSON.')
+    review_verdict_cmd = review_actions.add_parser(
+        "verdict", help="Record your own verdict on one finding; it outranks Claude's.")
+    review_verdict_cmd.add_argument("decision_id")
+    review_verdict_cmd.add_argument("finding", help="The finding's reference, such as F1.")
+    review_verdict_cmd.add_argument("verdict", choices=("confirmed", "refuted", "undecidable"))
+    review_verdict_cmd.add_argument("--evidence", default="none",
+                                    choices=("test", "reproduced", "ci", "code_reading", "none"))
+    review_verdict_cmd.add_argument("--action", default="no_change",
+                                    choices=("to_fix", "fixed", "no_change", "deferred"))
+    review_verdict_cmd.add_argument("--note", help="A short reason, no code.")
+    split_cmd = subcommands.add_parser(
+        "split", help="What happened after the work: Codex requests and quota per window.")
+    split_actions = split_cmd.add_subparsers(dest="split_action", required=True)
+    split_summary_cmd = split_actions.add_parser(
+        "summary",
+        help="Codex requests by kind and outcome for one project, and each provider's "
+        "percentage points used in each of its own windows (never added together).")
+    split_summary_cmd.add_argument('--project', metavar='DIR',
+                                   help='The project folder (default: the current folder).')
+    split_summary_cmd.add_argument('--since', choices=('1d', '7d', 'session'), default='1d',
+                                   help='The period (default: 1d). session is known only '
+                                   'inside Claude Code, through modelquad_activity.')
+    split_summary_cmd.add_argument("--json", action="store_true", dest="as_json",
+                                   help="Print the summary as JSON.")
     lifecycle = subcommands.add_parser(
         "service",
         help="Manage local control-plane auto-start and background process state.",
@@ -1808,12 +2294,12 @@ def build_parser() -> argparse.ArgumentParser:
         "job-runner",
         help="Internal: run one detached delegation job (started by ModelQuad itself).",
     ))
-    jobs = subcommands.add_parser('jobs', help='Inspect or release an unknown worker-fate block.')
+    jobs = subcommands.add_parser('jobs', help='Inspect or release a background job ModelQuad could not confirm ended.')
     job_actions = jobs.add_subparsers(dest='jobs_action', required=True)
-    fate = job_actions.add_parser('fate', help='Show worker-fate evidence and live Codex processes.')
+    fate = job_actions.add_parser('fate', help='Show what ModelQuad knows about how the job ended, and live Codex processes.')
     fate.add_argument('job_id')
     fate.add_argument('--json', action='store_true', dest='as_json')
-    release_fate = job_actions.add_parser('release-fate', help='Explicitly release one unknown worker-fate block.')
+    release_fate = job_actions.add_parser('release-fate', help='Release one job ModelQuad could not confirm ended.')
     release_fate.add_argument('job_id')
     release_fate.add_argument('--acknowledge-unknown-worker-fate', action='store_true')
     for command_name, help_text in (
@@ -1822,21 +2308,29 @@ def build_parser() -> argparse.ArgumentParser:
         service_command = subcommands.add_parser(command_name, help=help_text)
         _add_service_options(service_command)
         service_command.add_argument("--managed-child", action="store_true", help=argparse.SUPPRESS)
+    # The usage line lists the commands people use; hidden aliases still parse.
+    subcommands.metavar = "{" + ",".join(name for name in subcommands.choices if name not in _HIDDEN_COMMANDS) + "}"
     return parser
+
+
+#: Commands that still work but are not listed: earlier names kept for scripts.
+_HIDDEN_COMMANDS = frozenset({"route"})
 
 
 #: Commands Claude Code runs as hooks or as its status line. They must never
 #: fail closed: a PreToolUse hook that exits with code 2 blocks the user's tool
 #: call, and argparse exits with 2 on a usage error.
-_FAIL_SAFE_HOOK_COMMANDS = frozenset({"hook-gate", "usage-hook"})
+_FAIL_SAFE_HOOK_COMMANDS = frozenset({"hook-gate", "hook-review", "usage-hook"})
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    from .cli_entry import dispatch_pending
+    from .cli_entry import dispatch_pending, dispatch_review
     from .windowless_diagnostics import command_for
 
     arguments = list(sys.argv[1:] if argv is None else argv)
     hook_result = dispatch_pending(arguments)
+    if hook_result is None:
+        hook_result = dispatch_review(arguments)
     if hook_result is not None:
         return hook_result
     if command_for(arguments) in _FAIL_SAFE_HOOK_COMMANDS:
@@ -1861,6 +2355,16 @@ def _run_command(argv: Sequence[str] | None) -> int:
         return _run_integrations_command(args, parser)
     if args.command == 'settings' and args.settings_action == 'proactive':
         return _run_proactive_setting(args.choice == 'on')
+    if args.command == 'settings' and args.settings_action == 'repo':
+        return _run_repo_setting(args.choice, args.project)
+    if args.command == 'settings' and args.settings_action == 'auto':
+        return _run_auto_setting(args)
+    if args.command == 'review':
+        return _run_review_command(args)
+    if args.command == 'settings' and args.settings_action == 'open':
+        return _run_settings_page(args.project, no_browser=args.no_browser)
+    if args.command == 'settings' and args.settings_action == 'plan':
+        return _run_plan_setting(args.provider, args.value)
     if args.command == 'settings':
         if args.choice == 'on':
             if not _background_work_consented(args):
@@ -1931,7 +2435,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
     if args.command == 'jobs':
         from .jobs.service_client import connect_management, Unavailable
         if args.jobs_action == 'release-fate' and not args.acknowledge_unknown_worker_fate:
-            print('The --acknowledge-unknown-worker-fate flag is required. Running processes may still change files.', file=sys.stderr)
+            print('The --acknowledge-unknown-worker-fate flag is required. A Codex process may still be running. It cannot change your project, but it may still use your Codex usage.', file=sys.stderr)
             return 2
         client = connect_management(_history_db_path(args))
         if isinstance(client, Unavailable):
@@ -1948,9 +2452,9 @@ def _run_command(argv: Sequence[str] | None) -> int:
             row = answer['release']
             print(f"Closed — workspace block released ({row['reason']}, {row['released_at']}).")
         elif answer['blocker'] is False:
-            print('This job has no unknown worker-fate block.')
+            print('ModelQuad knows how this job ended; there is nothing to release.')
         else:
-            print('ModelQuad cannot confirm this worker ended. Releasing this block lets diagnosis proceed; running processes may still change files.')
+            print('ModelQuad cannot confirm Codex ended for this job. Releasing it lets diagnosis go on. A Codex process may still be running; it cannot change your project, but it may still use your Codex usage.')
             listing = answer['live_codex']
             print(f"Live Codex processes on this computer ({listing['status']}, {listing['observed_at']}):")
             for process in listing['processes']:
@@ -2022,14 +2526,14 @@ def _run_command(argv: Sequence[str] | None) -> int:
         payload = {
             "modelquad_process": LOOPBACK_ONLY_REASON,
             "enforcement": "an audit hook refuses any other socket connection from this process",
-            "codex_cli": "a separate program that connects to OpenAI itself, under your own login",
+            "codex_cli": "a separate program that connects to OpenAI itself, under your own sign-in",
         }
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             print(f"{PRODUCT_NAME} network rule: {LOOPBACK_ONLY_REASON}.")
             print("An audit hook refuses any other socket connection from this process.")
-            print("The Codex CLI is a separate program that connects to OpenAI itself, under your own login.")
+            print("The Codex CLI is a separate program that connects to OpenAI itself, under your own sign-in.")
         return 0
     if args.command == "usage-refresh":
         from .usage.refresh import refresh_all
@@ -2068,7 +2572,10 @@ def _run_command(argv: Sequence[str] | None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     if args.command == "doctor":
-        report = run_doctor(config, usage_directory=args.usage_directory)
+        # Plan names and the repository file's key names are for the person
+        # at this terminal only; the MCP doctor tool never includes them.
+        report = run_doctor(config, usage_directory=args.usage_directory,
+                            project_directory=Path.cwd(), include_plans=True)
         if args.as_json:
             payload = report.to_dict()
             if args.first_run:
@@ -2156,6 +2663,9 @@ def _run_command(argv: Sequence[str] | None) -> int:
             render_activity(entries)
         return 0
 
+    if args.command == "split":
+        return _run_split_summary(args, config)
+
     providers = build_providers(config, args.usage_directory)
     statuses = tuple(read_status(provider, refresh=args.command == "status") for provider in providers)
     history_enabled = not args.no_history
@@ -2186,10 +2696,11 @@ def _run_command(argv: Sequence[str] | None) -> int:
             print(json.dumps([status.to_dict() for status in statuses], indent=2, sort_keys=True))
         else:
             render_status(statuses)
+            render_status_summary(statuses, config, args.usage_directory)
         if history_enabled:
             service_history.record_provider_usage(db_path, statuses)
         return 0
-    if args.command == "route":
+    if args.command in ("advise", "route"):
         from .netpolicy import providers_refused_by_policy
 
         result = Router(config).route(
@@ -2208,7 +2719,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
             route_decision_id = new_decision_id()
             service_history.record_provider_usage(db_path, statuses)
             # The CLI has no MCP clientInfo, and which hosts that costs is
-            # now runtime-specific. A `modelquad route` run from inside a
+            # now runtime-specific. A `modelquad advise` run from inside a
             # Claude Code shell is still observable, because that host was
             # spawned with an environment that says so. The same run inside
             # Codex is NOT: Codex scrubs the environment it spawns processes
@@ -2250,7 +2761,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
                     from .routing_policy import pause_label
                     print(pause_label(state.get('routing_paused_since')))
             except service_history.LaunchStateUnavailable:
-                print('Routing control state unavailable.')
+                print("ModelQuad could not read whether Codex calls are paused.")
             if not recorded:
                 print("Advice was not recorded; no persisted decision identity.", file=sys.stderr)
         return 0

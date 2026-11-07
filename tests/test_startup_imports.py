@@ -78,7 +78,7 @@ assert not any(name == 'mcp' or name.startswith('mcp.') for name in sys.modules)
 """)
 
 
-@pytest.mark.parametrize("host", ["claude", "codex"])
+@pytest.mark.parametrize("host", ["claude"])
 @pytest.mark.parametrize("count", [0, 1])
 def test_hook_entry_imports_are_light(host, count):
     output = _fresh(NO_SPAWNS + f"""

@@ -35,6 +35,7 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
 
+from ..disclosure import notice_shown
 from .refresh import FRESH_SECONDS, refresh_provider
 
 logger = logging.getLogger(__name__)
@@ -71,13 +72,15 @@ def run_codex_refresh_loop(
     """Refresh Codex quota now, then every ``interval`` seconds, until ``stop``.
 
     A failed probe is logged and the loop keeps going; it never raises. A
-    cycle is skipped while the environment switch is off.
+    cycle is skipped while the environment switch is off, and until the
+    data-flow notice, which describes this probe, has reached the user: a
+    plugin install can start the server before anything printed it.
     """
 
     if refresh is None:
         refresh = functools.partial(refresh_provider, min_interval=CODEX_REFRESH_MIN_INTERVAL_SECONDS)
     while not stop.is_set():
-        if refresh_enabled():
+        if refresh_enabled() and notice_shown():
             try:
                 refresh("codex", Path(usage_directory))
             except Exception as exc:  # noqa: BLE001 -- a background refresh must never crash the server

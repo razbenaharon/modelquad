@@ -666,7 +666,7 @@ def _resolve_routing_mode(
     if requested is not None:
         if requested not in VALID_ROUTING_MODES:
             raise ValueError(
-                f"Invalid routing mode {requested!r}; choose one of: {', '.join(VALID_ROUTING_MODES)}"
+                f"Invalid mode {requested!r}; choose one of: {', '.join(VALID_ROUTING_MODES)}"
             )
         return requested, True
 
@@ -712,9 +712,13 @@ def run_onboarding(
     print_fn("==========================================")
     print_fn("Welcome! Let's get your AI coding assistants connected.")
     print_fn("")
-    from .disclosure import DATA_FLOW, print_lines
+    from .disclosure import DATA_FLOW, print_lines, record_notice_shown
     print_lines(DATA_FLOW, print_fn)
     print_fn("")
+    try:
+        record_notice_shown("onboard")
+    except OSError:
+        pass  # The first Codex call then shows the notice instead.
     config_dir_warning = hostruntime.claude_config_dir_warning()
     if config_dir_warning is not None:
         print_fn(f"Warning: {config_dir_warning}")
@@ -964,11 +968,12 @@ def run_onboarding(
     print_fn("")
     print_fn("Setup Summary:")
     print_fn(f"  Connected providers: {', '.join(connected_providers) if connected_providers else 'none'}")
-    print_fn("  ModelQuad Routing: Active" if integrations_enabled
+    print_fn("  Connections to your AI tools: on" if integrations_enabled
              else "  Connections to your AI tools: off by choice")
     if integrations_enabled:
         print_fn(
-            f"You're ready -- keep using your AI tools normally; {PRODUCT_NAME} works underneath."
+            f"You're ready. In Claude Code, Claude can offer to ask Codex for a read-only second "
+            f"opinion through {PRODUCT_NAME}; Claude Code asks you before each call."
         )
     else:
         print_fn("Connections to your AI tools remain off. Run modelquad integrations on to enable them.")

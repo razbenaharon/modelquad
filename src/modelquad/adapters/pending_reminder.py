@@ -1,6 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Metadata-only SessionStart context. No conversation files or state writes."""
+"""Metadata-only SessionStart context. No conversation files or state writes.
+
+Two optional parts: one advisory line about Codex in this repository
+(``repo_settings.advice_line``: the user's per-repo setting and the
+repository's ``.modelquad.toml``, silent when nothing differs from the global
+setting), and the list of retained delegated work. The hook never blocks or
+approves, never opens the transcript path it is handed, and shares one budget.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +23,6 @@ from datetime import datetime
 BYTE_CAP = 32 * 1024
 ROW_CAP = 20
 HOOK_BUDGET = 1.5
-CODEX_DELIVERY_EVIDENCE = 'one recorded run, codex-cli 0.162.0-alpha.2'
 _TASKS = frozenset({'architecture', 'implementation', 'exploration', 'debugging',
                     'testing', 'review', 'trivial'})
 _STATUSES = frozenset({'finished', 'failed', 'stopped', 'interrupted', 'timed_out', 'unknown'})
@@ -32,6 +38,10 @@ def project_key(cwd):
     # Never fall back to '.', a repo root or a guessed folder.
     if (not isinstance(cwd, str) or not cwd or len(cwd) > 4096
             or any(ord(c) < 32 for c in cwd) or not Path(cwd).is_absolute()):
+        return None
+    # Before any file-system call: a network share or a device is never opened.
+    from modelquad.localpath import reason as local_reason
+    if local_reason(cwd) is not None:
         return None
     from modelquad.service.history import workspace_identity
     key, _ = workspace_identity(cwd)
@@ -68,21 +78,23 @@ def validate_summary(payload):
 def reminder_text(summary):
     validate_summary(summary)
     boolean = lambda v: 'true' if v else 'false'
-    lines = [f"ModelQuad retained delegated work for this project: count={summary['count']}; more={boolean(summary['more'])}."]
+    # The summary keeps `may_have_changed_files` (the store's schema), but the
+    # reminder does not print it: Codex through ModelQuad is read-only and
+    # runs in an empty temporary folder, so it changes no project file.
+    lines = [f"ModelQuad kept Codex answers for this project: count={summary['count']}; more={boolean(summary['more'])}."]
     lines.extend(
         f"job_id={r['job_id']}; status={r['job_status']}; task_type={r['task_type']}; "
-        f"may_have_changed_files={boolean(r['may_have_changed_files'])}; "
         f"expires_at={r['expires_at']}; expiring_soon={boolean(r['expiring_soon'])}."
         for r in summary['jobs'])
     lines.append(
-        'Host agent: refresh with modelquad_job_list_pending(project_directory=current absolute project directory). '
-        'Collect relevant handles with modelquad_job_collect, independently verify the result, '
-        'and tell the user what you found. Inspect possible project changes; explain observed '
-        'changes before building on them. Acknowledge with modelquad_job_acknowledge using the '
-        'collection receipt only after use. If collection is expired or acknowledged, report '
-        'that race truthfully. If verification fails, report the failure; do not build on or '
-        'acknowledge an unused result. Never auto-apply output or acknowledge because this hook fired. '
-        'A finished status does not establish success or that all processes ended.')
+        'Claude: refresh with modelquad_job_list_pending(project_directory=current absolute project directory). '
+        'Collect relevant handles with modelquad_job_collect, verify the answer yourself, '
+        'and tell the user what you found. Codex through ModelQuad is read-only; it changed no files. '
+        'Acknowledge with modelquad_job_acknowledge using the '
+        'collection receipt only after use. If an answer has expired or was already acknowledged, '
+        'say so. If verification fails, report the failure; do not build on or '
+        'acknowledge an unused answer. Never apply an answer or acknowledge it because this reminder appeared. '
+        'A finished status does not prove the answer is right or that every Codex process ended.')
     return '\n'.join(lines)
 
 
@@ -90,20 +102,40 @@ def serialize_claude(text):
     return {'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': text}}
 
 
-def serialize_codex(text):
-    # Same envelope, qualified by a native Codex delivery run.
-    # Keep serializers separate for future provider schema changes.
-    return {'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': text}}
+def valid_cwd(cwd):
+    if not (isinstance(cwd, str) and bool(cwd) and len(cwd) <= 4096
+            and not any(ord(c) < 32 for c in cwd) and Path(cwd).is_absolute()):
+        return False
+    # A network share or a device folder is never opened from the hook.
+    from modelquad.localpath import reason as local_reason
+    return local_reason(cwd) is None
 
 
-def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, fetch=None):
-    """Fail silent, including worker/input/transport/deadline failures."""
+def repo_advice(cwd):
+    """The one closed advisory line for this repository, or None.
+
+    Reads only preferences.json, the installation id, the .git pointer files
+    and the repository's .modelquad.toml; starts no process.
+    """
+    if not valid_cwd(cwd):
+        return None
+    from modelquad.repo_settings import advice_line
+    return advice_line(cwd)
+
+
+def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, fetch=None, advise=None):
+    """Fail silent, including worker/input/transport/deadline failures.
+
+    The repository line and the retained-work list are independent: either
+    may appear alone, and a service that cannot answer leaves the line.
+    """
     environ = os.environ if environ is None else environ
     if environ.get('MODELQUAD_WORKER') == '1':
         return 0
     deadline = clock() + HOOK_BUDGET
     try:
-        if host not in {'claude', 'codex'}:
+        # Claude Code is the one host (AGENTS.md); any other host id prints nothing.
+        if host != 'claude':
             return 0
         # Pipe reads can block even with a byte cap. The daemon reads only the
         # bounded payload; the calling thread waits only the remaining budget.
@@ -126,19 +158,36 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, fetch=N
         event = json.loads(raw)
         if not isinstance(event, dict) or event.get('hook_event_name') != 'SessionStart':
             return 0
+        # The repository line first: closed text only (repo_settings.ADVICE),
+        # never the event's. Kept when it was ready within the budget, even
+        # if the retained-work read below runs out the rest of it.
+        advice = None
+        try:
+            line = (advise or repo_advice)(event.get('cwd'))
+            if line is not None:
+                from modelquad.repo_settings import ADVICE, BROKEN_FILE_ADVICE
+                if line in (*ADVICE.values(), BROKEN_FILE_ADVICE) and clock() < deadline:
+                    advice = line
+        except Exception:
+            advice = None
+        pending = None
         key = project_key(event.get('cwd'))
-        if key is None or clock() >= deadline:
+        if key is not None and clock() < deadline:
+            try:
+                if fetch is None:
+                    from modelquad.jobs.service_client import read_pending_summary
+                    fetch = read_pending_summary
+                summary = fetch(key, deadline=deadline)
+                validate_summary(summary)
+                if summary['count'] and clock() < deadline:
+                    pending = reminder_text(summary)
+            except Exception:
+                pending = None
+        texts = [text for text in (advice, pending) if text]
+        if not texts:
             return 0
-        if fetch is None:
-            from modelquad.jobs.service_client import read_pending_summary
-            fetch = read_pending_summary
-        summary = fetch(key, deadline=deadline)
-        validate_summary(summary)
-        if not summary['count'] or clock() >= deadline:
-            return 0
-        serializer = serialize_claude if host == 'claude' else serialize_codex
-        output = json.dumps(serializer(reminder_text(summary)), separators=(',', ':')) + '\n'
-        if len(output.encode('utf-8')) <= BYTE_CAP and clock() < deadline:
+        output = json.dumps(serialize_claude('\n'.join(texts)), separators=(',', ':')) + '\n'
+        if len(output.encode('utf-8')) <= BYTE_CAP and (advice or clock() < deadline):
             stdout.write(output)
     except Exception:
         pass  # No diagnostic text, state marker or user-facing message.

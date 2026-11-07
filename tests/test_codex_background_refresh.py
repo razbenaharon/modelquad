@@ -25,6 +25,37 @@ def _rate_limits(used_five=30.0, used_week=55.0):
     }})
 
 
+@pytest.fixture(autouse=True)
+def notice_already_shown(monkeypatch):
+    """These tests are about the loop; the notice gate has its own test below."""
+    monkeypatch.setattr(background, "notice_shown", lambda: True)
+
+
+def test_no_probe_runs_before_the_data_flow_notice(tmp_path, monkeypatch):
+    # A plugin install can start the server before anything showed the notice
+    # that describes this probe, so the loop waits for it.
+    shown = []
+    monkeypatch.setattr(background, "notice_shown", lambda: bool(shown))
+    calls = []
+    stop = threading.Event()
+    rounds = iter(range(3))
+
+    def record(provider, directory):
+        calls.append(provider)
+        stop.set()
+
+    original_wait = stop.wait
+
+    def wait(interval):
+        if next(rounds, None) == 1:
+            shown.append(True)
+        return original_wait(0)
+
+    stop.wait = wait
+    background.run_codex_refresh_loop(tmp_path, stop, interval=0.01, refresh=record)
+    assert calls == ["codex"], "skipped until the notice was shown, then refreshed"
+
+
 def _one_pass(refresh_function):
     """Run exactly one loop iteration and return."""
     stop = threading.Event()

@@ -1,11 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""OSS v1 step 5: quota is display-only, and a low-quota suggestion only asks.
+"""OSS v1 step 5: quota is display-only, and the near-limit note only informs.
 
-The suggestion is a sentence in a reply. These tests pin that it is shown at
-the agreed thresholds, that missing data reads as unknown, and above all that
-nothing starts until the user approves inside Claude Code: an accepted
-elicitation of ``modelquad_handoff``, or a delegation the user asked for.
+The note is a sentence in a reply: Claude is near its limit (which window, how
+much, when it resets), and the user can wait for the reset or ask Codex for a
+read-only review. These tests pin that it is shown at the agreed thresholds,
+that missing data reads as unknown, that its wording never proposes moving the
+work, and above all that nothing starts until the user approves inside Claude
+Code: an accepted elicitation of ``modelquad_handoff``, or a delegation the
+user asked for.
 """
 
 from __future__ import annotations
@@ -61,8 +64,9 @@ def test_suggestion_wording_at_the_five_hour_threshold():
         [reading("claude", five=85, seven=40), reading("codex", five=30, five_reset=180)],
         THRESHOLDS, now=NOW)
     assert suggestion["message"] == (
-        "Claude is at 85% of its 5-hour window (resets in 1h 20m); hand this task to Codex? "
-        "Codex is at 30% of its 5-hour window (resets in 3h 00m).")
+        "Claude is at 85% of its 5-hour window (resets in 1h 20m). "
+        "Codex is at 30% of its 5-hour window (resets in 3h 00m). "
+        "You can wait for the reset, or ask Codex for a read-only review. You decide.")
     assert suggestion["to"] == "codex"
     assert suggestion["threshold_used_percent"] == 80.0
     assert suggestion["launches"] is False
@@ -100,7 +104,7 @@ def test_a_stale_reading_still_counts_inside_its_window():
 def test_unknown_codex_quota_is_stated_as_unknown_never_zero():
     suggestion = handoff_suggestion([reading("claude", five=90), reading("codex", observed=None)],
                                     THRESHOLDS, now=NOW)
-    assert suggestion["message"].endswith("Codex quota is unknown.")
+    assert "Codex quota is unknown." in suggestion["message"]
     assert suggestion["codex_window"] is None
     assert "Codex is at" not in suggestion["message"]
 
@@ -122,7 +126,7 @@ def test_status_line_shows_both_providers_and_unknown_never_zero():
                            THRESHOLDS, now=NOW)
     assert line == (f"Claude 5h 15% left, resets {clock(80)} / 7d 60% left"
                     f" | Codex 5h 70% left, resets {clock(80)} / 7d unknown"
-                    " | Claude is low: hand off to Codex?")
+                    f" | Claude 5h near its limit, resets {clock(80)}: you can wait, or ask Codex for a review")
     empty = statusline_text([reading("claude", observed=None)], THRESHOLDS, now=NOW)
     assert empty == "Claude: shows after your first message | Codex 5h unknown / 7d unknown"
     assert line.isascii() and empty.isascii()
@@ -150,18 +154,18 @@ def codex_status(*, reason=None, available=True, windows=None, seven=None):
 
 @pytest.mark.parametrize(("status", "full", "segment"), [
     (codex_status(reason="codex CLI not found on PATH (looked for 'codex').", available=False),
-     "Codex not found", "Codex not found"),
+     "Codex: not found", "Codex: not found"),
     (codex_status(reason="codex app-server rate-limit read failed: codex app-server returned an "
                          "error: {'message': 'Not logged in. Run codex login.'}"),
-     "Codex: sign in to Codex", "Codex: sign in to Codex"),
+     "Codex: not signed in (run codex login)", "Codex: not signed in (run codex login)"),
     (codex_status(windows=[{"slot": "seven_day", "used_percentage": 40.0, "window_minutes": 10080}], seven=40),
-     "Codex: no 5-hour limit on your plan / 7d 60% left", "Codex week 60% left"),
+     "Codex: no 5-hour limit on your plan / 7d 60% left", "Codex 7d 60% left"),
 ])
 def test_plain_language_codex_states(status, full, segment):
     claude = reading("claude", five=20, seven=10)
     assert statusline_text([claude, status], THRESHOLDS, now=NOW).endswith(f" | {full}")
     assert assistance.statusline_segment([claude, status], THRESHOLDS, now=NOW) == (
-        f"{segment} | Claude 5h 80% left")
+        f"Claude 5h 80% left | {segment}")
 
 
 def test_a_missing_codex_usage_file_is_not_called_codex_not_found():
@@ -180,10 +184,22 @@ def test_a_reset_claude_window_waits_for_the_next_message():
 def test_segment_is_compact_and_ascii():
     segment = assistance.statusline_segment(
         [reading("claude", five=62, seven=40), reading("codex", five=30)], THRESHOLDS, now=NOW)
-    assert segment == "Codex 5h 70% left | Claude 5h 38% left"
+    assert segment == "Claude 5h 38% left | Codex 5h 70% left"
     assert segment.isascii()
     assert assistance.statusline_segment([reading("claude", observed=None)], THRESHOLDS, now=NOW) == (
-        "Codex 5h unknown | Claude: shows after your first message")
+        "Claude: shows after your first message | Codex 5h unknown")
+
+
+def test_an_old_reading_says_when_it_was_taken_once_per_tool():
+    old = reading("claude", five=40, seven=10, observed=NOW - timedelta(hours=2), five_reset=40)
+    old = ProviderStatus(name=old.name, available=True, observed_at=old.observed_at,
+                         freshness=Freshness.STALE, metadata={**old.metadata, "stale": True})
+    when = assistance.local_clock(NOW - timedelta(hours=2), NOW)
+    line = statusline_text([old], THRESHOLDS, now=NOW)
+    assert line.startswith(f"Claude 5h 60% left, resets {clock(40)} / 7d 90% left (as of {when})")
+    assert line.count("as of") == 1 and "stale" not in line
+    assert assistance.statusline_segment([old], THRESHOLDS, now=NOW).startswith(
+        f"Claude 5h 60% left (as of {when})")
 
 
 # --- the pace hint ---------------------------------------------------------------
@@ -197,8 +213,8 @@ def test_pace_needs_two_readings_and_says_when_the_window_fills():
     line = statusline_text([status], THRESHOLDS, now=NOW, pace=pace)
     assert line.startswith(
         f"Claude 5h 50% left, resets {clock(240)}, at this pace full by about {clock(100)} / 7d 90% left")
-    assert assistance.statusline_segment([status], THRESHOLDS, now=NOW, pace=pace).endswith(
-        f"Claude 5h 50% left, full by about {clock(100)}")
+    assert assistance.statusline_segment([status], THRESHOLDS, now=NOW, pace=pace).startswith(
+        f"Claude 5h 50% left, at this pace full by about {clock(100)}")
 
 
 @pytest.mark.parametrize("first", [
@@ -269,11 +285,12 @@ def test_status_line_command_prints_both_providers(tmp_path, capsys, monkeypatch
                                     datetime.fromtimestamp(now, timezone.utc))
     assert capsys.readouterr().out.strip() == (
         f"Claude 5h 15% left, resets {resets} / 7d 60% left | Codex 5h 70% left / 7d unknown"
-        " | Claude is low: hand off to Codex?")
+        f" | Claude 5h near its limit, resets {resets}: you can wait, or ask Codex for a review")
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     assert cli.main(["--usage-directory", str(usage), "usage-hook", "claude", "--segment"]) == 0
     assert capsys.readouterr().out.strip() == (
-        "Codex 5h 70% left | Claude 5h 15% left | Claude is low: hand off to Codex?")
+        "Claude 5h 15% left | Codex 5h 70% left"
+        f" | Claude 5h near its limit, resets {resets}: you can wait, or ask Codex for a review")
 
 
 # --- waiting may be simpler ---------------------------------------------------------
@@ -285,10 +302,11 @@ def test_a_five_hour_window_about_to_reset_suggests_waiting(minutes):
     suggestion = handoff_suggestion(statuses, THRESHOLDS, now=NOW)
     assert suggestion["to"] == "wait"
     assert suggestion["message"] == (
-        f"Claude's 5-hour window resets at {clock(minutes)}; waiting may be simpler.")
+        f"Claude is at 92% of its 5-hour window, which resets at {clock(minutes)}. "
+        "Waiting for the reset may be simpler. You decide.")
     assert suggestion["launches"] is False
     assert statusline_text(statuses, THRESHOLDS, now=NOW).endswith(
-        f" | Claude is low: resets {clock(minutes)}, waiting may be simpler")
+        f" | Claude 5h near its limit, resets {clock(minutes)}: waiting may be simpler")
 
 
 def test_a_reset_more_than_half_an_hour_away_still_suggests_codex():
@@ -300,7 +318,12 @@ def test_the_weekly_limit_still_suggests_codex_even_when_the_five_hour_resets_so
     statuses = [reading("claude", five=95, seven=93, five_reset=10), reading("codex", five=10)]
     suggestion = handoff_suggestion(statuses, THRESHOLDS, now=NOW)
     assert suggestion["to"] == "codex"
-    assert "hand this task to Codex?" in suggestion["message"]
+    assert "ask Codex for a read-only review" in suggestion["message"]
+    assert statusline_text(statuses, THRESHOLDS, now=NOW).endswith(
+        f" | Claude 5h near its limit, resets {clock(10)}: you can wait, or ask Codex for a review")
+    weekly = [reading("claude", five=50, seven=93), reading("codex", five=10)]
+    assert statusline_text(weekly, THRESHOLDS, now=NOW).endswith(
+        f" | Claude 7d near its limit, resets {clock(60 * 24 * 3)}: you can wait, or ask Codex for a review")
 
 
 # --- quota never chooses ---------------------------------------------------------
@@ -436,7 +459,7 @@ def test_handoff_starts_nothing_without_an_accepted_prompt(low_claude_world, mon
         message, schema = ctx.asked[0]
         # The form reads the same on every round of a 2026-07-28 call, so it
         # carries no live quota numbers; the reply's message still does.
-        assert message.startswith("Hand this task to Codex?")
+        assert message.startswith("Ask Codex for a read-only second opinion on this task?")
         assert "Nothing starts unless you tick the box and accept." in message
         assert schema is mcp.HandoffApproval
 
@@ -486,7 +509,7 @@ def test_a_stale_reading_never_claims_the_plan_has_no_five_hour_limit():
     line = statusline_text([claude, stale], THRESHOLDS, now=NOW)
     assert "no 5-hour limit" not in line
     assert "Codex 5h unknown" in line
-    assert "Codex week" not in assistance.statusline_segment([claude, stale], THRESHOLDS, now=NOW)
+    assert "Codex 7d" not in assistance.statusline_segment([claude, stale], THRESHOLDS, now=NOW)
 
 
 def test_a_client_without_forms_gets_a_reason_files_and_a_safe_next_step(low_claude_world, monkeypatch):
@@ -611,7 +634,7 @@ def test_the_handoff_form_shows_files_and_account_in_its_first_three_lines(tmp_p
     (tmp_path / "notes.md").write_bytes(b"hello\n")
     (tmp_path / "more.md").write_bytes(b"hi\n")
     lines = mcp._handoff_form_text("review", "word " * 200, str(tmp_path), ["notes.md", "more.md"]).splitlines()
-    assert lines[:2] == ["Hand this task to Codex?",
+    assert lines[:2] == ["Ask Codex for a read-only second opinion on this task?",
                          "Files to send (2, 9 bytes): notes.md (6 bytes), more.md (3 bytes)"]
     assert lines[2].startswith("Codex account:") and lines[-1].startswith("Task preview: ")
 

@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from modelquad import procutil
+from modelquad import disclosure, procutil
 from modelquad.jobs import handle
 from modelquad.jobs.store import default_store
 from modelquad.service import auth, history
@@ -137,6 +137,11 @@ def child_env(root, monkeypatch):
     for key, value in values.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv('MODELQUAD_WORKER', raising=False)
+    # The child server runs the real first-use check, outside conftest's
+    # stand-in: record the data-flow notice as shown, as an install would.
+    state = root / 'state'
+    state.mkdir(parents=True, exist_ok=True)
+    (state / disclosure.NOTICE_RECORD_NAME).write_text('{"schema": 1, "via": "test"}', encoding='utf-8')
     return dict(os.environ)
 
 
@@ -216,7 +221,7 @@ def test_host_job_termination(tmp_path, monkeypatch, service_running):
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]
             state = tmp_path / 'state'
-            state.mkdir()
+            state.mkdir(exist_ok=True)
             (state / 'service.pid').write_text(json.dumps({'argv': ['serve', '--port', str(port)]}), encoding='utf-8')
             if service_running:
                 reservation.close()

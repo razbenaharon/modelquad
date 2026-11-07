@@ -161,7 +161,7 @@ HTML = """<!doctype html>
 <body>
 <div class="card" id="card" hidden>
   <div class="eyebrow">ModelQuad</div>
-  <h1>Hand this task to Codex?</h1>
+  <h1>Ask Codex for a read-only second opinion?</h1>
   <h2>Files to send</h2>
   <ul id="files"></ul>
   <div class="note" id="account"></div>

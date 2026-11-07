@@ -21,15 +21,51 @@ rule to that project's `.claude/settings.json`:
 ```json
 {
   "permissions": {
-    "deny": ["mcp__modelquad"]
+    "deny": ["mcp__modelquad", "mcp__plugin_modelquad_modelquad__*"]
   }
 }
 ```
 
-`mcp__modelquad` covers every ModelQuad tool. Commit the file so the rule
+`mcp__modelquad` covers every ModelQuad tool from `modelquad install
+claude`. The ModelQuad plugin's server names its tools
+`mcp__plugin_modelquad_modelquad__...`, so the second rule covers those; keep
+both, and the rule holds however ModelQuad was installed. Commit the file so the rule
 applies to everyone who opens the repository, or put the same rule in
 `.claude/settings.local.json` to apply it only on your computer. Other
 projects keep ModelQuad.
+
+These rules block ModelQuad, not Codex. Once ModelQuad's tools are gone,
+Claude may offer to run the Codex CLI itself from a shell (it asks first),
+and that run has none of ModelQuad's limits: Codex's own tools and sandbox
+settings apply. To keep Claude from starting Codex in that project too, add
+shell rules next to the others:
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "mcp__modelquad", "mcp__plugin_modelquad_modelquad__*",
+      "Bash(codex *)", "PowerShell(codex *)"
+    ]
+  }
+}
+```
+
+Claude Code matches a shell rule against the command as Claude writes it,
+so it stops `codex ...` but not Codex started by a full path or from inside
+another shell; Claude Code's documentation says such a rule is not a
+security boundary. If the code must never reach OpenAI, do not run Codex
+in that folder yourself either.
+
+## Narrow Codex use in one repository
+
+To keep ModelQuad's tools but limit what Codex does in one repository, commit
+a `.modelquad.toml` file at the repository's top folder. It can turn Codex off
+there, allow only some task kinds (for example reviews), lower how many files
+and how much text one call sends, or allow Codex only on a work account. It
+can only narrow: it never approves a call or adds files, and if the file is
+broken ModelQuad refuses Codex in that repository until it is fixed. The format
+and examples are in [REPO-POLICY.md](REPO-POLICY.md).
 
 ## Block secret files with Read deny rules
 
@@ -91,7 +127,8 @@ PowerShell, for your user account:
 [Environment]::SetEnvironmentVariable('MODELQUAD_CODEX_QUOTA_REFRESH', '0', 'User')
 ```
 
-Codex's quota then updates only when you run `modelquad usage-refresh`.
+Codex's quota then updates only when you run `modelquad usage-refresh` or
+Claude calls the `modelquad_usage_refresh` tool.
 
 ## For administrators
 
@@ -100,10 +137,12 @@ ModelQuad off a whole fleet:
 
 - block the server by the command that starts it, with a `deniedMcpServers`
   entry: `"deniedMcpServers": [{"serverCommand": ["modelquad-mcp"]}]`. This
-  is the command `modelquad install claude` registers. Claude Code compares
+  is the command both `modelquad install claude` and the ModelQuad plugin
+  register. Claude Code compares
   the command and its arguments exactly, so a server started another way (a
   full path, or `python -m`) needs its own entry, or
-- deny its tools with `"permissions": {"deny": ["mcp__modelquad"]}`.
+- deny its tools with
+  `"permissions": {"deny": ["mcp__modelquad", "mcp__plugin_modelquad_modelquad__*"]}`.
 
 Both of these also match by a name, which a user can choose. Claude Code's
 documentation warns that a `serverName` entry is a label, not a security
@@ -111,10 +150,12 @@ control; use `serverCommand` when the block must hold. To decide exactly
 which servers may run at all, use an allowlist with
 `allowManagedMcpServersOnly`, or a fixed `managed-mcp.json`.
 
-The guarantee that a person approves each Codex call is Claude Code's own
+What makes a person approve each Codex call is Claude Code's own
 approval prompt: both tools that start Codex are marked as requiring user
-interaction, which no allow rule or mode skips. The extra confirmation form
-the handoff tool shows is a second check, not the guarantee.
+interaction, which no allow rule or mode skips, unless you turn the standing
+grant on for a folder (`modelquad settings auto on`): sessions there register
+`modelquad_delegate` without that mark, and your allow rule applies. The extra confirmation form
+the handoff tool shows is a second check, not the main one.
 
 See Claude Code's documentation on managed settings and on controlling MCP
 server access (`managed-mcp`) for where the managed settings file lives on

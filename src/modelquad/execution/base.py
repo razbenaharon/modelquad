@@ -272,8 +272,7 @@ def validate_cli_token(value: str, field_name: str) -> None:
 
     if not _SAFE_TOKEN_PATTERN.match(value):
         raise ValueError(
-            f"{field_name} contains characters that are not safe to pass to a "
-            f"subprocess argument: {value!r}"
+            f"{field_name} contains characters ModelQuad does not pass to Codex: {value!r}"
         )
     if value.startswith("-"):
         raise ValueError(f"{field_name} must not start with '-': {value!r}")
@@ -347,7 +346,7 @@ class ExecutionRequest:
             if self.provider == 'codex':
                 from ..codex_config import safe_model_id
                 if safe_model_id(self.model) != self.model:
-                    raise ValueError('model is not safe: invalid Codex model id')
+                    raise ValueError('model is not a valid Codex model id')
             else:
                 validate_cli_token(self.model, "model")
         if self.reasoning_effort is not None:
@@ -673,6 +672,13 @@ NOSHELL_PRELAUNCH_REFUSALS: frozenset[str] = frozenset({
     "rendered_prompt_cap", "codex_shim_only", "codex_version_unsupported",
     "codex_feature_unverified", "codex_executable_unverified", "supplied_file_changed",
     "unsupported_platform",
+    # The repository's .modelquad.toml (repo_policy.REASONS).
+    "repo_policy_codex_off", "repo_policy_kind_removed", "repo_policy_account_workspace_required",
+    "repo_policy_invalid", "repo_policy_unreadable", "repo_policy_file_outside_repo",
+    # The working folder is not a local folder (localpath.UNUSABLE).
+    "project_directory_unusable",
+    # The user's own per-repository setting (repo_settings.REASONS).
+    "user_repo_codex_off",
 })
 
 
@@ -683,13 +689,13 @@ NOSHELL_PRELAUNCH_REFUSALS: frozenset[str] = frozenset({
 #: own terminal refusal; `network_policy_refused` is `netpolicy`'s, which is
 #: what its gate returns to an executor that would have called a provider's
 #: API from this process. `read_only_resume_unpinned` is Codex's refusal to
-#: resume a session, and `beta_read_only_required` its refusal of a task type
+#: resume a session, and `task_type_not_read_only` its refusal of a task type
 #: that is not read-only. Host launch refusals are recorded before a worker
 #: starts by _launch_refusal as policy_refused, outside this result set.
 POLICY_REFUSAL_REASONS: frozenset[str] = frozenset(
     {"routing_refused",
      NETWORK_POLICY_REFUSED, READ_ONLY_RESUME_UNPINNED,
-     "action_authority_unmapped", "beta_read_only_required",
+     "action_authority_unmapped", "task_type_not_read_only",
      *NOSHELL_PRELAUNCH_REFUSALS}
 )
 
@@ -931,8 +937,9 @@ def workspace_stability_note(
         }
         if not confirmed:
             note["warning"] = (
-                "This delegation " + interruption + " and the worker's death was NOT "
-                "confirmed, so a process of it may still be running and using quota."
+                "This Codex call " + interruption + " and ModelQuad could not confirm "
+                "Codex ended, so a Codex process may still be running and using quota. "
+                "Codex through ModelQuad is read-only, so it cannot change this folder."
             )
         return note
     ask = (

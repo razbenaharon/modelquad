@@ -384,7 +384,7 @@ def test_interactive_onboarding_never_asks_for_a_routing_mode(tmp_path, monkeypa
     assert result.routing_mode == "automatic"
     assert service_history.get_routing_mode(db_path) == "automatic"
     assert any("Welcome!" in line for line in printed)
-    assert any("ModelQuad Routing: Active" in line for line in printed)
+    assert any("Connections to your AI tools: on" in line for line in printed)
 
 
 def test_first_run_establishes_automatic_without_being_asked(tmp_path, monkeypatch):
@@ -441,7 +441,7 @@ def test_retired_saved_mode_is_reported_as_automatic(tmp_path, monkeypatch):
     )
 
     summary = " ".join(printed)
-    assert "ModelQuad Routing: Active" in summary
+    assert "Connections to your AI tools: on" in summary
     assert "'ask'" not in summary
     assert "--reset-routing" not in summary
 
@@ -474,7 +474,7 @@ def test_retired_explicit_mode_is_refused_including_qa(tmp_path, mode):
 def test_invalid_explicit_routing_mode_still_raises(tmp_path, monkeypatch):
     registry = _make_stub_registry(tmp_path)
     _stub_doctor(monkeypatch)
-    with pytest.raises(ValueError, match="Invalid routing mode"):
+    with pytest.raises(ValueError, match="Invalid mode"):
         run_onboarding(
             selected_providers=["tool-a"],
             routing_mode="turbo",

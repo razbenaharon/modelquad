@@ -24,10 +24,25 @@ def dispatch_pending(argv: Sequence[str]) -> int | None:
     # A worker returns before importing the handler or touching stdin/state.
     if os.environ.get("MODELQUAD_WORKER") == "1":
         return 0
-    if len(argv) != 2 or argv[1] not in {"claude", "codex"}:
+    if len(argv) != 2 or argv[1] != "claude":
         return 0
     try:
         from .adapters.pending_reminder import run_hook
+        return run_hook(argv[1], getattr(sys.stdin, "buffer", sys.stdin), sys.stdout)
+    except Exception:
+        return 0
+
+
+def dispatch_review(argv: Sequence[str]) -> int | None:
+    """``hook-review claude``: the advisory review reminder; always fails silent."""
+    if not argv or argv[0] != "hook-review":
+        return None
+    if os.environ.get("MODELQUAD_WORKER") == "1":
+        return 0
+    if len(argv) != 2 or argv[1] != "claude":
+        return 0
+    try:
+        from .adapters.review_reminder import run_hook
         return run_hook(argv[1], getattr(sys.stdin, "buffer", sys.stdin), sys.stdout)
     except Exception:
         return 0
@@ -112,6 +127,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         diagnostics.clear_sink()
     try:
         result = dispatch_pending(args)
+        if result is None:
+            result = dispatch_review(args)
         if result is None:
             result = dispatch_usage_hook(args)
         if result is None:

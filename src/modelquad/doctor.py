@@ -18,6 +18,7 @@ from .host_integrations import OFF_DETAIL, global_integrations_enabled
 from .executable_resolution import resolve_executable
 from .branding import (
     CLI_COMMAND,
+    MCP_COMMAND,
     MCP_SERVER_NAME,
     PRODUCT_NAME,
     PRODUCT_SLUG,
@@ -135,7 +136,7 @@ def _codex_stale_path_check(which: Callable[[str], str | None]) -> DoctorCheck |
     return DoctorCheck(
         "codex CLI version",
         CheckStatus.WARN,
-        f"The codex on PATH is {chosen.stale_path_version}, older than the official "
+        f"The codex on PATH is {chosen.stale_path_version}, older than the "
         f"Codex install ({chosen.version}) that ModelQuad runs. Your own terminal may "
         "still run the older one; update or remove it if that is not intended.",
     )
@@ -204,6 +205,8 @@ def _mcp_registration_check(host_id: str, target_dir: Path) -> DoctorCheck:
 
     name = f"{host_id} MCP registered"
     install_command = f"{CLI_COMMAND} install {host_id}"
+    if host_id == "claude" and _claude_via_plugin():
+        return _claude_plugin_check(name, target_dir)
     if host_id == "claude":
         config_path = hostruntime.json_mcp_config_path(host_id, target_dir)
         try:
@@ -224,6 +227,74 @@ def _mcp_registration_check(host_id: str, target_dir: Path) -> DoctorCheck:
         )
 
     raise ValueError(f"No verified MCP-registration check is defined for {host_id!r}")
+
+
+_PLUGIN_INSTALL = (
+    "claude plugin marketplace add <your ModelQuad checkout> and "
+    "claude plugin install modelquad@modelquad"
+)
+
+
+def _claude_via_plugin() -> bool:
+    from .adapters.server_instructions import read_claude_plugin
+
+    return read_claude_plugin()
+
+
+def _claude_plugin_check(name: str, target_dir: Path) -> DoctorCheck:
+    """Beside the plugin, the registration is the plugin's, as Claude Code records it."""
+
+    from .adapters.claude_adapter import plugin_recorded
+
+    recorded = plugin_recorded(target_dir)
+    if recorded is True:
+        return DoctorCheck(name, CheckStatus.OK, "Supplied by the ModelQuad plugin.")
+    back = f"or run {CLI_COMMAND} install claude --no-plugin to install the server directly"
+    if recorded is False:
+        return DoctorCheck(
+            name, CheckStatus.WARN,
+            f"ModelQuad was installed for the plugin, but Claude Code does not list the "
+            f"ModelQuad plugin. Install it with {_PLUGIN_INSTALL}, {back}.",
+        )
+    return DoctorCheck(
+        name, CheckStatus.WARN,
+        f"ModelQuad was installed for the plugin, but Claude Code's plugin record could "
+        f"not be read, so whether the plugin is installed is unknown. Check with "
+        f"claude plugin list, {back}.",
+    )
+
+
+def _claude_duplicates_check(target_dir: Path) -> DoctorCheck | None:
+    """The plugin and the regular install side by side: Claude Code runs both copies.
+
+    ``None`` when there is no evidence of both. An unreadable plugin record is
+    not evidence, so it reports nothing rather than a guess.
+    """
+
+    from .adapters.claude_adapter import plugin_recorded
+
+    name = "claude installed once"
+    try:
+        registered = hostruntime.read_registered_command("claude", target_dir) is not None
+    except (OSError, ValueError):
+        return None
+    if _claude_via_plugin():
+        if not registered:
+            return None
+        return DoctorCheck(
+            name, CheckStatus.WARN,
+            "A modelquad server entry is still registered next to the plugin's server, so "
+            "Claude Code starts both. Remove the entry from ~/.claude.json, or run "
+            f"{CLI_COMMAND} install claude --no-plugin and uninstall the plugin.",
+        )
+    if plugin_recorded(target_dir) is not True or not registered:
+        return None
+    return DoctorCheck(
+        name, CheckStatus.WARN,
+        "The ModelQuad plugin is installed, and so are the server, commands and reminder "
+        "from the regular install, so Claude Code runs each twice. Run "
+        f"{CLI_COMMAND} install claude --plugin to keep the plugin's, or uninstall the plugin.",
+    )
 
 
 def _mcp_runtime_check(
@@ -251,6 +322,9 @@ def _mcp_runtime_check(
         command = read_registered_command(host_id, target_dir)
     except (OSError, ValueError) as exc:
         return DoctorCheck(name, CheckStatus.WARN, f"Could not inspect the registration: {exc}")
+    if command is None and host_id == "claude" and _claude_via_plugin():
+        # The plugin's server launches the bare command, as the entry would.
+        command = MCP_COMMAND
     if command is None:
         return None
     verdict = classify_registration(command, which=which)
@@ -843,6 +917,107 @@ def _model_discovery_check(plugin: ProviderPlugin, context: ProviderPluginContex
     )
 
 
+#: Check names of the person-only section: plan names and repository key
+#: names are shown to the person running the CLI, never to the model.
+PLANS_CHECK = "plans"
+REPO_FILE_CHECK = "repository file"
+REPO_SETTING_CHECK = "repository setting"
+PERSON_ONLY_CHECKS = (PLANS_CHECK, REPO_FILE_CHECK, REPO_SETTING_CHECK)
+
+
+def plans_check(usage_directory: Path) -> DoctorCheck:
+    """What each side's plan is and where that comes from: declared vs reported."""
+    from . import plans
+
+    try:
+        views = plans.current(usage_directory)
+    except Exception:  # noqa: BLE001 -- a broken preference file reads unknown
+        return DoctorCheck(PLANS_CHECK, CheckStatus.UNKNOWN,
+                           "Could not read the plans. Set them with: modelquad settings plan")
+    detail = " ".join(plans.human_lines(views))
+    codex = views["codex"]
+    differs = (codex.source == plans.SOURCE_OBSERVED and codex.declared is not None
+               and codex.declared != plans._shown(codex.observed))
+    if differs:
+        return DoctorCheck(PLANS_CHECK, CheckStatus.WARN,
+                           f"{detail} To match, run: modelquad settings plan codex unset")
+    if all(view.kind == plans.UNKNOWN for view in views.values()):
+        return DoctorCheck(PLANS_CHECK, CheckStatus.UNKNOWN, detail)
+    return DoctorCheck(PLANS_CHECK, CheckStatus.OK, detail)
+
+
+_REPO_MODE_WORDS = {"on": "on (Claude may decide on its own)", "off": "off (no Codex here)",
+                    "offer-only": "offer-only (Claude offers)"}
+
+
+#: How many unknown key names doctor names, and how long each may be. The
+#: names come from a file anyone can commit: doctor's report can reach Claude
+#: (a terminal it runs), so only a count and a few short, plain names are shown.
+_SHOWN_UNKNOWN_KEYS = 3
+_SHOWN_KEY_CHARS = 24
+
+
+def _unknown_keys_text(keys) -> str:
+    """The count of ignored keys and at most three short names of letters, digits and ._-"""
+    import re
+
+    names = []
+    for key in keys:
+        if type(key) is str and re.fullmatch(r"[A-Za-z0-9._-]{1,%d}" % _SHOWN_KEY_CHARS, key):
+            names.append(key)
+        if len(names) >= _SHOWN_UNKNOWN_KEYS:
+            break
+    count = len(keys)
+    text = f"Ignored {count} unknown key{'s' if count != 1 else ''}"
+    if names:
+        more = " and others" if count > len(names) else ""
+        text += " (" + ", ".join(names) + more + ")"
+    return text + ". Check them against docs/REPO-POLICY.md, or remove them."
+
+
+def repository_checks(project_directory: Path) -> list[DoctorCheck]:
+    """This repository's .modelquad.toml (valid, invalid with the fix, unknown keys)
+    and the user's own setting for it. Reads local files only; starts no process."""
+    from . import repo_policy, repo_settings
+    from .localpath import reason as local_reason
+
+    if local_reason(os.path.abspath(project_directory)) is not None:
+        # A network share or a device folder is never opened.
+        return [DoctorCheck(REPO_FILE_CHECK, CheckStatus.WARN,
+                            "Not checked: this folder is not a local folder ModelQuad can use.")]
+    checks = []
+    try:
+        mode = repo_settings.read_mode(project_directory)
+    except Exception:  # noqa: BLE001 -- an unreadable setting is no setting
+        mode = None
+    checks.append(DoctorCheck(
+        REPO_SETTING_CHECK, CheckStatus.OK,
+        f"Your setting here: {_REPO_MODE_WORDS.get(mode, 'inherit (your global setting applies)')}. "
+        "Change it with: modelquad settings repo <on|off|offer-only|inherit>"))
+    policy = repo_settings.local_policy(project_directory)
+    if policy is None:
+        checks.append(DoctorCheck(REPO_FILE_CHECK, CheckStatus.OK,
+                                  f"No {repo_policy.FILE_NAME} here; ModelQuad's own limits apply."))
+        return checks
+    if policy.refusal in (repo_policy.INVALID, repo_policy.UNREADABLE):
+        checks.append(DoctorCheck(REPO_FILE_CHECK, CheckStatus.WARN,
+                                  "Invalid: " + repo_policy.message(policy.refusal, policy)))
+        return checks
+    facts = policy.facts()
+    parts = [f"Valid {repo_policy.FILE_NAME}.",
+             "Codex: " + ("allowed" if facts["codex_allowed"] else "off") + ";",
+             "kinds: " + (", ".join(facts["task_kinds"]) or "none") + ";",
+             f"at most {facts['max_files']} files, {facts['max_total_kib']} KiB;",
+             "account: " + ("work only" if facts["account"] == "workspace" else "any") + ";",
+             "offers: " + ("only when you ask" if facts["offers_codex"] == "on_request" else "default") + "."]
+    status = CheckStatus.OK
+    if policy.unknown_keys:
+        status = CheckStatus.WARN
+        parts.append(_unknown_keys_text(policy.unknown_keys))
+    checks.append(DoctorCheck(REPO_FILE_CHECK, status, " ".join(parts)))
+    return checks
+
+
 def run_doctor(
     config: Config,
     *,
@@ -853,8 +1028,15 @@ def run_doctor(
     registry: ProviderRegistry | None = None,
     windows_path: str | None = None,
     control_plane_probe: Callable[[int], Any] | None = None,
+    project_directory: Path | None = None,
+    include_plans: bool = False,
 ) -> DoctorReport:
-    """Return non-throwing diagnostics for optional CLIs and integrations."""
+    """Return non-throwing diagnostics for optional CLIs and integrations.
+
+    ``include_plans`` and ``project_directory`` add the person-only checks
+    (plan names, the repository file's key names): only the CLI asks for
+    them, never a reply the model reads.
+    """
 
     which = which if which is not None else hostruntime.discovery_which
     active_registry = registry or default_registry()
@@ -884,7 +1066,10 @@ def run_doctor(
     }
     integrations_enabled = global_integrations_enabled()
     for plugin in active_registry.all():
-        matrix_check = _capability_matrix_check(plugin)
+        # Only a provider ModelQuad can run has worker capabilities to report;
+        # listing the host's would read as if Claude were a worker.
+        runs_as_worker = any(runtime.executor_factory is not None for runtime in plugin.agent_runtimes)
+        matrix_check = _capability_matrix_check(plugin) if runs_as_worker else None
         if matrix_check is not None:
             capability_checks.append(matrix_check)
         if plugin.id not in enabled_ids:
@@ -965,6 +1150,9 @@ def run_doctor(
                     )
                 from .adapters import claude_adapter
 
+                check = _claude_duplicates_check(target_dir)
+                if check is not None:
+                    adapter_checks.append(check)
                 check = _leftover_gate_check(target_dir)
                 if check is not None:
                     adapter_checks.append(check)
@@ -1042,6 +1230,14 @@ def run_doctor(
     )
     checks.extend(adapter_checks)
     checks.extend(configuration_checks)
+    if include_plans:
+        checks.append(plans_check(usage_dir))
+    if project_directory is not None:
+        try:
+            checks.extend(repository_checks(Path(project_directory)))
+        except Exception:  # noqa: BLE001 -- doctor itself never fails over a repository file
+            checks.append(DoctorCheck(REPO_FILE_CHECK, CheckStatus.UNKNOWN,
+                                      "Could not check this repository's .modelquad.toml."))
     worker_value = os.environ.get(WORKER_ENV_VAR)
     checks.append(
         DoctorCheck(

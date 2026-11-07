@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""The experimental Claude Code plugin stays a thin, safe copy of the package."""
+"""The Claude Code plugin stays a thin, safe copy of the package."""
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 from modelquad import __version__
@@ -39,16 +40,44 @@ def test_plugin_skills_are_the_packaged_templates():
             f"plugin/skills/{name} is stale: run python scripts/sync_plugin.py")
 
 
-def test_plugin_ships_no_server_no_permissions_and_only_the_reminder_hook():
-    # The MCP server stays CLI-installed, so tool names and deny rules keep
-    # their meaning, and every Codex call keeps its approval prompt.
-    assert not (PLUGIN / ".mcp.json").exists()
+def test_plugin_server_is_the_packaged_entry():
+    # The same entry `modelquad install claude` writes: the bare command pip
+    # puts on PATH, no absolute path, no env, and the same tool timeout.
+    sync = _sync_module()
+    assert (PLUGIN / ".mcp.json").read_bytes() == sync.MCP_TEMPLATE.read_bytes(), (
+        "plugin/.mcp.json is stale: run python scripts/sync_plugin.py")
+    servers = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+    assert list(servers) == ["modelquad"]
+    assert servers["modelquad"]["command"] == "modelquad-mcp"
+    assert "env" not in servers["modelquad"]
+
+
+def test_plugin_ships_no_permissions_and_only_the_reminder_hooks():
+    # A plugin's server tools are approved like any other: every Codex call
+    # keeps Claude Code's approval prompt, and nothing here pre-approves one.
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert not {"mcpServers", "settings", "agents", "outputStyles"} & set(manifest)
     assert not (PLUGIN / "agents").exists() and not (PLUGIN / "bin").exists()
-    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
-    assert set(hooks) == {"SessionStart"}
+    config = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    assert config["modules"] == ["./quota-band.tsx"]
+    hooks = config["hooks"]
+    # The startup reminder, and the review reminder, consultation reminder and
+    # review gate (tests/test_review_reminder.py).
+    assert set(hooks) == {"SessionStart", "PostToolUse", "PreToolUse", "Stop"}
     (entry,) = hooks["SessionStart"]
     (hook,) = entry["hooks"]
     assert hook["command"] == "modelquad" and hook["args"] == ["hook-pending", "claude"]
     assert "permissions" not in json.dumps(manifest)
+
+
+def test_the_quota_band_only_displays():
+    # The band draws quotas above the prompt where no status line does. It
+    # must never block, approve or rewrite anything (AGENTS.md invariant 6
+    # holds for ModelQuad's hooks of every kind), nor start a process.
+    source = (PLUGIN / "hooks" / "quota-band.tsx").read_text(encoding="utf-8")
+    events = set(re.findall(r"""\bon\(\s*['"]([\w.]+)['"]""", source))
+    assert events == {"session.start", "ui.render"}
+    for forbidden in ("$.process", "$.tool", "$.model", "$.agent", "$.session.append",
+                      "$.fs.write", "$.env.set", "deny"):
+        assert forbidden not in source, forbidden
+    assert "usage-codex.json" in source

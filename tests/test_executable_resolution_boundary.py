@@ -210,6 +210,8 @@ def _inventory(source):
 # Sites that are not admitted are never listed here: they are pinned in
 # OPEN_FINDINGS below with the same exact counts until their owners close them.
 ALLOW_LIST = (
+    ("cli.py", "_run_settings_page", "launch", 1,
+     "system default browser opened at the page's own loopback address; ModelQuad names no executable"),
     ("buildinfo.py", "_git_head", "launch", 1,
      "resolver call: resolve_executable excludes enclosing repositories before the Git probe"),
     ("codexcli.py", "_probe", "launch", 1,
@@ -247,6 +249,8 @@ ALLOW_LIST = (
      "Windows tasklist remains pinned through system_executable; includes default reference"),
     ("project_notes.py", "_observe", "launch", 1,
      "forwarding wrapper, guard inside: jobs.changes._git resolves/excludes Git; literal metadata queries share a deadline"),
+    ("repo_policy.py", "find_root", "launch", 1,
+     "forwarding wrapper, guard inside: jobs.changes._git resolves/excludes Git; one rev-parse under a deadline"),
     ("service/collector.py", "Scheduler.start", "launch", 1,
      "non-launch classification: self._run is an async in-process collection coroutine"),
     ("service/job_maintenance.py", "JobMaintenance.start", "launch", 1,

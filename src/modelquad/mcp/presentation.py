@@ -741,9 +741,9 @@ def route_lifecycle(state: str) -> dict[str, Any]:
     """
 
     if state not in ROUTE_STATES:
-        raise ValueError(f"route lifecycle state must be one of {sorted(ROUTE_STATES)}, got {state!r}")
+        raise ValueError(f"advice lifecycle state must be one of {sorted(ROUTE_STATES)}, got {state!r}")
     notes = {
-        "selected": "Nothing has run yet — this is the routing choice.",
+        "selected": "Nothing has run yet. This is advice only.",
         "stayed_with_host": "No handoff — the task stays in this session.",
         "blocked": "No provider could take this task.",
     }
@@ -792,12 +792,12 @@ def execution_lifecycle(state: str) -> dict[str, Any]:
             f"{sorted(EXECUTION_STATES | _IN_FLIGHT_STATES)}, got {state!r}"
         )
     notes = {
-        "completed": "The worker reported the task done.",
-        "partial": "The worker reported only part of the task done.",
-        "blocked": "The worker could not proceed.",
+        "completed": "Codex reported the task done.",
+        "partial": "Codex reported only part of the task done.",
+        "blocked": "Codex could not proceed.",
         "failed": "The task did not succeed.",
-        "timeout": "The worker did not return in time.",
-        "refused": "ModelQuad did not start this delegation.",
+        "timeout": "Codex did not return in time.",
+        "refused": "Nothing was sent to Codex.",
         "delegating": _ACTIVITY_NOTES["delegating"],
         "running": _ACTIVITY_NOTES["running"],
     }
@@ -922,8 +922,8 @@ def _routing_method(decision_source: str | None) -> str:
         "delegated_reasoned": "Advice (with reasoning)",
         "user_override": "You chose the provider",
         # Rows recorded before step 5 may still carry this source.
-        "fallback": "Substituted worker (older record)",
-        "learned_future": "Advice (learned)",
+        "fallback": "Older record",
+        "learned_future": "Advice",
     }.get(decision_source or "", "Advice")
 
 
@@ -1022,7 +1022,7 @@ def build_route_presentation(
         {"label": "How this was decided", "value": _routing_method(decision.get("decision_source"))},
         {
             "label": "Where the task runs",
-            "value": "Stays in this session" if stay_with_host else f"Handed to {chosen_label or 'a worker'}",
+            "value": "Stayed with Claude" if stay_with_host else f"Asked {chosen_label or 'Codex'}",
         },
     ]
     if model and not model["known"]:
@@ -1047,7 +1047,7 @@ def build_route_presentation(
         )
     objective = strategy_objective((score or {}).get("strategy"))
     if objective:
-        detail_rows.append({"label": "Routing preference", "value": objective})
+        detail_rows.append({"label": "Your preference", "value": objective})
     detail_rows.append(
         {
             "label": "Handoff",
@@ -1140,19 +1140,19 @@ def build_delegation_presentation(
     target_node = {
         "role": "target",
         "key": provider,
-        "label": label or provider or "No worker",
+        "label": label or provider or "No tool",
         "known": bool(provider),
         "state": state,
     }
 
     reason = result.get("reason") or result.get("error")
     headline = {
-        "completed": f"{label or 'The worker'} finished this task",
-        "partial": f"{label or 'The worker'} finished part of this task",
-        "blocked": f"{label or 'The worker'} could not proceed",
-        "failed": f"{label or 'The worker'} did not finish this task",
-        "timeout": f"{label or 'The worker'} did not return in time",
-        "refused": "Delegation did not start",
+        "completed": f"{label or 'Codex'} finished this task",
+        "partial": f"{label or 'Codex'} finished part of this task",
+        "blocked": f"{label or 'Codex'} could not proceed",
+        "failed": f"{label or 'Codex'} did not finish this task",
+        "timeout": f"{label or 'Codex'} did not return in time",
+        "refused": "Codex was not started",
     }[state]
 
     facts: list[dict[str, str]] = []
@@ -1164,11 +1164,11 @@ def build_delegation_presentation(
             {
                 "key": "evidence",
                 "label": "Result",
-                "value": "Checked by ModelQuad" if evidence.get("verified") else "Reported by the worker",
+                "value": "Checked by ModelQuad" if evidence.get("verified") else "Codex's own report (not checked by ModelQuad)",
             }
         )
     elif state in {"completed", "partial"}:
-        facts.append({"key": "evidence", "label": "Result", "value": "Reported by the worker"})
+        facts.append({"key": "evidence", "label": "Result", "value": "Codex's own report (not checked by ModelQuad)"})
 
     detail_rows: list[dict[str, str]] = []
     if reason:
@@ -1241,30 +1241,30 @@ ACTIVITY_STATES: frozenset[str] = frozenset(
 _REPORTED_TASK_STATUSES: frozenset[str] = frozenset({"completed", "partial", "blocked", "failed"})
 
 _ACTIVITY_NOTES: dict[str, str] = {
-    "selected": "ModelQuad chose where this task should run.",
+    "selected": "ModelQuad gave advice on which tool fits this task.",
     "not_routed": "No provider could take this task.",
-    "delegating": "ModelQuad is handing this task over; no worker is confirmed running yet.",
-    "running": "A worker is running this task now.",
+    "delegating": "Codex has not started yet.",
+    "running": "Codex is working on this now.",
     "unattended": (
-        "Your request timed out, but the worker is still running. ModelQuad is "
-        "still accounting for it."
+        "Your request timed out, but Codex is still running. ModelQuad will "
+        "record when it ends."
     ),
     "stopped": (
-        "The worker was stopped after the request timed out, and ModelQuad "
+        "Codex was stopped after the request timed out, and ModelQuad "
         "confirmed the process ended."
     ),
     "no_response": (
         "This handoff started and never reported back, so ModelQuad cannot say "
         "whether the work happened."
     ),
-    "refused": "ModelQuad did not start this handoff.",
-    "completed": "The worker reported the task done.",
-    "partial": "The worker reported only part of the task done.",
-    "blocked": "The worker could not proceed.",
+    "refused": "ModelQuad did not start this Codex call.",
+    "completed": "Codex reported the task done.",
+    "partial": "Codex reported only part of the task done.",
+    "blocked": "Codex could not proceed.",
     "failed": "The task did not succeed.",
-    "timeout": "The worker did not return in time.",
+    "timeout": "Codex did not return in time.",
     "no_result": (
-        "The worker stopped without reporting a result, so ModelQuad cannot say "
+        "Codex stopped without reporting a result, so ModelQuad cannot say "
         "whether the task was done."
     ),
     "unknown": "There is not enough recorded evidence to say what happened.",
@@ -1273,15 +1273,60 @@ _ACTIVITY_NOTES: dict[str, str] = {
 #: Why ModelQuad declined to start a handoff, in the user's vocabulary. An
 #: unrecognised kind produces no sentence at all rather than a raw token.
 _REFUSAL_REASONS: dict[str, str] = {
-    "policy_refused": "Your routing settings did not allow this handoff.",
+    "policy_refused": "ModelQuad's rules or your settings did not allow this Codex call.",
     "duplicate_in_flight": "The same task was already running.",
     "no_viable_worker": "No provider could take this task.",
     "provider_unavailable": "The chosen provider was not available.",
-    "failed_to_start": "The worker could not be started.",
+    "failed_to_start": "Codex could not be started.",
     "invalid_request": "The request was not valid.",
-    "orphaned": "The worker was gone, so ModelQuad closed this handoff.",
-    "timeout": "The worker did not return in time.",
+    "orphaned": "Codex was gone, so ModelQuad closed this handoff.",
+    "timeout": "Codex did not return in time.",
 }
+
+
+#: One plain sentence per refusal a reply can carry, keyed by the closed code
+#: (or the fixed start of a policy reason). The code itself stays in the
+#: structured fields; a person reads only the sentence. An unknown code gets
+#: the general sentence, never the raw token.
+_REFUSAL_LINES: dict[str, str] = {
+    "duplicate_in_flight": "The same request is already running, so ModelQuad started nothing new.",
+    "task_type_not_read_only": ("Codex through ModelQuad takes only read-only review, exploration "
+                                "or architecture tasks."),
+    "capsule_action_authority_rejected": "The request tried to approve itself, which ModelQuad does not allow. Ask again without it.",
+    "launch_state_unknown": "ModelQuad could not read its own settings. Run: modelquad doctor",
+    "routing is paused": ("Codex calls are paused in ModelQuad's saved settings, so Codex was not started. "
+                          "No command in this version resumes them; please report it at "
+                          "https://github.com/razbenaharon/modelquad/issues"),
+    "host_unidentified": ("ModelQuad could not tell which app sent this call, and at least one app is "
+                          "disconnected, so nothing started. Run: modelquad host status"),
+    "host_disconnected": "Claude Code is disconnected in ModelQuad. Run: modelquad host status",
+    "MODELQUAD_WORKER=1": "This session was started by ModelQuad for Codex, so it cannot ask Codex again.",
+    "worker ancestry match": "This session was started by ModelQuad for Codex, so it cannot ask Codex again.",
+    "user_repo_codex_off": ("You turned Codex off for this repository. To allow it again, run: "
+                            "modelquad settings repo inherit"),
+}
+REFUSAL_FALLBACK = "ModelQuad's rules did not allow this Codex call."
+
+
+def refusal_line(payload: Any) -> str:
+    """The one sentence a person reads about why Codex was not started.
+
+    A fixed ``message`` the refusing gate wrote (the repository rules do)
+    comes first; otherwise the sentence for the closed code. Never the code.
+    """
+    if not isinstance(payload, dict):
+        return REFUSAL_FALLBACK
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip() and payload.get("reason") != message:
+        return message
+    reason = payload.get("reason")
+    if isinstance(reason, str):
+        if reason in _REFUSAL_LINES:
+            return _REFUSAL_LINES[reason]
+        for start, line in _REFUSAL_LINES.items():
+            if reason.startswith(start):
+                return line
+    return REFUSAL_FALLBACK
 
 
 def failure_sentence(failure_kind: Any) -> str | None:
@@ -1375,20 +1420,20 @@ def user_stop_sentence(
     if stop_requested is not True:
         return None
     if planner_ran is True or (planner_ran is None and confirmed_dead is True):
-        return "The planning step ran. You stopped this delegation before the next worker started."
+        return "You stopped this work before Codex answered. Nothing else started."
     if planner_ran is None:
         return (
-            "You asked to stop this work, but ModelQuad could not confirm the planner ended. "
-            "No further worker was started."
+            "You asked to stop this work, but ModelQuad could not confirm Codex ended. "
+            "Nothing else started."
         )
     if before_start is True:
-        return "You stopped this work before a worker started. Nothing ran."
+        return "You stopped this work before Codex started. Nothing ran."
     if confirmed_dead is True:
         return (
-            "You stopped this work. ModelQuad confirmed the worker ended. "
-            "Changes it already made stay in your project."
+            "You stopped this work. ModelQuad confirmed Codex ended. "
+            "Codex through ModelQuad cannot change your files."
         )
-    return "You asked to stop this work, but ModelQuad could not confirm the worker ended."
+    return "You asked to stop this work, but ModelQuad could not confirm Codex ended."
 
 
 def user_stop_facts(entry: dict[str, Any]) -> tuple[bool, bool | None, bool, bool | None]:
@@ -1545,7 +1590,7 @@ def activity_state(entry: dict[str, Any]) -> str:
 def _activity_headline(state: str, where: dict[str, Any]) -> str:
     ran = where.get("ran_on") or {}
     named = ran.get("label") if ran.get("known") else None
-    worker = named or "The worker"
+    worker = named or "Codex"
     return {
         "selected": f"Chose {named}" if named else "Chose where to run this",
         "not_routed": "No provider could take this",
@@ -1554,7 +1599,7 @@ def _activity_headline(state: str, where: dict[str, Any]) -> str:
         "unattended": f"{worker} is still running this",
         "stopped": f"{worker} was stopped",
         "no_response": f"{worker} never reported back",
-        "refused": "This handoff was not started",
+        "refused": "Codex was not started",
         "completed": f"{worker} finished this task",
         "partial": f"{worker} finished part of this task",
         "blocked": f"{worker} could not proceed",
@@ -1576,7 +1621,7 @@ def _outcome_basis(entry: dict[str, Any], state: str) -> str | None:
 
     if state not in {"completed", "partial"}:
         return None
-    return "Checked by ModelQuad" if entry.get("outcome_verified") is True else "Reported by the worker"
+    return "Checked by ModelQuad" if entry.get("outcome_verified") is True else "Codex's own report (not checked by ModelQuad)"
 
 
 def _activity_why(entry: dict[str, Any], decision_sources: dict[str, str] | None) -> str | None:
@@ -1630,8 +1675,8 @@ def _activity_facts(entry: dict[str, Any], state: str) -> list[dict[str, str]]:
         facts.append(
             {
                 "key": "worker_fate",
-                "label": "Worker",
-                "value": "ModelQuad could not confirm the worker stopped",
+                "label": "Codex",
+                "value": "ModelQuad could not confirm Codex stopped",
             }
         )
 

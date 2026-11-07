@@ -230,7 +230,7 @@ class CodexExecutor(Executor):
                 error=(f"Codex runs read-only consultations only; a {request.task_type.value} "
                        "task cannot be delegated."),
                 task_status=WorkerTaskStatus.BLOCKED,
-                task_status_reason="beta_read_only_required",
+                task_status_reason="task_type_not_read_only",
                 safe_to_retry=False, metadata={"worker_started": False},
             )
         resolved = self._resolve()
@@ -350,6 +350,9 @@ class CodexExecutor(Executor):
                     False, True, verification.collaboration_called,
                 )
             metadata.update(verification.metadata)
+            usage = noshell.stream_usage(raw)
+            if usage is not None:
+                metadata["worker_tokens"] = usage
             return verification
 
         try:
@@ -359,11 +362,26 @@ class CodexExecutor(Executor):
             files = request.metadata.get("supplied_files", ())
             if type(files) not in (list, tuple) or any(type(name) is not str for name in files):
                 return refused("supplied_file_unavailable")
+            # The same per-repository gate as the MCP tools (repo_policy.gate),
+            # read again now: a background job runs after the MCP gate did,
+            # and a change since must still refuse or lower the caps. The
+            # account rule reads the plan Codex reported in ModelQuad's
+            # default usage folder: a read, no process. The MCP gate reads
+            # the server's --usage-directory when one is set; the two differ
+            # only then, and since each must pass, a difference can only
+            # refuse (no path is put in the request to carry it). Nothing
+            # here can widen what the gate allowed.
+            from .. import repo_policy
+            repo_refusal, policy = repo_policy.gate(
+                request.working_directory, request.task_type, files=files)
+            if repo_refusal is not None:
+                return refused(repo_refusal["reason"])
             report = {}
             try:
                 prompt = noshell.supplied_prompt(request.prompt, request.working_directory,
                                                 files=files, completion_protocol=True,
-                                                diagnostics=diagnostics, report=report)
+                                                diagnostics=diagnostics, report=report,
+                                                caps=policy.caps)
             except noshell.SuppliedContextRefused as refusal:
                 return refused(refusal.reason)
             # The approval covers the contents as they were when the user

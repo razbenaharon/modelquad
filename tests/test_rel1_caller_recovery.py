@@ -493,7 +493,7 @@ def test_the_delegate_contract_says_the_two_clocks_are_not_one():
     """
 
     recovery = inspect.getdoc(_tool("modelquad_delegation_status")) or ""
-    assert "worker" in recovery.lower() and "budget" in recovery.lower()
+    assert "codex" in recovery.lower() and "budget" in recovery.lower()
     assert "patience" in recovery.lower()
     assert "modelquad_delegate(timeout=" in recovery
     for name in ("modelquad_delegate", "modelquad_delegation_status"):

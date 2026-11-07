@@ -23,17 +23,18 @@ SUMMARY = {'count': 1, 'more': False, 'jobs': [{
 }]}
 
 
-def invoke(monkeypatch, *, host='claude', event=None, raw=None, fetch=None, environ=None, clock=lambda: 10):
+def invoke(monkeypatch, *, host='claude', event=None, raw=None, fetch=None, environ=None, clock=lambda: 10,
+           advise=lambda cwd: None):
     monkeypatch.setattr(reminder, 'project_key', lambda cwd: KEY if cwd == 'C:/synthetic/project' else None)
     payload = event if event is not None else {'hook_event_name': 'SessionStart', 'cwd': 'C:/synthetic/project'}
     stream = io.BytesIO(raw if raw is not None else json.dumps(payload).encode())
     out = io.StringIO()
     code = reminder.run_hook(host, stream, out, environ=environ or {}, clock=clock,
-                             fetch=fetch or (lambda *a, **kw: SUMMARY))
+                             fetch=fetch or (lambda *a, **kw: SUMMARY), advise=advise)
     return code, out.getvalue()
 
 
-@pytest.mark.parametrize('host', ['claude', 'codex'], ids=['PR-CLAUDE-01', 'PR-CODEX-01'])
+@pytest.mark.parametrize('host', ['claude'], ids=['PR-CLAUDE-01'])
 def test_exact_context_envelope(monkeypatch, host, capsys):
     code, output = invoke(monkeypatch, host=host)
     assert code == 0
@@ -41,7 +42,6 @@ def test_exact_context_envelope(monkeypatch, host, capsys):
         'hookEventName': 'SessionStart', 'additionalContext': reminder.reminder_text(SUMMARY)}}
     assert set(json.loads(output)) == {'hookSpecificOutput'}
     assert capsys.readouterr() == ('', '')
-    assert 'codex-cli 0.162.0' in reminder.CODEX_DELIVERY_EVIDENCE
     assert 'UNVERIFIED' not in output
 
 
@@ -78,7 +78,7 @@ def test_only_closed_metadata_is_allowed(monkeypatch, summary):
     assert invoke(monkeypatch, fetch=lambda *a, **kw: summary) == (0, '')
 
 
-@pytest.mark.parametrize('host', ['claude', 'codex'], ids=['PR-PRIVACY-02-claude', 'PR-PRIVACY-02-codex'])
+@pytest.mark.parametrize('host', ['claude'], ids=['PR-PRIVACY-02-claude'])
 def test_transcript_is_not_read_or_statted(monkeypatch, host):
     def forbidden(*a, **kw):
         pytest.fail('transcript/file operation')
@@ -463,3 +463,11 @@ def test_hook_is_silent_on_actual_transport_timeout(monkeypatch, transport, phas
     assert invoke(monkeypatch, fetch=fetch, clock=lambda: transport.now) == (0, '')
     assert transport.now <= 11.5 and transport.sock.closed
     assert capsys.readouterr() == ('', '')
+
+
+def test_codex_is_not_a_hook_host(monkeypatch):
+    """Claude Code is the one host: ``hook-pending codex`` prints nothing."""
+    assert invoke(monkeypatch, host="codex") == (0, "")
+    from modelquad import cli_entry
+    assert cli_entry.dispatch_pending(["hook-pending", "codex"]) == 0
+    assert not hasattr(reminder, "serialize_codex")

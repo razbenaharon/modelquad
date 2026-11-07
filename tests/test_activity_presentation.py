@@ -259,8 +259,8 @@ def test_an_unconfirmed_termination_stays_unknown_and_says_so():
     assert entry["state"] != "stopped"
     assert {
         "key": "worker_fate",
-        "label": "Worker",
-        "value": "ModelQuad could not confirm the worker stopped",
+        "label": "Codex",
+        "value": "ModelQuad could not confirm Codex stopped",
     } in entry["facts"]
 
 
@@ -332,8 +332,8 @@ def test_a_completion_is_the_workers_own_claim_unless_modelquad_checked_it():
     def result_fact(entry):
         return next(fact["value"] for fact in entry["facts"] if fact["key"] == "result")
 
-    assert result_fact(reported) == "Reported by the worker"
-    assert result_fact(unrecorded) == "Reported by the worker"
+    assert result_fact(reported) == "Codex's own report (not checked by ModelQuad)"
+    assert result_fact(unrecorded) == "Codex's own report (not checked by ModelQuad)"
     assert result_fact(checked) == "Checked by ModelQuad"
 
 
@@ -378,7 +378,7 @@ def test_a_refused_attempt_says_it_never_started_and_why_in_words():
         attempt(status="refused", resolved_at=NOW, liveness="resolved", failure_kind="duplicate_in_flight")
     )
     assert entry["state"] == "refused"
-    assert entry["headline"] == "This handoff was not started"
+    assert entry["headline"] == "Codex was not started"
     assert {"key": "refusal", "label": "Why not", "value": "The same task was already running."} in entry["facts"]
 
 
@@ -465,7 +465,7 @@ def test_a_routing_row_names_what_was_chosen_and_never_claims_it_ran():
         ("deterministic", "Advice (task fit)"),
         ("host_reasoned", "Advice (with reasoning)"),
         ("delegated_reasoned", "Advice (with reasoning)"),
-        ("fallback", "Substituted worker (older record)"),
+        ("fallback", "Older record"),
         ("user_override", "You chose the provider"),
     ],
 )
@@ -477,7 +477,7 @@ def test_an_execution_inherits_why_from_the_routing_row_it_shares_an_identity_wi
     entry = build_activity_entry(
         execution(decision_id="d1"), decision_sources={"d1": "fallback"}
     )
-    assert entry["why"] == "Substituted worker (older record)"
+    assert entry["why"] == "Older record"
 
 
 def test_an_override_says_you_chose_it_even_without_a_decision_source():
@@ -709,7 +709,7 @@ def test_verification_status_survives_the_compact_listing(tmp_path):
             for fact in build_activity_entry(rows["claude"])["facts"]
             if fact["key"] == "result"
         )
-        == "Reported by the worker"
+        == "Codex's own report (not checked by ModelQuad)"
     )
 
 
@@ -755,7 +755,9 @@ def test_the_activity_tool_serves_a_plain_language_view_beside_the_raw_record(tm
     monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
 
     def _call(tool, **kwargs):
-        return (getattr(tool, "fn", None) or tool)(**kwargs)
+        result = (getattr(tool, "fn", None) or tool)(**kwargs)
+        # A tool that replies with lines for a person carries its data alongside.
+        return getattr(result, "structured_content", result)
 
     service_history.record_execution(
         db_path,

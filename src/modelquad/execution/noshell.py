@@ -106,10 +106,10 @@ REFUSAL_MESSAGES = {
         "A file named in files does not exist. Name it relative to the working "
         "directory and ask again."),
     "supplied_files_over_limit": (
-        "The required files exceed the number or size of files ModelQuad sends to the "
-        "worker. Name fewer or smaller files, or split the request."),
+        "The required files exceed the number or size of files ModelQuad sends to "
+        "Codex. Name fewer or smaller files, or split the request."),
     "supplied_file_unavailable": (
-        "A required file could not be read safely: it is outside the working directory, a "
+        "A required file could not be read reliably: it is outside the working directory, a "
         "link, binary, undecodable, or it changed while it was read. Name a regular text "
         "file inside the working directory."),
     # Retired: task text no longer selects files. Kept as a closed label
@@ -118,29 +118,60 @@ REFUSAL_MESSAGES = {
         "The task text contains more than one 'Relevant files:' section, so the required "
         "files are ambiguous. Keep one section."),
     "rendered_prompt_cap": (
-        "The task and its required files exceed the worker prompt limit. Shorten the task, "
+        "The task and its required files exceed the size limit for one Codex request. Shorten the task, "
         "name fewer files, or split the request."),
     "codex_shim_only": (
         "Only the npm launcher (codex.cmd) was found, and the native codex.exe its package "
-        "ships is missing. Reinstall the npm package or install the official Codex CLI."),
+        "ships is missing. Reinstall the npm package or install the Codex CLI from OpenAI."),
     "codex_version_unsupported": (
         "The Codex CLI version could not be read or is older than " + MIN_CODEX_VERSION
         + ". Update the Codex CLI."),
     "codex_feature_unverified": (
         "The Codex CLI's feature listing did not confirm that its command, code, plugin and "
-        "app tools are turned off for this run."),
+        "app tools are turned off for this run. Update the Codex CLI, then run: modelquad doctor"),
     "codex_executable_unverified": (
         "The Codex executable could not be read, or it changed while ModelQuad was checking "
-        "it. Try again."),
+        "it. Try again. If it repeats, run: modelquad doctor"),
     "unsupported_platform": (
         "ModelQuad runs Codex only on native Windows, where it can contain and check the run."),
     "supplied_file_changed": (
         "A file changed after the user approved sending it, so nothing was sent. Ask again "
         "to send the current version."),
+    # The repository's .modelquad.toml (repo_policy), rechecked right before
+    # the files are packed: the MCP gates refuse first with a fuller line.
+    "repo_policy_codex_off": (
+        "This repository's .modelquad.toml turns Codex off, so nothing was started. Change "
+        "[codex] allowed or remove the file."),
+    "repo_policy_kind_removed": (
+        "This repository's .modelquad.toml does not allow this kind of Codex task, so nothing "
+        "was started. Ask for a kind it lists in [codex] task_kinds, or edit that line."),
+    "repo_policy_account_workspace_required": (
+        "This repository's .modelquad.toml allows Codex only on a work account, so nothing was "
+        "started. Use a work Codex account here, or change [codex] account."),
+    "repo_policy_invalid": (
+        "This repository's .modelquad.toml is not valid, so ModelQuad refuses Codex here until "
+        "it is fixed. Use the schema 1 format in docs/REPO-POLICY.md, or remove the file."),
+    "repo_policy_unreadable": (
+        "This repository's .modelquad.toml could not be used (a link, not a plain file, or "
+        "larger than 8 KiB), so ModelQuad refuses Codex here. Replace it with a plain file "
+        "or remove it."),
+    "repo_policy_file_outside_repo": (
+        "A file named for Codex is in another Git repository inside the working folder, whose "
+        "own .modelquad.toml and settings would be skipped, so nothing was started. Ask from "
+        "that repository's own folder."),
+    # The working folder itself (localpath): a network share, a device or a
+    # relative path is refused before anything opens it.
+    "project_directory_unusable": (
+        "The working folder is not a local folder ModelQuad can use (a network share, a "
+        "device, a relative path, or a link to one), so nothing was started."),
+    # The user's own per-repository setting (repo_settings), rechecked here too.
+    "user_repo_codex_off": (
+        "You turned Codex off for this repository (modelquad settings repo off), so nothing "
+        "was started. To allow it here again, run: modelquad settings repo inherit"),
     UNAVAILABLE: (
-        "The no-shell worker could not be started within its time budget, or its event "
-        "stream could not be verified as tool-free, so no answer was returned."),
-    VIOLATED: "The worker used a tool it is not allowed to use, so its answer was withheld.",
+        "Codex could not be started in time, or ModelQuad could not confirm it used no "
+        "tools, so no answer was returned. Try again; if it repeats, run: modelquad doctor"),
+    VIOLATED: "Codex tried to use a tool, which ModelQuad does not allow, so its answer was withheld.",
 }
 PRELAUNCH_REFUSALS = frozenset(REFUSAL_MESSAGES) - {UNAVAILABLE, VIOLATED}
 REFUSAL_LABELS = frozenset(REFUSAL_MESSAGES)
@@ -193,7 +224,7 @@ class OmissionDiagnostic:
         elif self._reason in _POLICY_GUIDANCE:
             guidance += " " + _POLICY_GUIDANCE[self._reason]
         else:
-            guidance += " Supply safe relevant context explicitly."
+            guidance += " Name the files to send in `files`."
         return {"path": self._path, "reason": self._reason,
                 "required": self._required, "limit_bytes": limit[1] if limit else None,
                 "guidance": guidance}
@@ -457,6 +488,28 @@ def verify_stream(raw) -> StreamVerification:
     return StreamVerification(valid and terminal and not violated, violated, collaboration)
 
 
+def stream_usage(raw) -> dict | None:
+    """Codex's own token counts from its last ``turn.completed`` event; None when absent.
+
+    Numbers only, for the review ledger's cost line. It reads the same stream
+    :func:`verify_stream` judged and decides nothing.
+    """
+    found = None
+    for line in (raw or "").splitlines():
+        try:
+            event = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if type(event) is dict and event.get("type") == "turn.completed" and type(event.get("usage")) is dict:
+            found = event["usage"]
+    if found is None:
+        return None
+    usage = {key: found[key] for key in ("input_tokens", "cached_input_tokens", "output_tokens",
+                                         "reasoning_output_tokens")
+             if type(found.get(key)) is int and 0 <= found[key] < 10**10}
+    return usage or None
+
+
 def limitations(metadata, original=()):
     """Close worker prose; certify only after both observations succeeded."""
     labels = list(closed_limitations(original))
@@ -527,7 +580,7 @@ _SECRET_KEY = (r"(?:(?:[a-z][a-z0-9]*[_-])*(?:api[_-]?key|"
                r"secret[_-]?(?:access[_-]?)?key|private[_-]?key|"
                r"(?:access|refresh|auth|session)[_-]?token|token|pass(?:word|wd|phrase)|"
                r"(?:client[_-]?|private[_-]?)?secret|credential(?:s)?|authorization|"
-               r"connection[_-]?string))")
+               r"connection[_-]?string|account[_-]?key|auth))")
 # Every screen is anchored at a key or token start: unanchored, a long word
 # made every start position backtrack (a 128 KiB token took two minutes).
 _SECRET_ASSIGNMENT = re.compile(
@@ -544,6 +597,12 @@ _HIGH_CONFIDENCE_SECRET = re.compile(
     r"|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}"
     r"|(?:AKIA|ASIA)[0-9A-Z]{16}|xox[abposr]-[A-Za-z0-9-]{10,}"
     r"|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}"
+    # Stripe secret and restricted keys (underscore, unlike OpenAI's sk-).
+    r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}"
+    # A Slack incoming-webhook URL carries its secret in the path.
+    r"|hooks\.slack\.com/services/T[A-Za-z0-9]{6,}/B[A-Za-z0-9]{6,}/[A-Za-z0-9]{16,}"
+    # An Azure storage connection string's account key (base64 of 64 bytes).
+    r"|AccountKey=[A-Za-z0-9+/]{40,}={0,2}"
     r")(?![A-Za-z0-9_-])")
 _SECRET_LITERAL = re.compile(
     r"(?i)(?<![\w-])[\"']?" + _SECRET_KEY + r"[\"']?\s*[=:]\s*"
@@ -554,7 +613,9 @@ _PLACEHOLDER = re.compile(r"(?i)example|placeholder|dummy|changeme|redacted|test
 # Values found in prose or output rather than in assignments.
 _BEARER = re.compile(r"(?i)\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/-]{16,}=*")
 _JWT = re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
-_URL_CREDENTIAL = re.compile(r"(?i)\b(https?://)[^\s/@:\"']+:[^\s/@\"']+@")
+# Any scheme (postgresql://, mongodb+srv://, redis://, amqp:// ...). The scheme
+# is bounded so a long dotted word cannot make each start position rescan it.
+_URL_CREDENTIAL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}://)[^\s/@:\"']+:[^\s/@\"']+@")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 # Configuration and prose, where an unquoted value is data rather than code.
 _DATA_SUFFIXES = frozenset({".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties",
@@ -694,16 +755,31 @@ def _secret_reference(name):
     """Share the path privacy screen with diagnostics that cannot read files."""
     parts = tuple(part.casefold() for part in name.split("/"))
     return (_CONTEXT_CREDENTIAL.search(name) is not None
-            or any(part in {".codex", ".claude", ".aws", ".ssh", ".agents", ".azure", ".kube", "gcloud"} for part in parts)
+            or any(part in {".codex", ".claude", ".aws", ".ssh", ".agents", ".azure", ".kube", "gcloud",
+                            ".docker", ".gnupg"} for part in parts)
             or parts[-1].startswith(".env") or parts[-1] in {
                 "auth.json", "credentials", "credentials.json", ".npmrc", ".yarnrc",
                 ".yarnrc.yml", ".pypirc", ".netrc", "_netrc", ".git-credentials",
-                "pip.conf", "pip.ini", "nuget.config", "kubeconfig", "application_default_credentials.json"}
-            or Path(name).suffix.lower() in {".pem", ".key", ".pfx", ".p12"})
+                "pip.conf", "pip.ini", "nuget.config", "kubeconfig", "application_default_credentials.json",
+                ".pgpass", "pgpass.conf", ".my.cnf", ".s3cfg", ".boto", ".vault-token", ".htpasswd"}
+            or parts[-1].endswith((".tfstate", ".tfstate.backup"))
+            or Path(name).suffix.lower() in {".pem", ".key", ".pfx", ".p12", ".tfvars", ".jks",
+                                              ".keystore"})
 
 
-def pack_files(workspace, names) -> SuppliedFiles:
-    """Explicit references only; no globbing, tree scan or dependency traversal."""
+def _cap(value, ceiling):
+    """A caller's cap, never above ModelQuad's own and never negative."""
+    return ceiling if type(value) is not int else max(0, min(value, ceiling))
+
+
+def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOTAL_BYTES) -> SuppliedFiles:
+    """Explicit references only; no globbing, tree scan or dependency traversal.
+
+    ``max_files`` and ``max_total_bytes`` can only lower ModelQuad's own caps
+    (a repository's ``.modelquad.toml``); a higher value is the built-in cap.
+    """
+    max_files = _cap(max_files, MAX_FILES)
+    max_total_bytes = _cap(max_total_bytes, MAX_TOTAL_BYTES)
     root = Path(workspace).absolute()
     files, skipped, seen, total = [], [], set(), 0
     secret_keys, folder_keys = set(), set()
@@ -716,8 +792,8 @@ def pack_files(workspace, names) -> SuppliedFiles:
         reason = ("elapsed_work_cap" if time.monotonic() >= budget.deadline else
                   "candidate_count_cap" if count >= MAX_CANDIDATES else
                   "omission_count_cap" if len(skipped) >= MAX_SKIPPED else
-                  "file_count_cap" if len(files) >= MAX_FILES else
-                  "total_byte_cap" if total >= MAX_TOTAL_BYTES else
+                  "file_count_cap" if len(files) >= max_files else
+                  "total_byte_cap" if total >= max_total_bytes else
                   "read_byte_cap" if budget.remaining <= 0 else None)
         if reason:
             skipped.append(("<remaining references, if any>", reason))
@@ -754,7 +830,7 @@ def pack_files(workspace, names) -> SuppliedFiles:
             # evidence of a link before admission.
             if _linked(root.lstat()):
                 raise ValueError("linked_path")
-            text = _read_file(root, name, budget, MAX_TOTAL_BYTES - total)
+            text = _read_file(root, name, budget, max_total_bytes - total)
             # A differently named copy is still a notes source, not supplied
             # task evidence. A standalone marker identifies even malformed
             # sources without excluding code that quotes the marker string.
@@ -784,7 +860,7 @@ def pack_files(workspace, names) -> SuppliedFiles:
         if size > MAX_FILE_BYTES:
             skipped.append((name, "file_byte_cap"))
             continue
-        if total + size > MAX_TOTAL_BYTES:
+        if total + size > max_total_bytes:
             skipped.append((name, "total_byte_cap"))
             continue
         total += size
@@ -1041,14 +1117,15 @@ def render_supplied(screened, pack, instruction, *, required=(), withheld=(),
     return rendered
 
 
-def approved_digests(prompt, workspace, files):
+def approved_digests(prompt, workspace, files, *, caps=None):
     """What the user approved, by content: {path: digest prefix} of each file a
     run would send now, or None when the files cannot be sent at all (the run
     refuses on its own then). The digest is :func:`sent_entry`'s, of the text
     as sent, so it compares directly with the audit of the real run."""
     report = {}
     try:
-        supplied_prompt(prompt, workspace, files=files, completion_protocol=True, report=report)
+        supplied_prompt(prompt, workspace, files=files, completion_protocol=True, report=report,
+                        caps=caps)
     except SuppliedContextRefused:
         return None
     return {item["path"]: item["sha256"] for item in report.get("sent", ())}
@@ -1113,18 +1190,32 @@ INSTRUCTION = ("\nYou have no command or file tools. Work only from the supplied
                "Cite file paths and line numbers, state missing context and hypotheses, "
                "and propose verification steps for the Host. Diagnosis is not verification. "
                "<credential> marks a value ModelQuad redacted before sending; it is not in the "
-               "real file and is not a defect.\n")
+               "real file and is not a defect. "
+               "List each concrete problem you find on its own line, exactly as: "
+               "FINDING F1 | severity | location | category | confidence: why | claim | reasoning. "
+               "severity and confidence are high, medium or low; after confidence say in a few "
+               "words why you are that sure. location is relative/path.ext:line or "
+               "relative/path.ext:start-end when a line applies, the path alone when it does not, "
+               "or - for a design-level point; never invent a line number. category is one word "
+               "such as bug, security, correctness, test-gap, design or perf. The claim says what "
+               "is wrong; the reasoning says why, from the supplied code. "
+               "If you find none, write the line: FINDINGS: none\n")
 
 
 def supplied_prompt(prompt, workspace, *, files=(), completion_protocol=False, diagnostics=None,
-                    report=None):
+                    report=None, caps=None):
     """Bound the entire rendered payload, including JSON escaping and labels.
 
     Only ``files`` -- the paths the user approved in the tool call -- are
     attached. A path named in the task text, a traceback or a diff is never
     read. Before reading, :func:`file_rules.screen` skips every file the
     user's Claude Code Read deny rules, Git or ``.modelquadignore`` exclude.
+    ``caps`` ({"max_files", "max_total_bytes"}, from the repository's
+    ``.modelquad.toml``) can only lower the packer's own caps.
     """
+    caps = caps if type(caps) is dict else {}
+    max_files = _cap(caps.get("max_files"), MAX_FILES)
+    max_total_bytes = _cap(caps.get("max_total_bytes"), MAX_TOTAL_BYTES)
     sink = diagnostics if diagnostics is not None else []
     if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
         diagnostic = OmissionDiagnostic("<prompt>", "rendered_prompt_cap", True)
@@ -1138,7 +1229,7 @@ def supplied_prompt(prompt, workspace, *, files=(), completion_protocol=False, d
         sink.append(diagnostic)
         raise bind_host_diagnostics(SuppliedContextRefused("task_text_secret"), (diagnostic,)) from None
     names = explicit_names(files, workspace)
-    if len(names) > MAX_FILES:
+    if len(names) > max_files:
         diagnostic = OmissionDiagnostic("<remaining references, if any>", "file_count_cap", True)
         sink.append(diagnostic)
         raise bind_host_diagnostics(SuppliedContextRefused("supplied_files_over_limit"), (diagnostic,))
@@ -1151,7 +1242,10 @@ def supplied_prompt(prompt, workspace, *, files=(), completion_protocol=False, d
     allowed, withheld = file_rules.screen(workspace, valid)
     excluded = {name.casefold() for name, _ in withheld}
     attach = [name for name in names if name.casefold() not in excluded]
-    pack = pack_files(workspace, attach)
+    # Nothing to attach: the caps have nothing to bound, and a zero cap must
+    # not report an omission that did not happen.
+    pack = (pack_files(workspace, attach, max_files=max_files, max_total_bytes=max_total_bytes)
+            if attach else pack_files(workspace, attach))
     return render_supplied(screened, pack, INSTRUCTION, required=attach, withheld=withheld,
                            completion_protocol=completion_protocol, diagnostics=sink, report=report)
 

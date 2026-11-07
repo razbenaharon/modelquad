@@ -27,7 +27,7 @@ EVENTS = frozenset({
 })
 STATUSES = frozenset({"acquired", "duplicate", "unknown", "completed", "failed",
                       "job_shared", "containment_unknown"})
-PROTOCOL_COMMANDS = frozenset({"hook-pending", "usage-hook", "hook-gate", "mcp"})
+PROTOCOL_COMMANDS = frozenset({"hook-pending", "hook-review", "usage-hook", "hook-gate", "mcp"})
 
 
 def _length(value) -> int:

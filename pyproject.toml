@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "modelquad"
 dynamic = ["version"]
-description = "ModelQuad: ask a second coding agent for a review or a bounded task, on your own machine, with your own logins."
+description = "ModelQuad: a read-only second opinion from your own Codex CLI inside Claude Code, and a proposed division of work between the two, on Windows."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -82,7 +82,7 @@ version = { attr = "modelquad.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-modelquad = ["default.yaml"]
+modelquad = ["default.yaml", "settings_page.html"]
 "modelquad.adapters" = ["templates/**/*"]
 
 [tool.pytest.ini_options]

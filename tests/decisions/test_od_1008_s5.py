@@ -27,7 +27,7 @@ def test_task_types_split_into_read_only_and_writable():
 
 @pytest.mark.parametrize("task_type", WRITABLE)
 def test_writable_task_types_are_refused(task_type):
-    with pytest.raises(LaunchRefused, match="^beta_read_only_required$"):
+    with pytest.raises(LaunchRefused, match="^task_type_not_read_only$"):
         project_notes.require_read_only(task_type)
 
 

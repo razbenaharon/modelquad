@@ -399,7 +399,7 @@ def require_read_only(task_type) -> None:
     from .models import TaskType
     from .routing_policy import LaunchRefused
     if TaskType(task_type) not in READ_ONLY_TASK_TYPES:
-        raise LaunchRefused("beta_read_only_required")
+        raise LaunchRefused("task_type_not_read_only")
 
 
 def closed_reason(reason, *, capability='delegate'):
@@ -408,7 +408,7 @@ def closed_reason(reason, *, capability='delegate'):
     from .execution.noshell import REFUSAL_LABELS as NOSHELL_REFUSAL_LABELS
     allowed = {*ATTEMPT_FAILURE_REASONS, *POLICY_REFUSAL_REASONS,
                *NOSHELL_REFUSAL_LABELS,
-               'beta_read_only_required', 'worker_reported',
+               'task_type_not_read_only', 'worker_reported',
                'review_completed', 'review_worker_reported', 'review_malformed',
                'review_correction_failed', 'correction_failed', 'correction_completed',
                'independence_unavailable', 'requested_tests_not_verified'}
@@ -468,6 +468,13 @@ def private_result(result, *, model=None, model_source=None, reasoning_effort=No
             clean[name] = value
     if metadata.get('worker_source') == 'default':  # closed label, never prose
         clean['worker_source'] = 'default'
+    tokens = metadata.get('worker_tokens')
+    if type(tokens) is dict:  # Codex's own token counts: closed keys, integers only
+        counts = {key: tokens[key] for key in ('input_tokens', 'cached_input_tokens', 'output_tokens',
+                                               'reasoning_output_tokens')
+                  if type(tokens.get(key)) is int and 0 <= tokens[key] < 10**10}
+        if counts:
+            clean['worker_tokens'] = counts
     attempted = metadata.get('attempted_providers')
     if type(attempted) is list:
         clean['attempted_providers'] = [value for value in attempted[:32]
