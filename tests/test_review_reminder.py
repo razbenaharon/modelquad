@@ -22,9 +22,16 @@ def _event(tool="Edit", path="C:/proj/a.py", session=SESSION, **extra):
     return io.BytesIO(json.dumps(event).encode("utf-8"))
 
 
+def _still():
+    """A clock that does not move: these tests check what the hook decides, not how
+    fast a loaded CI runner is. The 1.5 s budget would otherwise silence the hook
+    when the runner is slow (seen on a hosted 3.11 runner)."""
+    return 0.0
+
+
 def _run(tmp_path, stdin, *, mode="decide", environ=None):
     out = io.StringIO()
-    assert rr.run_hook("claude", stdin, out, environ=environ or {}, state=tmp_path,
+    assert rr.run_hook("claude", stdin, out, environ=environ or {}, state=tmp_path, clock=_still,
                        mode=lambda cwd: mode) == 0
     return out.getvalue()
 
@@ -178,7 +185,7 @@ def _stop(tmp_path, *, granted=True, active=False, session=SESSION):
     event = {"hook_event_name": "Stop", "session_id": session, "cwd": "C:/proj",
              "transcript_path": "C:/never/opened.jsonl", "stop_hook_active": active}
     out = io.StringIO()
-    assert rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={},
+    assert rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={}, clock=_still,
                        state=tmp_path, mode=lambda cwd: "decide",
                        standing=lambda cwd: granted) == 0
     return out.getvalue()
@@ -259,7 +266,7 @@ def _pre(tmp_path, path, *, mode="decide", granted=False):
     event = {"hook_event_name": "PreToolUse", "tool_name": "Edit", "session_id": SESSION,
              "cwd": "C:/proj", "tool_input": {"file_path": path}}
     out = io.StringIO()
-    rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={}, state=tmp_path,
+    rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={}, state=tmp_path, clock=_still,
                 mode=lambda cwd: mode, standing=lambda cwd: granted)
     return out.getvalue()
 
