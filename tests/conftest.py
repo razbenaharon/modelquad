@@ -209,12 +209,19 @@ def _loaded_runner_git_headroom():
     saves and restores by itself instead of requesting monkeypatch, so it does
     not move monkeypatch's teardown ahead of other fixtures' teardown."""
     from modelquad import procutil
-    from modelquad.jobs import changes
+    from modelquad.jobs import changes, recovery
     saved = [(changes, "GIT_SECONDS", changes.GIT_SECONDS),  # _git clamps to its own module value
-             (procutil, "IMAGE_NAME_SECONDS", procutil.IMAGE_NAME_SECONDS)]
+             (procutil, "IMAGE_NAME_SECONDS", procutil.IMAGE_NAME_SECONDS),
+             (recovery, "DEADLINE_SECONDS", recovery.DEADLINE_SECONDS)]
     changes.GIT_SECONDS = 60
     # tasklist took 17 s under load, so a live service read as unverified.
     procutil.IMAGE_NAME_SECONDS = 60
+    # One recovery pass on a test's own database is a handful of SQLite
+    # commits, but under load those commits alone took 10-13 s, so the pass
+    # deferred at its 10 s budget and a test read restored == 0 (Windows CI
+    # run 42400093763). Deferral is the designed outcome; the tests that
+    # claim it pin the product budget themselves.
+    recovery.DEADLINE_SECONDS = 60
     try:
         yield
     finally:
