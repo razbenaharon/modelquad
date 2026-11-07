@@ -1141,17 +1141,23 @@ def test_a_failed_cleanup_of_the_empty_folder_keeps_the_answer(worker, monkeypat
     run.return_value.worker_descendants = {"enumerated": True, "descendants": [], "truncated": False}
     real = shutil.rmtree
 
-    def held_open(path, ignore_errors=False, onerror=None, **kwargs):
+    def held_open(path, ignore_errors=False, onerror=None, onexc=None, **kwargs):
+        # Python 3.11 cleans up through ``onerror``; 3.12 and later through ``onexc``.
         if "modelquad-noshell-" not in str(path):
+            if onexc is not None:
+                kwargs["onexc"] = onexc
             return real(path, ignore_errors=ignore_errors, onerror=onerror, **kwargs)
         if ignore_errors:
             return None
         try:
             raise PermissionError(32, "The process cannot access the file", str(path))
-        except PermissionError:
-            if onerror is None:
+        except PermissionError as exc:
+            if onexc is not None:
+                onexc(os.rmdir, path, exc)
+            elif onerror is not None:
+                onerror(os.rmdir, path, sys.exc_info())
+            else:
                 raise
-            onerror(os.rmdir, path, sys.exc_info())
 
     monkeypatch.setattr(tempfile._shutil, "rmtree", held_open)
     result = executor.execute(request)
