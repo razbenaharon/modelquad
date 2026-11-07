@@ -32,8 +32,16 @@ The first open-source release.
   by a test, a reproduction, CI or your own verdict from those Claude only
   agreed with.
 - **Division of work.** `modelquad_split` proposes who takes each step of a
-  task; Codex takes only read-only steps. It starts nothing.
-- **Settings page.** `modelquad settings open` (or `/modelquad:settings`)
-  opens a one-time page on this computer to change the settings.
+  task; Codex takes only read-only steps. When Claude is near its limit and
+  Codex has room, a medium or large read-only step may be proposed for Codex
+  (`claude_near_limit`), and its calls are counted under the `split_quota`
+  trigger. It starts nothing.
+- **Settings inside Claude Code.** `/modelquad:settings` shows whether
+  ModelQuad is on, whether Codex calls are automatic or approved one by one,
+  and the history, and changes only what you pick; `modelquad settings` shows
+  the same in a terminal. No browser page.
+- **Claude never turns a grant back on.** When a call is refused because the
+  grant is off or the folder is excluded, Claude tells you and changes
+  nothing.
 - Codex stays read-only and tool-less: it reads only the files ModelQuad
   sends, with credentials redacted.

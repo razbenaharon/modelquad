@@ -105,7 +105,8 @@ to new Claude Code sessions.
 The standing grant (`modelquad settings auto on --yes`, for one repository or
 with `--global`) lets `modelquad_delegate` run without Claude Code's prompt
 for each call, once you add the allow rule it prints or choose "don't ask
-again". Only you can turn it on, from your own terminal; `modelquad_handoff`
+again". You turn it on yourself, in a terminal or by choosing automatic in
+`/modelquad:settings`; Claude never turns it on by itself. `modelquad_handoff`
 always asks, and `modelquad settings auto off` turns it off.
 
 ## Turn off model training in ChatGPT and Claude

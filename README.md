@@ -13,14 +13,18 @@
 
 # ModelQuad
 
-A second opinion from Codex inside Claude Code, on Windows.
+Claude consults Codex before big changes and asks it for a review at the
+end. Codex only reads. On Windows.
 
-ModelQuad is a local MCP server for Claude Code. It lets Claude ask your own
-OpenAI Codex CLI for a read-only review, exploration or architecture opinion,
-and it shows Claude's and Codex's usage side by side. ModelQuad and the CLIs
-it drives run on your computer, under your own sign-ins. It works alongside
-OpenAI's own Codex plugin for Claude Code: the plugin for when you want
-Codex to change code, ModelQuad for a read-only second opinion.
+ModelQuad is a local MCP server and Claude Code plugin. After a one-time
+permission, Claude asks your own OpenAI Codex CLI for an opinion before a
+significant change and for a review before it hands a change over, without
+you managing the exchange. Codex advises and reviews, read-only; Claude
+writes every change. If you prefer to approve each call, that mode stays
+available, and it is the default until you give the permission. ModelQuad
+and the CLIs it drives run on your computer, under your own sign-ins. It
+works alongside OpenAI's own Codex plugin for Claude Code: the plugin for
+when you want Codex to change code, ModelQuad for a read-only second opinion.
 
 Status: early, source-only release. Windows only.
 
@@ -28,28 +32,32 @@ Status: early, source-only release. Windows only.
 
 Developers on Windows who already use Claude Code and the OpenAI Codex CLI,
 each under their own sign-in, and who want a second model to look over
-Claude's work: a review before a commit, an opinion on a design, a reading of
-unfamiliar code. Claude keeps doing the work; Codex only reads and advises.
+Claude's work without running that exchange themselves: a consultation before
+a design change, a review before a commit, a reading of unfamiliar code.
+Claude keeps doing the work; Codex only reads and advises.
 
 ## How it works
 
 <p align="center">
-  <img src="docs/images/how-it-works.svg" alt="Claude asks, you approve, Codex reads the named files read-only, Claude checks the findings" width="820">
+  <img src="docs/images/how-it-works.svg" alt="Claude consults Codex, Codex reads the named files read-only, Claude checks each finding, you see the result" width="820">
 </p>
 
-1. Claude reaches a moment where a second opinion helps (a change that
-   touched several files is done, a commit or PR is next, a bug survived one
-   fix, a design choice has real trade-offs), or you ask for one with
-   `/modelquad:review`.
-2. Claude Code asks you before the call starts Codex. You see the task and
-   the files it names.
-3. ModelQuad reads only those files, skips credential files and replaces
-   secret-looking values, and gives the text to your Codex CLI. Codex runs
-   read-only in an empty temporary folder, with no file, command, web or MCP
-   tools.
-4. Codex's answer comes back to Claude as findings to check, not as a
-   verified result. Claude checks each one against the code before changing
-   anything.
+1. Claude reaches a moment where a second opinion helps: before a large,
+   architectural or sensitive change, when a change that touched several
+   files is done, before a commit or PR, after a bug survived one fix. You can
+   also ask with `/modelquad:review`.
+2. With the one-time permission (`modelquad settings auto on`, or choose
+   automatic in `/modelquad:settings`), Claude asks Codex without a prompt
+   for each call. Without it, Claude Code asks you before each call and shows
+   the task and the files.
+3. ModelQuad reads only the files the call names, skips credential files and
+   replaces secret-looking values, and gives the text to your Codex CLI. Codex
+   runs read-only in an empty temporary folder, with no file, command, web or
+   MCP tools.
+4. Codex's findings come back to Claude as input to check, not as a verified
+   result. Claude checks each one against the code before changing anything.
+   A review that failed or was not done is reported to you, never claimed, and
+   `modelquad review report` shows what was found, confirmed and fixed.
 
 In short:
 
@@ -58,9 +66,13 @@ In short:
 - **Needs:** native Windows, Python 3.11 or newer, Git, Claude Code and the
   Codex CLI, both signed in with your own accounts (see
   [Requirements](#requirements)).
-- **Asks first:** an approval prompt before every call that starts Codex,
-  unless you turn on a standing grant for a folder yourself (see
-  [Working without prompts](#working-without-prompts)).
+- **Asks first, until you say otherwise:** an approval prompt before every
+  call that starts Codex, until you turn on the one-time permission (see
+  [Working without prompts](#working-without-prompts)). You can turn it off,
+  or exclude a folder, at any time; Claude never turns it back on itself.
+- **Settings:** `/modelquad:settings` inside Claude Code, or `modelquad
+  settings` in a terminal: on or off, automatic or approve each call, and the
+  history.
 - **Sends:** the task text and the files the call names go to OpenAI through
   your Codex CLI; Codex's answer becomes part of your Claude conversation
   (see [Privacy and network](#privacy-and-network)).
@@ -150,12 +162,14 @@ In short:
   from the next call; the other choices reach Claude as one line when a new
   Claude Code session starts in that repository. The approval prompt still
   appears before each call.
-- Prefer clicking to typing? `/modelquad:settings` in Claude Code (or
-  `modelquad settings open` in a terminal) opens a settings page in your
-  browser with these three settings. The page is served only on this
-  computer (`127.0.0.1`), answers only requests that carry a secret made for
-  that one run, and closes when you press Done or after 15 minutes without
-  use. Each choice is saved as you make it, to the same `preferences.json`.
+- `/modelquad:settings` in Claude Code shows three things: whether ModelQuad
+  is on in Claude Code, whether Codex calls are automatic or approved one by
+  one, and the history of consultations and reviews here. It then asks which
+  change you want and runs only the one you pick; turning automatic on shows
+  what that means and asks you once more. `modelquad settings` (or
+  `modelquad settings show [--project DIR]`) prints the same view in a
+  terminal, with the command for each change. Excluding a folder stays a
+  documented command (`modelquad settings repo off [--project DIR]`).
 - This guidance reaches Claude through ModelQuad's MCP server instructions and
   the guide skill (`/modelquad:guide` in the plugin, `/modelquad` without
   it). ModelQuad writes nothing into your global
@@ -163,8 +177,8 @@ In short:
 - The two tools that start Codex, `modelquad_delegate` and `modelquad_handoff`,
   are marked as needing your interaction (`anthropic/requiresUserInteraction`).
   Claude Code shows its approval prompt before every call, also in auto mode
-  and in bypass-permissions mode. The standing grant (below), which only you
-  can turn on, removes that mark from `modelquad_delegate` in the folders it
+  and in bypass-permissions mode. The standing grant (below), which you turn on
+  yourself, removes that mark from `modelquad_delegate` in the folders it
   covers; `modelquad_handoff` always keeps it. ModelQuad adds no permission
   rule for its tools.
 
@@ -173,9 +187,11 @@ In short:
 - `modelquad settings auto on --yes` (in the repository, or with
   `--project DIR`; `--global` for every folder, including new ones) turns
   the standing grant on
-  after showing what it means. Run it in your own terminal: it refuses to
-  turn the grant on when run from inside Claude Code, and Claude is told
-  never to run it. New Claude Code sessions there register the
+  after showing what it means. Choosing automatic in `/modelquad:settings`
+  runs the same command after you confirm. Claude is told never to turn a
+  grant on, reconnect ModelQuad or undo an exclusion unless you ask for it
+  in that turn: when a call is refused because the grant is off or the
+  folder is excluded, Claude tells you and changes nothing. New Claude Code sessions there register the
   Codex tool without the per-call mark, so Claude Code's own permissions
   apply. Add the rule it prints to `permissions.allow`, or answer "don't ask
   again" the first time Claude Code asks.
@@ -218,7 +234,7 @@ In short:
 ## Division of work
 
 For a task of several steps, Claude proposes a split of the work between the
-two tools you already use, and you approve each Codex call. Codex's part is
+two tools you already use. Codex's part is
 always read-only: a review, an exploration of the code or an architecture
 opinion.
 
@@ -228,11 +244,19 @@ it and why, in a fixed reason: steps that edit files or run commands are
 always Claude's, because Codex through ModelQuad is read-only. A review of
 Claude's own change, or another opinion that should not come from Claude, can
 be proposed for Codex. The proposal starts nothing. Each Codex step is its own
-call, with Claude Code's approval prompt when it runs; there is no way to
-approve the whole plan at once. What decides is the kind of step, your
-repository setting and the repository's `.modelquad.toml`. Both tools' quota
-and the account kind of each plan are shown beside the proposal and never
-change it. When Codex reports a limit reached, the reply says a Codex step
+call, with Claude Code's approval prompt when it runs (or under the standing
+grant, if you turned it on); there is no way to approve the whole plan at
+once. What decides first is the kind of step, your repository setting and the
+repository's `.modelquad.toml`. Quota can then move one kind of step: when
+Claude's current reading is at 80% of its 5-hour window or 90% of its weekly
+window, and both of Codex's current readings are under 90%, a medium or large
+read-only step that would have been Claude's is proposed for Codex, and the
+reply says so with the numbers. A missing or old reading on either side moves
+nothing, and a small step never moves. Steps that edit files or run commands
+stay with Claude. The account kind of each plan is shown beside the proposal
+and never changes it. ModelQuad has no measurement that this division
+improves results or changes how much of either plan you use; the calls made
+this way are counted (see Afterwards) so you can judge. When Codex reports a limit reached, the reply says a Codex step
 would likely be refused. The step titles go back to Claude in the reply only;
 ModelQuad does not store or log them.
 
@@ -267,7 +291,10 @@ a `split` block for this session in `modelquad_activity`) shows what happened,
 from ModelQuad's own history: the Codex requests for that project by kind,
 and how many were answered, withheld because Codex tried a tool, refused (by
 ModelQuad's rules, the repository's `.modelquad.toml`, your repo setting or
-Codex's own limit) or not answered, with the median time to an answer. For
+Codex's own limit) or not answered, with the median time to an answer, and the calls Claude made for steps
+proposed for Codex because Claude was near its limit (trigger `split_quota`),
+with how many were answered. That is a count, not a measure of any benefit.
+For
 Claude it says only that ModelQuad does not measure Claude's own work;
 declines in Claude Code's approval prompt and in the handoff form are not
 counted. Quota is each tool's percentage points used in each of its own
@@ -279,10 +306,11 @@ reads unknown, and one that reset during the period says so.
 **What it never does.**
 
 - Approve a whole plan, or start a Codex step without Claude Code's approval
-  prompt for that call.
-- Let quota or a plan decide who takes a step, or start, queue or time any
-  work because of quota.
-- Hand a step to the other tool because one of them reports a limit.
+  prompt for that call, unless you turned on the standing grant.
+- Let a plan decide who takes a step, or start, queue or time any work
+  because of quota.
+- Move a step that edits files or runs commands to Codex, or move any step on
+  a missing, old or unknown quota reading.
 - Let a repository file approve a call, add files, turn on Claude's own
   initiative, or change how Codex runs.
 - Keep your plans or repository choices anywhere but your computer: they stay
@@ -444,7 +472,7 @@ valid JSON is skipped with a reason; the other files still change.
   `/modelquad-handoff` hands the current read-only task to Codex,
   `/modelquad-quota` shows both quotas, `/modelquad-setup` explains any setup
   problem, `/modelquad-split` shows a proposed division of a task, `/modelquad-settings`
-  opens the settings page in your browser). Claude
+  shows and changes ModelQuad's main settings inside Claude Code). Claude
   Code still asks before every Codex call.
 - Backups: before it changes an existing file, ModelQuad saves a full copy of
   the original bytes beside it, named `<file>.modelquad-backup-<time>`. JSON

@@ -185,7 +185,8 @@ starts the Codex CLI.
 
 #### The standing grant
 
-`modelquad settings auto on --yes`, run by you in your own terminal, turns on
+`modelquad settings auto on --yes`, run by you in a terminal or chosen by you
+in `/modelquad:settings`, turns on
 a standing grant for one repository (or, with `--global`, for every folder).
 In a Claude Code session started in a granted folder, `modelquad_delegate`
 carries no per-call approval mark, so Claude Code's own permissions decide
@@ -265,7 +266,8 @@ sends to Anthropic:
 - The proposed division of a task, from `modelquad_split`: for each step the
   title Claude sent (after the same redaction of paths and credentials),
   who takes it and a fixed reason; both sides' quota windows and account
-  kinds. The titles are not stored or logged.
+  kinds, and, when quota moved a step, which windows and thresholds moved it.
+  The titles are not stored or logged.
 - Job status and retained answers. The `modelquad_job_*` tools need the
   project folder and answer only for jobs started from that folder.
 - The report of the `modelquad_doctor` tool, which includes local paths, such
@@ -275,7 +277,8 @@ sends to Anthropic:
   repository differs from your global one, one fixed line about Codex there.
 - The split summary, in the `split` block of `modelquad_activity`: counts of
   this session's Codex requests by kind and outcome, the median time to an
-  answer, and each tool's percentage points used per window. No path, folder
+  answer, the number of calls recorded with the trigger `split_quota` (a
+  count from the review ledger, by outcome), and each tool's percentage points used per window. No path, folder
   name, prompt or answer.
 - The `/modelquad` skill and the MCP server instructions that provide Claude
   with ModelQuad's guidance.
