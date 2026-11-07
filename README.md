@@ -373,8 +373,9 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
     modelquad install claude --plugin
     modelquad doctor
 
-- ModelQuad is not published on PyPI. It installs only from a clone of this
-  repository; a `modelquad` package on PyPI is not this project.
+- ModelQuad installs only from a clone of this repository. The `modelquad`
+  name on PyPI is held by the author as a placeholder with no code; do not
+  install ModelQuad from there.
 - `pip install` puts the `modelquad` and `modelquad-mcp` commands on PATH. The
   plugin has no programs of its own and runs these two. The `service` extra
   is only needed for the optional local service, which runs background jobs
