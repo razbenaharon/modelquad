@@ -464,3 +464,59 @@ def test_the_codex_requests_are_read_in_one_query(projects, monkeypatch):
                              until=datetime.now(timezone.utc))
     assert len(rows) == 9
     assert len([text for text in statements if text.lstrip().upper().startswith("SELECT")]) == 1
+
+
+# -------------------------------------------- calls for steps quota moved
+
+
+def test_the_summary_counts_split_quota_calls_from_the_review_ledger(projects, tmp_path):
+    from modelquad import review_ledger as rl
+
+    db_path, one, two = projects
+    ledger = tmp_path / "ledger.db"
+    answered = {"decision_id": "q-1", "output": "An answer."}
+    rl.record_run(answered, working_directory=one, task_type="exploration",
+                  trigger="split_quota", path=ledger)
+    rl.record_run({"decision_id": "q-2", "refused": True}, working_directory=one,
+                  task_type="architecture", trigger="split_quota", path=ledger)
+    rl.record_run({"decision_id": "c-1", "output": "x"}, working_directory=one,
+                  task_type="review", trigger="claude", path=ledger)
+    rl.record_run({"decision_id": "t-1", "output": "x"}, working_directory=two,
+                  task_type="review", trigger="split_quota", path=ledger)
+
+    def summary(folder, workspace):
+        return ss.summarize(db_path, workspace_key=project_key(str(folder)) if folder else None,
+                            period="1d", now=datetime.now(timezone.utc), current=(),
+                            thresholds=THRESHOLDS, ledger_path=ledger, ledger_workspace=workspace)
+
+    mine = summary(one, rl.workspace_id(one))
+    assert mine["codex"]["split_quota_calls"] == {"read": True, "calls": 2, "answered": 1}
+    line = ("  For steps proposed for Codex because Claude was near its limit "
+            "(trigger split_quota): 2 (answered 1).")
+    assert line in mine["lines"]
+    assert banned_in("\n".join(mine["lines"])) == []
+    assert summary(two, rl.workspace_id(two))["codex"]["split_quota_calls"]["calls"] == 1
+    assert summary(None, None)["codex"]["split_quota_calls"]["calls"] == 3
+    # One project without its ledger id: not read, and no line rather than a guess.
+    unscoped = summary(one, None)
+    assert unscoped["codex"]["split_quota_calls"] == {"read": False, "calls": None, "answered": None}
+    assert not any("split_quota" in text for text in unscoped["lines"])
+    # A ledger that cannot be read reads unknown, never 0.
+    ledger.write_bytes(b"garbage, not sqlite")
+    broken = summary(one, rl.workspace_id(one))
+    assert broken["codex"]["split_quota_calls"] == {"read": True, "calls": None, "answered": None}
+    assert any("unknown (the review ledger could not be read)" in text for text in broken["lines"])
+
+
+def test_activity_counts_this_projects_split_quota_calls(projects, monkeypatch, tmp_path):
+    from modelquad import review_ledger as rl
+
+    db_path, one, _ = projects
+    monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
+    monkeypatch.setattr(mcp_server, "USAGE_DIRECTORY", str(tmp_path / "usage"))
+    monkeypatch.setattr(mcp_server, "_SESSION_STARTED_AT", NOW - timedelta(minutes=30))
+    rl.record_run({"decision_id": "q-1", "output": "An answer."}, working_directory=one,
+                  task_type="exploration", trigger="split_quota")
+    tool = getattr(mcp_server.modelquad_activity, "fn", None) or mcp_server.modelquad_activity
+    block = tool(project_directory=str(one)).structured_content["split"]
+    assert block["codex"]["split_quota_calls"] == {"read": True, "calls": 1, "answered": 1}

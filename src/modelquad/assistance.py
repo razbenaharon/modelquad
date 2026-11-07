@@ -7,12 +7,14 @@ copied individually from the existing normalized snapshots. Missing data never
 becomes zero, and an original observation time is never replaced by collection
 time.
 
-Quota is display-only. It never orders, admits or refuses a worker; the only
-thing it may produce is :func:`handoff_suggestion`, a note that Claude is near
-its limit, with the facts, and that the user may wait for the reset or ask
-Codex for a read-only review. The user decides. A note cannot authorize or
-start anything: a job starts only when the user asks for a Codex call and
-approves it inside Claude Code.
+Quota never orders, admits or refuses a worker and never starts anything.
+It may produce :func:`handoff_suggestion`, a note that Claude is near its
+limit, with the facts, and that the user may wait for the reset or ask Codex
+for a read-only review; and the same thresholds let ``split.quota_lean``
+propose a medium or large read-only step for Codex in a ``modelquad_split``
+reply. The user decides. Neither can authorize or start anything: a job
+starts only when Claude makes a Codex call and Claude Code's approval prompt
+(or the user's standing grant) allows it.
 """
 
 from __future__ import annotations

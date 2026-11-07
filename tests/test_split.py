@@ -3,10 +3,13 @@
 """``modelquad_split``: a proposed division of a task, which starts nothing.
 
 Task fit decides who takes a step; Codex through ModelQuad never takes a step
-that edits files or runs commands. The quota windows and plans are facts shown
-beside the owners: over a grid of quota states and plan kinds, no owner moves.
-The tool starts no process, stores no title, and every Codex step asks the
-user when it runs (design memo 3.1-3.2; legal self-review 3.5).
+that edits files or runs commands. Plans are facts shown beside the owners and
+never move one. Quota moves an owner only one way: a medium or large
+read-only step the task fit gave Claude goes to Codex when Claude's fresh
+reading is near its limit and both of Codex's fresh readings show room; over
+a grid of quota states and plan kinds, nothing else moves. The tool starts
+no process, stores no title, and every Codex step asks the user when it runs
+(design memo 3.1-3.2; legal self-review 3.5; owner decision 2026-11-08).
 """
 
 from __future__ import annotations
@@ -132,7 +135,7 @@ def test_a_missing_codex_leaves_every_step_with_claude():
         assert "No step is proposed for Codex." in reply["content"]
 
 
-# ------------------------------------------- quota and plans move nothing
+# ------------------------- plans move nothing; quota moves one kind of step
 
 
 def _status(name, now, *, five=None, seven=None, age=None, reached=None, five_reset=80):
@@ -184,6 +187,10 @@ STEPS = [
 ]
 
 
+#: The steps of STEPS the task fit gives Claude that Codex could take.
+LEANING = (3, 5)
+
+
 def _owners(reply):
     return [(row["owner"], row["reason"], row["asks_user"]) for row in reply["steps"]]
 
@@ -192,7 +199,7 @@ def _owners(reply):
                                     rp.parse(b'schema = 1\n[codex]\naccount = "workspace"\n'),
                                     rp.parse(b'schema = 1\n[offers]\ncodex = "on_request"\n')],
                          ids=["no-file", "plain-file", "workspace-only", "on-request"])
-def test_no_quota_state_or_plan_changes_any_owner(policy):
+def test_only_claude_near_its_limit_with_codex_room_moves_an_owner_and_no_plan_does(policy):
     now = datetime.now(timezone.utc)
     baseline = None
     cautions = set()
@@ -204,8 +211,16 @@ def test_no_quota_state_or_plan_changes_any_owner(policy):
                          views=plans.merged(observed, {"claude": None, "codex": None, **declared}))
         if baseline is None:
             baseline = _owners(reply)
-        assert _owners(reply) == baseline, (claude, codex, observed, declared)
-        assert reply["launches"] is False and reply["facts"]["changes_owners"] is False
+        # Claude fresh and near its limit, Codex fresh with room in both windows:
+        # the two medium read-only steps the task fit gave Claude move, nothing else.
+        expected = list(baseline)
+        moves = claude in ("5h-over", "full") and codex == "low"
+        if moves:
+            for index in LEANING:
+                expected[index] = (split.CODEX, split.CLAUDE_NEAR_LIMIT, True)
+        assert _owners(reply) == expected, (claude, codex, observed, declared)
+        assert reply["launches"] is False and reply["facts"]["changes_owners"] is moves
+        assert (reply["facts"]["quota_lean"] is not None) is moves
         lines = reply["content"].splitlines()
         assert 3 <= len(lines) <= 8, lines
         assert banned_in(json.dumps(reply)) == [], reply["content"]
@@ -235,11 +250,174 @@ def test_the_caution_is_a_fact_about_codex_and_only_for_a_current_reading():
 
 
 def test_the_router_sees_no_quota_or_plan():
+    """The task fit is decided without quota; quota acts only after it (quota_lean)."""
     now = datetime.now(timezone.utc)
     seen = split.router_statuses([_status("claude", now, **CLAUDE_QUOTA["full"]),
                                   _status("codex", now, **CODEX_QUOTA["reached"])])
     assert seen == [ProviderStatus(name="claude", available=True),
                     ProviderStatus(name="codex", available=True)]
+
+
+# ------------------------------------------------- the quota rule, in detail
+
+#: Claude fresh and over its 5-hour threshold; Codex fresh with room in both windows.
+NEAR = {"five": 85, "seven": 40, "age": FRESH}
+ROOM = {"five": 30, "seven": 20, "age": FRESH}
+EXPLORE = split.Step("Map the module", "exploration", "none")
+
+
+def _lean_reply(steps=(EXPLORE,), *, claude=NEAR, codex=ROOM, **kwargs):
+    now = kwargs.pop("now", None) or datetime.now(timezone.utc)
+    statuses = [_status("claude", now, **claude), _status("codex", now, **codex)]
+    return _propose(list(steps), statuses=statuses, now=now, **kwargs)
+
+
+def _first(reply):
+    row = reply["steps"][0]
+    return row["owner"], row["reason"]
+
+
+def test_a_medium_read_only_step_moves_when_every_reading_holds():
+    reply = _lean_reply()
+    assert _first(reply) == (split.CODEX, split.CLAUDE_NEAR_LIMIT)
+    row = reply["steps"][0]
+    assert row["asks_user"] is True and row["trigger"] == split.QUOTA_TRIGGER == "split_quota"
+    assert row["size"] == "medium"
+    facts = reply["facts"]
+    assert facts["changes_owners"] is True and reply["launches"] is False
+    lean = facts["quota_lean"]
+    assert lean["claude_window"]["window"] == "five_hour" and lean["claude_window"]["used_percent"] == 85
+    assert lean["claude_threshold_used_percent"] == 80.0
+    assert [window["window"] for window in lean["codex_windows"]] == ["five_hour", "seven_day"]
+    assert lean["codex_under_used_percent"] == 90.0 and lean["trigger"] == "split_quota"
+
+
+def test_the_thresholds_are_the_near_limit_notes_own():
+    from modelquad import assistance
+
+    assert assistance.HANDOFF_USED_PERCENT == {"five_hour": 80.0, "seven_day": 90.0}
+    assert assistance.HANDOFF_CODEX_EXHAUSTED_USED == 90.0
+    moves = lambda claude: _first(_lean_reply(claude=claude))[0] == split.CODEX  # noqa: E731
+    assert moves({"five": 80, "seven": 10, "age": FRESH})
+    assert not moves({"five": 79, "seven": 10, "age": FRESH})
+    assert moves({"five": 10, "seven": 90, "age": FRESH})
+    assert not moves({"five": 10, "seven": 89, "age": FRESH})
+
+
+@pytest.mark.parametrize("claude", [
+    {},                                                    # unknown
+    {"five": 20, "seven": 10, "age": FRESH},               # fresh, low
+    {"five": 95, "seven": 95, "age": STALE},               # old reading, still in its window
+    {"five": 95, "age": timedelta(minutes=10), "five_reset": 80},  # past fresh_seconds
+], ids=["unknown", "fresh-low", "stale-high", "aging-high"])
+def test_claude_unknown_low_or_old_moves_nothing(claude):
+    reply = _lean_reply(claude=claude)
+    assert _first(reply) == (split.CLAUDE, split.TASK_FIT)
+    assert reply["facts"]["changes_owners"] is False and reply["facts"]["quota_lean"] is None
+    assert reply["steps"][0]["trigger"] is None
+
+
+@pytest.mark.parametrize("codex", [
+    {},                                                    # unknown
+    {"five": 30, "age": FRESH},                            # weekly missing
+    {"seven": 20, "age": FRESH},                           # 5-hour missing
+    {"five": 30, "seven": 20, "age": STALE},               # old reading
+    {"five": 90, "seven": 20, "age": FRESH},               # 5-hour at the bar
+    {"five": 30, "seven": 95, "age": FRESH},               # weekly high
+    {"five": 30, "seven": 20, "age": FRESH, "reached": "primary"},  # reports a limit reached
+], ids=["unknown", "no-weekly", "no-5h", "stale", "5h-90", "weekly-high", "reached"])
+def test_codex_unknown_old_or_high_moves_nothing(codex):
+    reply = _lean_reply(codex=codex)
+    assert _first(reply) == (split.CLAUDE, split.TASK_FIT)
+    assert reply["facts"]["changes_owners"] is False
+
+
+def test_an_unavailable_codex_moves_nothing():
+    now = datetime.now(timezone.utc)
+    codex = _status("codex", now, **ROOM)
+    codex = ProviderStatus(name="codex", available=False, observed_at=codex.observed_at,
+                           freshness=codex.freshness, metadata=codex.metadata)
+    reply = _propose([EXPLORE], statuses=[_status("claude", now, **NEAR), codex], now=now)
+    assert _first(reply) == (split.CLAUDE_ONLY, split.CODEX_UNAVAILABLE)
+    assert reply["facts"]["changes_owners"] is False
+
+
+def test_size_decides_whether_a_step_is_worth_a_codex_call():
+    steps = [split.Step("a", "exploration", "none", size="small"),
+             split.Step("b", "exploration", "none", size="medium"),
+             split.Step("c", "architecture", "none", size="large"),
+             split.Step("d", "review", "none", size="small")]
+    reply = _lean_reply(steps)
+    assert [(row["owner"], row["reason"]) for row in reply["steps"]] == [
+        (split.CLAUDE, split.TASK_FIT), (split.CODEX, split.CLAUDE_NEAR_LIMIT),
+        (split.CODEX, split.CLAUDE_NEAR_LIMIT), (split.CLAUDE, split.TASK_FIT)]
+    assert split.SIZES == ("small", "medium", "large")
+
+
+def test_with_quota_leaning_edits_runs_and_other_kinds_still_stay_with_claude():
+    steps = [split.Step(f"step {index}", kind, needs, independent, size)
+             for index, (kind, needs, independent, size) in enumerate(
+                 itertools.product(split.TASK_TYPES, split.NEEDS, (False, True), split.SIZES))]
+    seen = set()
+    for chunk in range(0, len(steps), split.MAX_STEPS):
+        reply = _lean_reply(steps[chunk:chunk + split.MAX_STEPS])
+        for row in reply["steps"]:
+            seen.add(row["reason"])
+            if row["needs"] != "none":
+                assert (row["owner"], row["reason"]) == (split.CLAUDE_ONLY, split.EDITS_OR_COMMANDS)
+            elif row["task_type"] not in split.READ_ONLY_KINDS:
+                assert (row["owner"], row["reason"]) == (split.CLAUDE_ONLY, split.KIND_NOT_READ_ONLY)
+            if row["reason"] == split.CLAUDE_NEAR_LIMIT:
+                assert row["needs"] == "none" and row["task_type"] in split.READ_ONLY_KINDS
+                assert row["size"] != "small" and not row["independent"]
+    assert split.CLAUDE_NEAR_LIMIT in seen
+
+
+@pytest.mark.parametrize("kwargs,reason", [
+    ({"user_mode": "off"}, rs.USER_CODEX_OFF),
+    ({"policy": rp.parse(b"schema = 1\n[codex]\nallowed = false\n")}, rp.CODEX_OFF),
+    ({"policy": rp.parse(b'schema = 1\n[codex]\ntask_kinds = ["review"]\n')}, rp.KIND_REMOVED),
+], ids=["user-off", "repo-file-off", "kind-removed"])
+def test_a_repository_that_refuses_codex_moves_nothing(kwargs, reason):
+    reply = _lean_reply(**kwargs)
+    assert _first(reply) == (split.CLAUDE_ONLY, reason)
+    assert reply["facts"]["changes_owners"] is False
+
+
+def test_while_codex_calls_are_paused_quota_moves_nothing():
+    now = datetime.now(timezone.utc)
+    reply = split.propose([EXPLORE], router=Router(Config()),
+                          statuses=[_status("claude", now, **NEAR), _status("codex", now, **ROOM)],
+                          thresholds=THRESHOLDS, now=now, plan_views=plans.merged(None, {}),
+                          policy=None, user_mode=None, global_proactive=False, codex_paused=True)
+    assert _first(reply) == (split.CLAUDE_ONLY, split.CODEX_PAUSED)
+    assert reply["facts"]["changes_owners"] is False
+
+
+def test_on_request_still_proposes_and_says_claude_only_offers():
+    reply = _lean_reply(policy=rp.parse(b'schema = 1\n[offers]\ncodex = "on_request"\n'))
+    assert _first(reply) == (split.CODEX, split.CLAUDE_NEAR_LIMIT)
+    assert "In this repository, Claude calls Codex only when you ask." in reply["content"]
+
+
+def test_the_lines_state_the_readings_and_promise_nothing():
+    steps = [split.Step("Add it", "implementation", "edit"),
+             split.Step("Review it", "review", "none", True),
+             split.Step("Map it", "exploration", "none", size="large")]
+    reply = _lean_reply(steps)
+    lines = reply["content"].splitlines()
+    assert lines[1] == "Claude: step 1 (edits or commands)."
+    assert lines[2] == ("Codex (read-only): steps 2, 3 (independent review; Claude near its limit, "
+                        "Codex has room). Each Codex step shows its own approval prompt when it runs.")
+    assert re.fullmatch(
+        r"Claude has used 85% of its 5-hour window \(resets in 1h 2\dm\); Codex has room\. "
+        r"Proposed for Codex \(read-only\): step 3\. Claude passes trigger split_quota when it "
+        r"asks Codex, so the review report counts these calls\.", lines[3]), lines[3]
+    assert lines[-1].startswith("Quota now: ") and 3 <= len(lines) <= 8
+    assert banned_in(json.dumps(reply)) == []
+    for word in ("save", "saving", "extend", "stretch", "avoid"):
+        assert word not in reply["content"].casefold(), word
+    assert [row["trigger"] for row in reply["steps"]] == [None, None, "split_quota"]
 
 
 # ------------------------------------------------------------- the tool
@@ -390,6 +568,9 @@ def test_the_schema_bounds_steps_and_titles():
         mcp.SplitStep(title="x" * 121, task_type="review", needs="none")
     with pytest.raises(ValidationError):
         mcp.SplitStep(title="x", task_type="review", needs="write")
+    with pytest.raises(ValidationError):
+        mcp.SplitStep(title="x", task_type="review", needs="none", size="tiny")
+    assert mcp.SplitStep(title="x", task_type="review", needs="none").size == "medium"
     tools = {tool.name: tool for tool in asyncio.run(mcp.server.list_tools())}
     schema = tools["modelquad_split"].input_schema
     assert set(schema["properties"]) == {"working_directory", "steps"}

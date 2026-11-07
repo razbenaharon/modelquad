@@ -1550,7 +1550,8 @@ def _split_reply(working_directory: str, steps: list) -> dict:
     except Exception:  # noqa: BLE001 -- unknown launch state: propose nothing for Codex
         paused = True
     checked = [split.Step(title=split.clean_title(step.title), task_type=step.task_type,
-                          needs=step.needs, independent=bool(step.independent))
+                          needs=step.needs, independent=bool(step.independent),
+                          size=step.size)
                for step in steps]
     return split.propose(checked, router=Router(config), statuses=statuses,
                          thresholds=config.freshness, now=datetime.now(timezone.utc),
@@ -1567,7 +1568,9 @@ def modelquad_split(
     and Codex. It starts nothing. Steps that edit files or run commands stay with
     Claude; Codex can take only read-only review, exploration or architecture
     steps, and each Codex step is its own call that asks the user when it runs.
-    Quota and plans are shown beside the proposal and never change it."""
+    When Claude's fresh quota reading is near its limit and Codex's fresh readings
+    show room, a medium or large read-only step may be proposed for Codex; pass
+    that step's `trigger` to modelquad_delegate. Plans never change the proposal."""
     from .. import localpath
 
     # Before any file-system call: a network share is never opened.
@@ -1814,7 +1817,8 @@ async def modelquad_delegate(
     """Ask read-only Codex for a review, exploration, or architecture opinion.
     Codex sees only the task text and the files listed in `files` (paths relative to
     working_directory, at most 32); a path named only in the task text is not sent.
-    `trigger` says why: review_gate, pre_change, user or claude.
+    `trigger` says why: review_gate, pre_change, user, claude, or split_quota for a
+    step modelquad_split proposed for Codex because Claude was near its limit.
     Without the user's standing grant Claude Code asks before every call; quotas only
     inform the reply."""
     if isinstance(capsule, dict) and "action_authority" in capsule:
@@ -2543,7 +2547,7 @@ def modelquad_activity(
         ),
         limit=limit,
     )
-    payload["split"] = _split_summary_block(key)
+    payload["split"] = _split_summary_block(key, project_directory)
     return _plain_result(payload, _activity_lines(payload, scoped=key is not None))
 
 
@@ -2573,9 +2577,10 @@ def _activity_lines(payload: dict, *, scoped: bool) -> list[str]:
 _SESSION_STARTED_AT = datetime.now(timezone.utc)
 
 
-def _split_summary_block(workspace_key: str | None) -> dict[str, Any]:
+def _split_summary_block(workspace_key: str | None,
+                         project_directory: str | None = None) -> dict[str, Any]:
     """What happened after the work, this session: read-only, never fails the listing."""
-    from .. import split_summary
+    from .. import review_ledger, split_summary
 
     try:
         config = load_config(CONFIG_PATH)
@@ -2585,7 +2590,10 @@ def _split_summary_block(workspace_key: str | None) -> dict[str, Any]:
         return split_summary.summarize(
             service_db.DEFAULT_DB_PATH, workspace_key=workspace_key, period="session",
             now=datetime.now(timezone.utc), current=current, thresholds=config.freshness,
-            session_started_at=_SESSION_STARTED_AT)
+            session_started_at=_SESSION_STARTED_AT,
+            ledger_path=review_ledger.ledger_path(),
+            ledger_workspace=(review_ledger.workspace_id(project_directory)
+                              if workspace_key is not None and project_directory else None))
     except Exception:  # noqa: BLE001 -- the listing must not fail over its summary
         logger.warning("split summary unavailable", exc_info=True)
         return {"known": False, "why": "unavailable"}
