@@ -47,6 +47,7 @@ test-temp/
 /private/
 *.zip
 .claude/settings.local.json
+.claude/launch.json
 CLAUDE.local.md
 
 # Local build scratch and Claude Code worktrees
