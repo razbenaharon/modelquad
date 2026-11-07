@@ -57,9 +57,10 @@ _STANDING = _WHEN + (
     "that touched several files."
 )
 _VERIFY = (
-    "Verify each finding against the code or a test before changing anything, then record "
-    "your decisions with `modelquad_review_verdict`. If Codex fails or is unavailable, say "
-    "plainly that the review was not done; never claim it was."
+    "Check each finding's claim and reasoning against the code and the requirements before "
+    "changing anything, and record your verdict and evidence with `modelquad_review_verdict` "
+    "before the fix and again after it. Codex's confidence and your agreement are not proof. "
+    "If Codex fails or is unavailable, say plainly that the review was not done."
 )
 _FILES = (
     "Pass the files you want Codex to read in `files` (paths relative to the working "

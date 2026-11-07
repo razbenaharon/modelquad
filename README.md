@@ -126,7 +126,8 @@ Status: early, source-only release. Windows only.
 ### Working without prompts
 
 - `modelquad settings auto on --yes` (in the repository, or with
-  `--project DIR`; `--global` for every folder) turns the standing grant on
+  `--project DIR`; `--global` for every folder, including new ones) turns
+  the standing grant on
   after showing what it means. New Claude Code sessions there register the
   Codex tool without the per-call mark, so Claude Code's own permissions
   apply. Add the rule it prints to `permissions.allow`, or answer "don't ask
@@ -137,8 +138,12 @@ Status: early, source-only release. Windows only.
   without one, the review gate stops it once and asks for the review. If
   Codex fails or is unavailable, Claude says so, and ModelQuad tells you
   directly that the change was not reviewed. The gate never blocks twice.
-- Claude verifies each finding before changing code and records its verdict
-  (`modelquad_review_verdict`). `modelquad review report` shows what Codex
+- Each finding names its file and line or line range when one applies (none
+  for a design-level point), the claim, Codex's reasoning, a severity and
+  Codex's confidence with a short reason. Claude checks the claim against
+  the code and your requirements, records its verdict and evidence before
+  fixing (`modelquad_review_verdict`), and records it again after the fix.
+  Neither Codex's confidence nor Claude's agreement counts as proof. `modelquad review report` shows what Codex
   found, what was confirmed with independent evidence (a test, a
   reproduction, CI or your own verdict), what Claude only agreed with, what
   was wrong, what was fixed and verified, and the time and tokens it took.

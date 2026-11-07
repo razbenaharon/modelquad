@@ -21,6 +21,9 @@ The first open-source release.
   Codex review before a change of three or more files, or of one sensitive
   file, is handed over. A review that failed or was not done is reported to
   you, never claimed.
+- **Reasoned findings.** Each Codex finding carries its location (line or
+  range when one applies), claim, reasoning, severity and Codex's confidence
+  with a reason; Claude records its verdict before and after a fix.
 - **The review ledger and report.** Each Codex call's findings, Claude's
   verdicts and their evidence, and the time and tokens spent are kept in
   `review-ledger.db`. `modelquad review report` separates findings confirmed

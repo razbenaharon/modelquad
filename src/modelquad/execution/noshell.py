@@ -1192,8 +1192,13 @@ INSTRUCTION = ("\nYou have no command or file tools. Work only from the supplied
                "<credential> marks a value ModelQuad redacted before sending; it is not in the "
                "real file and is not a defect. "
                "List each concrete problem you find on its own line, exactly as: "
-               "FINDING F1 | high|medium|low | relative/path.ext:line | category | claim "
-               "(category one word such as bug, security, correctness, test-gap, design, perf). "
+               "FINDING F1 | severity | location | category | confidence: why | claim | reasoning. "
+               "severity and confidence are high, medium or low; after confidence say in a few "
+               "words why you are that sure. location is relative/path.ext:line or "
+               "relative/path.ext:start-end when a line applies, the path alone when it does not, "
+               "or - for a design-level point; never invent a line number. category is one word "
+               "such as bug, security, correctness, test-gap, design or perf. The claim says what "
+               "is wrong; the reasoning says why, from the supplied code. "
                "If you find none, write the line: FINDINGS: none\n")
 
 

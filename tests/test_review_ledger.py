@@ -170,3 +170,52 @@ def test_tokens_come_from_codex_turn_completed_and_time_from_the_call(tmp_path):
                   path=db, seconds=31.0)
     report = rl.report(path=db)
     assert report["input_tokens"] == 900 and report["median_seconds"] == 31.0
+
+
+REASONED = """FINDING F1 | high | invoicing/tax.py:7-12 | bug | confidence medium: depends on the call order | VAT is computed before the discount | vat() reads subtotal(), not the discounted total
+FINDING F2 | low | - | design | confidence: low (no requirements were given) | money is stored as float | float rounding can differ from decimal rounding by a cent
+"""
+
+
+def test_reasoned_findings_keep_range_confidence_and_reasoning():
+    first, second = rl.parse_findings(REASONED)
+    assert (first.file, first.line, first.line_end) == ("invoicing/tax.py", 7, 12)
+    assert first.confidence == "medium" and first.confidence_note == "depends on the call order"
+    assert first.claim == "VAT is computed before the discount"
+    assert first.reasoning.startswith("vat() reads subtotal()")
+    # A design-level point has no file and no invented line.
+    assert second.file is None and second.line is None and second.line_end is None
+    assert second.confidence == "low" and "no requirements" in second.confidence_note
+
+
+def test_a_version_1_ledger_gains_the_new_columns(tmp_path):
+    db = tmp_path / "ledger.db"
+    conn = sqlite3.connect(db)
+    conn.executescript("""
+        CREATE TABLE findings (decision_id TEXT NOT NULL, ref TEXT NOT NULL, file TEXT, line INTEGER,
+            severity TEXT, category TEXT, claim TEXT, PRIMARY KEY (decision_id, ref));
+        INSERT INTO findings VALUES ('old', 'F1', 'a.py', 1, 'low', 'bug', 'old claim');
+        PRAGMA user_version=1;""")
+    conn.close()
+    conn = rl.connect(db)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(findings)")}
+    assert {"line_end", "confidence", "confidence_note", "reasoning"} <= columns
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == rl.SCHEMA_VERSION
+    conn.close()
+
+
+def test_verdict_before_the_fix_then_after_and_confidence_is_not_proof(tmp_path):
+    db = tmp_path / "ledger.db"
+    rl.record_run(_payload(output=REASONED), working_directory=tmp_path, task_type="review",
+                  trigger="review_gate", path=db)
+    rl.record_verdicts("d-1", [{"finding": "F1", "verdict": "confirmed", "evidence": "test",
+                                "action": "to_fix"}], source="claude", path=db)
+    assert rl.report(path=db)["findings"]["to_fix"] == 1
+    rl.record_verdicts("d-1", [{"finding": "F1", "verdict": "confirmed", "evidence": "test",
+                                "action": "fixed", "fix_verified": True},
+                               {"finding": "F2", "verdict": "refuted", "evidence": "code_reading",
+                                "action": "no_change"}], source="claude", path=db)
+    report = rl.report(path=db)
+    assert report["findings"]["to_fix"] == 0 and report["findings"]["fixed_and_verified"] == 1
+    assert report["by_confidence"]["medium"]["confirmed"] == 1
+    assert report["by_confidence"]["low"]["refuted"] == 1

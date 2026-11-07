@@ -1116,8 +1116,8 @@ def _run_repo_setting(choice: str | None, project: str | None) -> int:
                repo_settings.OFFER: "In effect: Claude offers Codex and calls it when you agree or ask.",
                repo_settings.ON_REQUEST: ("In effect: Claude calls Codex only when you ask "
                                           f"(this repository's {repo_policy.FILE_NAME}).")}[result.offer])
-    print("Choices: on, off, offer-only, inherit. Claude Code still asks you before each "
-          "ModelQuad Codex call.")
+    print("Choices: on, off, offer-only, inherit. Claude Code asks you before each "
+          "ModelQuad Codex call unless the standing grant is on (modelquad settings auto).")
     print("Stored in this computer's preferences.json under a keyed hash of the repository, "
           "never its path or name. off applies from the next call; Claude is told the rest when "
           "a new Claude Code session starts here.")
@@ -1179,7 +1179,8 @@ def _run_proactive_setting(enabled: bool) -> int:
     else:
         print("Proactive use: off. Claude offers Codex when it would help and calls it "
               "when you agree or ask.")
-    print("Claude Code still asks you before each ModelQuad Codex call.")
+    print("Claude Code asks you before each ModelQuad Codex call unless the standing grant "
+          "is on (modelquad settings auto).")
     print("Takes effect in new Claude Code sessions (or after /mcp reconnects modelquad).")
     return 0
 
@@ -1289,7 +1290,7 @@ def review_report_lines(data: dict, *, all_projects: bool = False) -> list[str]:
         f"    Could not be decided: {f['undecidable']}",
         f"    Not judged yet: {f['unjudged']}",
         f"  Fixed after a finding: {f['fixed']} (fix verified by a test or reproduction: "
-        f"{f['fixed_and_verified']})",
+        f"{f['fixed_and_verified']}); accepted, fix not recorded yet: {f['to_fix']}",
         f"  Acted on although refuted: {f['refuted_but_acted_on']}",
         f"  Review gate: asked {gate.get('blocked', 0)}, review done after asking "
         f"{gate.get('review_done', 0)}, not done and reported {gate.get('not_done_reported', 0)}, "
@@ -1297,6 +1298,14 @@ def review_report_lines(data: dict, *, all_projects: bool = False) -> list[str]:
     ]
     if f["by_user"]:
         lines.append(f"  Your own verdicts: {f['by_user']}")
+    if data.get("by_confidence"):
+        lines.append("  By Codex's stated confidence (its confidence is not proof):")
+        for name in ("high", "medium", "low", "not stated"):
+            bucket = data["by_confidence"].get(name)
+            if bucket:
+                lines.append(f"    {name}: {bucket['findings']} finding(s), confirmed "
+                             f"{bucket['confirmed']}, refuted {bucket['refuted']}, undecidable "
+                             f"{bucket['undecidable']}, not judged {bucket['unjudged']}")
     return lines
 
 
@@ -1957,7 +1966,7 @@ def build_parser() -> argparse.ArgumentParser:
     proactive_cmd = settings_actions.add_parser(
         'proactive',
         help='Let Claude decide on its own to consult Codex (default on; off: Claude offers it). '
-        'Claude Code still asks you before each call.')
+        'Claude Code asks you before each call unless the standing grant is on.')
     proactive_cmd.add_argument('choice', choices=('on', 'off'))
     plan_cmd = settings_actions.add_parser(
         'plan',
@@ -2233,7 +2242,7 @@ def build_parser() -> argparse.ArgumentParser:
     review_verdict_cmd.add_argument("--evidence", default="none",
                                     choices=("test", "reproduced", "ci", "code_reading", "none"))
     review_verdict_cmd.add_argument("--action", default="no_change",
-                                    choices=("fixed", "no_change", "deferred"))
+                                    choices=("to_fix", "fixed", "no_change", "deferred"))
     review_verdict_cmd.add_argument("--note", help="A short reason, no code.")
     split_cmd = subcommands.add_parser(
         "split", help="What happened after the work: Codex requests and quota per window.")

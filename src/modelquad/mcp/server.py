@@ -1754,9 +1754,11 @@ def _report_needed_files(payload: dict[str, Any], working_directory: str) -> Non
 
 
 FINDINGS_NOTE = (
-    "Verify each finding against the code or a test before changing anything; Codex did "
-    "not see the conversation and can be wrong. Then record what you decided with "
-    "modelquad_review_verdict (this decision_id, one entry per finding).")
+    "For each finding, check the claim and its reasoning against the code and the user's "
+    "requirements before changing anything; Codex did not see the conversation and can be "
+    "wrong, and neither its confidence nor your agreement is proof. Record your verdict and "
+    "its evidence with modelquad_review_verdict (this decision_id; action to_fix for one you "
+    "accept), then fix, then record it again with action fixed and fix_verified.")
 
 
 def _record_review(payload: dict[str, Any], working_directory: str, task_type: str, trigger: str,
@@ -1775,7 +1777,9 @@ def _record_review(payload: dict[str, Any], working_directory: str, task_type: s
         return
     if findings:
         payload["findings"] = [{"finding": item.ref, "severity": item.severity, "file": item.file,
-                                "line": item.line, "category": item.category} for item in findings]
+                                "line": item.line, "line_end": item.line_end,
+                                "category": item.category, "confidence": item.confidence}
+                               for item in findings]
         payload["findings_note"] = FINDINGS_NOTE
 
 
@@ -1915,7 +1919,8 @@ class FindingVerdict(BaseModel):
     verdict: str = Field(description="confirmed, refuted or undecidable.")
     evidence: str = Field(description="test (a test failed before the fix), reproduced, ci, "
                                       "code_reading (your own reading only) or none.")
-    action: str = Field(description="fixed, no_change or deferred.")
+    action: str = Field(description="to_fix (accepted, before you fix it), fixed (after the "
+                                    "fix), no_change or deferred.")
     fix_verified: bool | None = Field(default=None, description="After a fix: did a test or "
                                       "reproduction confirm it works?")
     note: str | None = Field(default=None, max_length=200, description="A short reason, no code.")
@@ -1931,8 +1936,9 @@ def modelquad_review_verdict(
     decision_id: str,
     verdicts: Annotated[list[FindingVerdict], Field(min_length=1, max_length=50)],
 ) -> CallToolResult:
-    """Record, for each finding of one Codex reply, whether it was right, on what
-    evidence, and what you did. Agreement from reading alone is evidence code_reading,
+    """Record, for each finding of one Codex reply, whether its claim holds, on what
+    evidence, and what you do about it: before a fix (action to_fix) and again after it
+    (action fixed, fix_verified). Agreement from reading alone is evidence code_reading,
     which ModelQuad never counts as proof. Starts nothing."""
     from .. import review_ledger
 

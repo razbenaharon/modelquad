@@ -34,9 +34,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 FILE_NAME = "review-ledger.db"
 MAX_CLAIM_CHARS = 300
+MAX_REASON_CHARS = 400
 MAX_NOTE_CHARS = 200
 MAX_FINDINGS = 50
 
@@ -47,8 +48,11 @@ VERDICTS = ("confirmed", "refuted", "undecidable")
 #: proof that a finding helped.
 EVIDENCE = ("test", "reproduced", "ci", "code_reading", "none")
 INDEPENDENT_EVIDENCE = frozenset({"test", "reproduced", "ci"})
-ACTIONS = ("fixed", "no_change", "deferred")
+#: ``to_fix``: the verdict recorded before the fix (accepted, to be fixed);
+#: ``fixed``: recorded again after the fix, with ``fix_verified``.
+ACTIONS = ("to_fix", "fixed", "no_change", "deferred")
 SEVERITIES = ("high", "medium", "low")
+CONFIDENCES = ("high", "medium", "low")
 GATE_EVENTS = ("blocked", "review_done", "review_failed", "not_done_reported", "consult_reminded")
 
 _SCHEMA = """
@@ -73,6 +77,10 @@ CREATE TABLE IF NOT EXISTS findings (
     severity TEXT,
     category TEXT,
     claim TEXT,
+    line_end INTEGER,
+    confidence TEXT,
+    confidence_note TEXT,
+    reasoning TEXT,
     PRIMARY KEY (decision_id, ref)
 );
 CREATE TABLE IF NOT EXISTS verdicts (
@@ -122,6 +130,14 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
         raise LedgerVersionError(f"review ledger schema {version} is newer than this build")
     if version < SCHEMA_VERSION:
         conn.executescript(_SCHEMA)
+        if version == 1:
+            # Version 2 added the reasoned-finding columns; rows from version 1 keep NULL there.
+            for column in ("line_end INTEGER", "confidence TEXT", "confidence_note TEXT",
+                           "reasoning TEXT"):
+                try:
+                    conn.execute(f"ALTER TABLE findings ADD COLUMN {column}")
+                except sqlite3.OperationalError:
+                    pass  # A concurrent opener added it first.
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         conn.commit()
     return conn
@@ -139,11 +155,15 @@ def workspace_id(directory) -> str:
 # ------------------------------------------------------------------ findings
 
 #: The line Codex is asked to write for each finding (noshell.INSTRUCTION):
-#: FINDING F1 | high | path/to/file.py:42 | category | the claim
-_FINDING = re.compile(
-    r"^\s*[-*]?\s*`?FINDING\s+(F\d{1,3})\s*\|\s*(high|medium|low)\s*\|\s*([^|]*?)\s*\|"
-    r"\s*([a-z][a-z-]{0,24})\s*\|\s*(.+?)`?\s*$", re.IGNORECASE | re.MULTILINE)
-_LOCATION = re.compile(r"^(?P<file>[^:|]+?)(?::(?P<line>\d{1,7}))?(?:[-:]\d+)?$")
+#: FINDING F1 | high | path/file.py:12-18 | bug | confidence medium: why | claim | reasoning
+#: The location is ``path:line``, ``path:start-end``, ``path`` alone, or ``-`` for a
+#: design-level point with no line. The earlier five-field form (no confidence,
+#: no reasoning) is still read.
+_FINDING_LINE = re.compile(r"^\s*[-*]?\s*`?FINDING\s+(F\d{1,3})\s*\|(.*?)`?\s*$",
+                           re.IGNORECASE | re.MULTILINE)
+_LOCATION = re.compile(r"^(?P<file>[^:|]+?)(?::(?P<line>\d{1,7})(?:\s*[-\u2013]\s*(?P<end>\d{1,7}))?)?$")
+_CONFIDENCE = re.compile(r"^(?:confidence\s*:?\s*)?(high|medium|low)\b\s*[:,(\-\u2013]?\s*(.*?)\)?$",
+                         re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -154,6 +174,10 @@ class Finding:
     line: int | None
     category: str
     claim: str
+    line_end: int | None = None
+    confidence: str | None = None
+    confidence_note: str | None = None
+    reasoning: str | None = None
 
 
 def _clean_file(text: str) -> str | None:
@@ -178,6 +202,48 @@ def _redact(text: str, limit: int) -> str:
     return redact_paths(text)[:limit]
 
 
+def _location(text: str) -> tuple[str | None, int | None, int | None]:
+    text = text.strip().strip("`")
+    match = _LOCATION.match(text)
+    if match is None:
+        return _clean_file(text), None, None
+    line = int(match.group("line")) if match.group("line") else None
+    end = int(match.group("end")) if match.group("end") else None
+    if line is not None and end is not None and end < line:
+        end = None
+    return _clean_file(match.group("file")), line, end
+
+
+def _parse_line(ref: str, rest: str) -> Finding | None:
+    parts = [part.strip() for part in rest.split("|")]
+    if len(parts) < 4:
+        return None
+    severity = parts[0].lower()
+    if severity not in SEVERITIES:
+        return None
+    file, line, end = _location(parts[1])
+    category = parts[2].lower()
+    if not re.fullmatch(r"[a-z][a-z-]{0,24}", category):
+        return None
+    confidence = note = reasoning = None
+    if len(parts) >= 6:
+        match = _CONFIDENCE.match(parts[3])
+        if match:
+            confidence = match.group(1).lower()
+            note = _redact(match.group(2).strip(), MAX_NOTE_CHARS) or None
+            claim = parts[4]
+            reasoning = " | ".join(parts[5:]).strip() or None
+        else:
+            claim = " | ".join(parts[3:])
+    else:
+        claim = " | ".join(parts[3:])
+    if not claim.strip():
+        return None
+    return Finding(ref, severity, file, line, category, _redact(claim.strip(), MAX_CLAIM_CHARS),
+                   end, confidence, note,
+                   _redact(reasoning, MAX_REASON_CHARS) if reasoning else None)
+
+
 def parse_findings(output) -> list[Finding] | None:
     """The findings in Codex's answer, or None when it lists none in the agreed form.
 
@@ -188,16 +254,15 @@ def parse_findings(output) -> list[Finding] | None:
         return None
     found: list[Finding] = []
     seen: set[str] = set()
-    for match in _FINDING.finditer(output):
+    for match in _FINDING_LINE.finditer(output):
         ref = match.group(1).upper()
         if ref in seen:
             continue
+        finding = _parse_line(ref, match.group(2))
+        if finding is None:
+            continue
         seen.add(ref)
-        location = _LOCATION.match(match.group(3).strip().strip("`"))
-        file = _clean_file(location.group("file")) if location else _clean_file(match.group(3))
-        line = int(location.group("line")) if location and location.group("line") else None
-        found.append(Finding(ref, match.group(2).lower(), file, line, match.group(4).lower(),
-                             _redact(match.group(5).strip(), MAX_CLAIM_CHARS)))
+        found.append(finding)
         if len(found) >= MAX_FINDINGS:
             break
     if found:
@@ -299,9 +364,11 @@ def record_run(payload: dict, *, working_directory, task_type, trigger, path: Pa
              metrics.get("output_tokens") if isinstance(metrics.get("output_tokens"), int) else None,
              None if findings is None else len(findings)))
         for item in findings or ():
-            conn.execute("INSERT OR REPLACE INTO findings VALUES (?,?,?,?,?,?,?)",
-                         (decision_id, item.ref, item.file, item.line, item.severity,
-                          item.category, item.claim))
+            conn.execute(
+                "INSERT OR REPLACE INTO findings (decision_id, ref, file, line, severity, category, "
+                "claim, line_end, confidence, confidence_note, reasoning) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (decision_id, item.ref, item.file, item.line, item.severity, item.category,
+                 item.claim, item.line_end, item.confidence, item.confidence_note, item.reasoning))
         conn.commit()
     finally:
         conn.close()
@@ -408,9 +475,15 @@ def report(*, days: float = 30.0, workspace: str | None = None, path: Path | Non
         by_trigger[run["trigger"] or "claude"] = by_trigger.get(run["trigger"] or "claude", 0) + 1
     counts = {"findings": len(findings), "unjudged": 0, "confirmed_independent": 0,
               "confirmed_claude_only": 0, "refuted": 0, "undecidable": 0, "fixed": 0,
-              "fixed_and_verified": 0, "refuted_but_acted_on": 0, "by_user": 0}
+              "fixed_and_verified": 0, "to_fix": 0, "refuted_but_acted_on": 0, "by_user": 0}
+    by_confidence: dict[str, dict[str, int]] = {}
     for finding in findings:
         verdict = latest.get((finding["decision_id"], finding["ref"]))
+        bucket = by_confidence.setdefault(finding.get("confidence") or "not stated",
+                                          {"findings": 0, "confirmed": 0, "refuted": 0,
+                                           "undecidable": 0, "unjudged": 0})
+        bucket["findings"] += 1
+        bucket[verdict["verdict"] if verdict else "unjudged"] += 1
         if verdict is None:
             counts["unjudged"] += 1
             continue
@@ -426,6 +499,8 @@ def report(*, days: float = 30.0, workspace: str | None = None, path: Path | Non
                 counts["refuted_but_acted_on"] += 1
         else:
             counts["undecidable"] += 1
+        if verdict["action"] == "to_fix":
+            counts["to_fix"] += 1
         if verdict["action"] == "fixed":
             counts["fixed"] += 1
             if verdict["fix_verified"] == 1:
@@ -444,5 +519,6 @@ def report(*, days: float = 30.0, workspace: str | None = None, path: Path | Non
         "input_tokens": sum(tokens_in) if tokens_in else None,
         "output_tokens": sum(tokens_out) if tokens_out else None,
         "findings": counts,
+        "by_confidence": by_confidence,
         "gate": gate,
     }

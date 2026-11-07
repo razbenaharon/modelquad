@@ -137,7 +137,7 @@ def test_settings_proactive_command_saves_the_choice(tmp_path, capsys):
     assert read_proactive() is True
     out = capsys.readouterr().out
     assert "Claude may decide on its own to consult Codex" in out
-    assert "still asks you before each" in out
+    assert "asks you before each ModelQuad Codex call unless the standing grant" in out
     assert cli.main(["settings", "proactive", "off"]) == 0
     assert read_proactive() is False
 
