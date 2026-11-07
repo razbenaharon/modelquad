@@ -219,3 +219,20 @@ def test_verdict_before_the_fix_then_after_and_confidence_is_not_proof(tmp_path)
     assert report["findings"]["to_fix"] == 0 and report["findings"]["fixed_and_verified"] == 1
     assert report["by_confidence"]["medium"]["confirmed"] == 1
     assert report["by_confidence"]["low"]["refuted"] == 1
+
+
+def test_gate_events_store_an_installation_keyed_session_pseudonym(tmp_path):
+    import hashlib
+
+    from modelquad import hostobs
+
+    db = tmp_path / "ledger.db"
+    rl.record_gate_event(tmp_path, "session-a", "blocked", 4, path=db)
+    conn = sqlite3.connect(db)
+    try:
+        (stored,) = conn.execute("SELECT session FROM gate_events").fetchone()
+    finally:
+        conn.close()
+    assert stored != hashlib.sha256(b"session-a").hexdigest()[:16]
+    # The same derivation as the host-session fingerprint, without loading hostobs in a hook.
+    assert stored == hostobs.session_fingerprint("session-a")

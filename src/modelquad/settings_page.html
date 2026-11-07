@@ -141,7 +141,7 @@ button:disabled { opacity: .6; cursor: default; }
     <fieldset id="proactive">
       <legend>Who decides to ask Codex</legend>
     </fieldset>
-    <p class="note">Either way, Claude Code asks you before every Codex call, and Codex only reads: it never changes your files.</p>
+    <p class="note">Either way, Claude Code asks you before every Codex call unless you turned on a standing grant for that folder in your own terminal, and Codex only reads: it never changes your files.</p>
   </section>
 
   <section aria-labelledby="project-title" id="project-section">
@@ -183,7 +183,7 @@ button:disabled { opacity: .6; cursor: default; }
   var state = null;
 
   var GLOBAL = [
-    { value: "on", title: "Claude decides when to ask", text: "At set moments, such as a finished multi-file change or before a commit, Claude calls Codex without suggesting it first. You still approve each call.", badge: "Default" },
+    { value: "on", title: "Claude decides when to ask", text: "At set moments, such as a finished multi-file change or before a commit, Claude calls Codex without suggesting it first. Claude Code still asks you before each call, unless you turned on a standing grant.", badge: "Default" },
     { value: "off", title: "Claude offers, you decide", text: "Claude suggests a Codex opinion when it would help, and calls Codex when you agree or ask." }
   ];
   var REPO = [

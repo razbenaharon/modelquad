@@ -241,6 +241,95 @@ def _claude_via_plugin() -> bool:
     return read_claude_plugin()
 
 
+_PLUGIN_REFRESH = (
+    "claude plugin uninstall modelquad@modelquad, then claude plugin install "
+    "modelquad@modelquad (an update does not refresh the files while the version is unchanged)"
+)
+
+
+def _plugin_record_entries(target_dir: Path) -> list[dict] | None:
+    """The ModelQuad entries of Claude Code's plugin record; None when unreadable.
+
+    The same file and key rule as ``claude_adapter.plugin_recorded``: each
+    entry is a dict with ``version`` and ``installPath`` when Claude Code
+    wrote them.
+    """
+    try:
+        payload = json.loads((Path(target_dir) / "plugins" / "installed_plugins.json")
+                             .read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    plugins = payload.get("plugins") if isinstance(payload, dict) else None
+    if not isinstance(plugins, dict):
+        return None
+    entries: list[dict] = []
+    for key, value in plugins.items():
+        if str(key).split("@", 1)[0] != PRODUCT_SLUG:
+            continue
+        for entry in value if isinstance(value, list) else [value]:
+            entries.append(entry if isinstance(entry, dict) else {})
+    return entries
+
+
+def _packaged_plugin_skills() -> set[str] | None:
+    """The plugin's skill names, from the skill templates this package ships.
+
+    ``scripts/sync_plugin.py`` builds the plugin from these templates: the
+    ``modelquad`` template is the ``guide`` skill, ``modelquad-<name>`` is
+    ``<name>``. None when the templates cannot be listed.
+    """
+    folder = Path(__file__).resolve().parent / "adapters" / "templates" / "claude" / "skills"
+    try:
+        names = {child.name for child in folder.iterdir() if (child / "SKILL.md").is_file()}
+    except OSError:
+        return None
+    skills = {"guide" if item == PRODUCT_SLUG else item.removeprefix(PRODUCT_SLUG + "-")
+              for item in names}
+    return skills or None
+
+
+def _claude_plugin_freshness(name: str, target_dir: Path) -> DoctorCheck:
+    """The plugin is recorded: is it this ModelQuad's version, with all its skills?"""
+    from . import __version__
+
+    entries = _plugin_record_entries(target_dir) or []
+    versions = [entry.get("version") for entry in entries]
+    if not versions or not all(isinstance(version, str) and version for version in versions):
+        return DoctorCheck(
+            name, CheckStatus.WARN,
+            f"Supplied by the ModelQuad plugin, but Claude Code's plugin record does not say "
+            f"which version, so whether it matches ModelQuad {__version__} is unknown. "
+            f"To refresh it, run {_PLUGIN_REFRESH}.",
+        )
+    stale = sorted({version for version in versions if version != __version__})
+    if stale:
+        return DoctorCheck(
+            name, CheckStatus.WARN,
+            f"The ModelQuad plugin is version {', '.join(stale)}, but ModelQuad is "
+            f"{__version__}. Run {_PLUGIN_REFRESH}.",
+        )
+    expected = _packaged_plugin_skills()
+    if expected:
+        missing: set[str] = set()
+        for entry in entries:
+            path = entry.get("installPath")
+            if not isinstance(path, str) or not path:
+                continue
+            skills = Path(path) / "skills"
+            try:
+                present = {child.name for child in skills.iterdir() if child.is_dir()}
+            except OSError:
+                continue  # Not readable: no evidence either way.
+            missing |= expected - present
+        if missing:
+            return DoctorCheck(
+                name, CheckStatus.WARN,
+                f"The ModelQuad plugin's installed files are stale: the skills "
+                f"{', '.join(sorted(missing))} are missing. Run {_PLUGIN_REFRESH}.",
+            )
+    return DoctorCheck(name, CheckStatus.OK, f"Supplied by the ModelQuad plugin ({__version__}).")
+
+
 def _claude_plugin_check(name: str, target_dir: Path) -> DoctorCheck:
     """Beside the plugin, the registration is the plugin's, as Claude Code records it."""
 
@@ -248,7 +337,7 @@ def _claude_plugin_check(name: str, target_dir: Path) -> DoctorCheck:
 
     recorded = plugin_recorded(target_dir)
     if recorded is True:
-        return DoctorCheck(name, CheckStatus.OK, "Supplied by the ModelQuad plugin.")
+        return _claude_plugin_freshness(name, target_dir)
     back = f"or run {CLI_COMMAND} install claude --no-plugin to install the server directly"
     if recorded is False:
         return DoctorCheck(

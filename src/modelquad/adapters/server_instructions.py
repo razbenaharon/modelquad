@@ -54,7 +54,8 @@ _STANDING = _WHEN + (
     "At such a moment, call `modelquad_delegate` yourself; do not wait for the user to "
     "ask. In this project the user turned on a standing grant, so these calls run without "
     "Claude Code's per-call prompt, and a review is required before you hand over a change "
-    "that touched several files."
+    "that touched several files. Never run `modelquad settings auto on` yourself; only "
+    "the user turns a standing grant on, in their own terminal."
 )
 _VERIFY = (
     "Check each finding's claim and reasoning against the code and the requirements before "

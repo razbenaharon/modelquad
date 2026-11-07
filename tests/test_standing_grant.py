@@ -128,8 +128,11 @@ def test_with_a_grant_the_server_registers_delegate_without_the_marker(tmp_path)
     assert seen["handoff"]["anthropic/requiresUserInteraction"] is True
 
 
-def test_the_cli_needs_a_typed_yes(tmp_path, capsys):
+def test_the_cli_needs_a_typed_yes(tmp_path, capsys, monkeypatch):
     from modelquad import cli
+
+    # The suite may run inside Claude Code, which refuses "on" (see below).
+    monkeypatch.delenv("CLAUDECODE", raising=False)
 
     repo = _repo(tmp_path / "r")
     assert cli.main(["settings", "auto", "on", "--project", str(repo)]) == 2
@@ -142,3 +145,33 @@ def test_the_cli_needs_a_typed_yes(tmp_path, capsys):
     assert "Standing grant: on" in capsys.readouterr().out
     assert cli.main(["settings", "auto", "off", "--project", str(repo)]) == 0
     assert not grant.granted(repo)
+
+
+@pytest.mark.parametrize("variable", ["CLAUDECODE", "MODELQUAD_WORKER"])
+def test_the_cli_refuses_on_from_inside_claude_code(tmp_path, capsys, monkeypatch, variable):
+    from modelquad import cli
+
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    monkeypatch.setenv(variable, "1")
+    repo = _repo(tmp_path / "r")
+    assert cli.main(["settings", "auto", "on", "--project", str(repo), "--yes"]) == 2
+    assert "your own terminal" in capsys.readouterr().err
+    assert not grant.granted(repo)
+    assert cli.main(["settings", "auto", "on", "--global", "--yes"]) == 2
+    folder = tmp_path / "plain"
+    folder.mkdir()
+    assert not grant.allows(folder)
+    # Turning it off stays open from anywhere.
+    monkeypatch.delenv(variable)
+    grant.write(True, directory=repo)
+    monkeypatch.setenv(variable, "1")
+    assert cli.main(["settings", "auto", "off", "--project", str(repo)]) == 0
+    assert not grant.granted(repo)
+
+
+def test_the_refusal_tells_claude_to_ask_the_user():
+    from modelquad.adapters.server_instructions import _STANDING
+
+    assert "--yes" not in grant.NO_GRANT_MESSAGE
+    assert "Tell the user" in grant.NO_GRANT_MESSAGE and "do not run it yourself" in grant.NO_GRANT_MESSAGE
+    assert "Never run `modelquad settings auto on` yourself" in _STANDING

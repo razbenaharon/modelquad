@@ -1201,6 +1201,13 @@ def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
         if on and folder is not None and not grant.allows(folder):
             print("Codex is off in this repository, which outranks the grant.")
         return 0
+    if args.choice == "on" and (os.environ.get("CLAUDECODE") == "1"
+                                or os.environ.get("MODELQUAD_WORKER") == "1"):
+        # Only the user turns a grant on: never Claude Code (or a worker) on their behalf,
+        # whatever --yes says. Turning it off stays open to anyone.
+        print("Not changed. Turn the standing grant on yourself: run this in your own "
+              "terminal, not from inside Claude Code.", file=sys.stderr)
+        return 2
     if args.choice == "on":
         print_lines((*DATA_FLOW, *grant.NOTICE))
         if not args.consent:

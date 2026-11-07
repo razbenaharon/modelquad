@@ -27,6 +27,7 @@ of ModelQuad.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import re
 import sqlite3
@@ -416,6 +417,27 @@ def record_verdicts(decision_id: str, verdicts: list[dict], *, source: str,
         conn.close()
 
 
+def session_pseudonym(session: str, state_dir: Path | None = None, length: int = 16) -> str:
+    """An installation-keyed pseudonym for a host session id; never raises.
+
+    The same derivation as ``hostobs.session_fingerprint`` (HMAC on the
+    installation id), kept here with the standard library only so the hook
+    that calls it stays light. A plain hash of the session id would let anyone
+    holding the id find its rows. If the installation id cannot be read or
+    made, a plain hash stands in so the hook still works.
+    """
+    raw = session.strip().encode("utf-8", "surrogatepass")
+    try:
+        from .identity import installation_id
+
+        key = installation_id(state_dir).encode("utf-8")
+        digest = hmac.new(key, b"modelquad:host-session-fingerprint:v1:" + raw,
+                          hashlib.sha256).hexdigest()
+    except Exception:  # noqa: BLE001 -- a pseudonym must never break a hook
+        digest = hashlib.sha256(raw).hexdigest()
+    return digest[:length]
+
+
 def record_gate_event(directory, session: str, event: str, files: int | None = None,
                       path: Path | None = None) -> None:
     """Record what the review gate did. Never raises: a hook must not fail on it."""
@@ -427,7 +449,7 @@ def record_gate_event(directory, session: str, event: str, files: int | None = N
             conn.execute("INSERT INTO gate_events (created_at, workspace, session, event, files) "
                          "VALUES (?,?,?,?,?)",
                          (time.time(), workspace_id(directory),
-                          hashlib.sha256(session.encode("utf-8", "surrogatepass")).hexdigest()[:16],
+                          session_pseudonym(session),
                           event, files))
             conn.commit()
         finally:
