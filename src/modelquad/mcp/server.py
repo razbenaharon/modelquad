@@ -1759,7 +1759,8 @@ FINDINGS_NOTE = (
     "modelquad_review_verdict (this decision_id, one entry per finding).")
 
 
-def _record_review(payload: dict[str, Any], working_directory: str, task_type: str, trigger: str) -> None:
+def _record_review(payload: dict[str, Any], working_directory: str, task_type: str, trigger: str,
+                   seconds: float | None = None) -> None:
     """Record the call and its findings in the review ledger, and list the findings in the reply.
 
     A ledger that cannot be written never fails the reply; the reply then says so.
@@ -1768,7 +1769,7 @@ def _record_review(payload: dict[str, Any], working_directory: str, task_type: s
 
     try:
         findings = review_ledger.record_run(payload, working_directory=working_directory,
-                                            task_type=task_type, trigger=trigger)
+                                            task_type=task_type, trigger=trigger, seconds=seconds)
     except Exception:  # noqa: BLE001 -- the answer matters more than its record
         payload["findings_note"] = "ModelQuad could not record this call in its review ledger."
         return
@@ -1839,6 +1840,7 @@ async def modelquad_delegate(
     host_protocol = host_protocol_from_context(ctx)
     host_request_meta = host_request_meta_from_context(ctx)
     handle = CallerWaitHandle()
+    started_at = time.monotonic()
     with _runner_notifications(ctx) as progress:
         payload = await _delegate_observing_the_caller(
             functools.partial(
@@ -1873,7 +1875,8 @@ async def modelquad_delegate(
             await progress.report(_delegate_completion_notice(payload))
     _report_files(payload, prompt, working_directory, files)
     if "job_id" not in payload:
-        _record_review(payload, working_directory, task_type, trigger)
+        _record_review(payload, working_directory, task_type, trigger,
+                       round(time.monotonic() - started_at, 1))
     if "job_id" in payload:
         # A job response has its own evidence shape. Legacy presentation
         # expects process fields that the output seam deliberately cannot claim.

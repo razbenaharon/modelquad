@@ -152,3 +152,21 @@ def test_the_cli_report_says_what_is_proof(tmp_path, capsys, monkeypatch):
     assert "Confirmed with independent evidence" in out and "not proof" in out
     assert "Calls: 1 (answered 1)" in out
     assert cli.main(["review", "verdict", "d-1", "F7", "refuted"]) == 2
+
+
+def test_tokens_come_from_codex_turn_completed_and_time_from_the_call(tmp_path):
+    from modelquad.execution import noshell
+
+    raw = "\n".join(['{"type":"thread.started"}',
+                     '{"type":"turn.completed","usage":{"input_tokens":900,"output_tokens":120,'
+                     '"cached_input_tokens":700,"evil":"x"}}'])
+    assert noshell.stream_usage(raw) == {"input_tokens": 900, "cached_input_tokens": 700,
+                                         "output_tokens": 120}
+    assert noshell.stream_usage("not json") is None
+    db = tmp_path / "ledger.db"
+    payload = {"decision_id": "d-9", "output": "FINDINGS: none",
+               "metadata": {"worker_tokens": noshell.stream_usage(raw)}}
+    rl.record_run(payload, working_directory=tmp_path, task_type="review", trigger="claude",
+                  path=db, seconds=31.0)
+    report = rl.report(path=db)
+    assert report["input_tokens"] == 900 and report["median_seconds"] == 31.0

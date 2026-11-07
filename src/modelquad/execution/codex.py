@@ -350,6 +350,9 @@ class CodexExecutor(Executor):
                     False, True, verification.collaboration_called,
                 )
             metadata.update(verification.metadata)
+            usage = noshell.stream_usage(raw)
+            if usage is not None:
+                metadata["worker_tokens"] = usage
             return verification
 
         try:

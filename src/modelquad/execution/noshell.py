@@ -488,6 +488,28 @@ def verify_stream(raw) -> StreamVerification:
     return StreamVerification(valid and terminal and not violated, violated, collaboration)
 
 
+def stream_usage(raw) -> dict | None:
+    """Codex's own token counts from its last ``turn.completed`` event; None when absent.
+
+    Numbers only, for the review ledger's cost line. It reads the same stream
+    :func:`verify_stream` judged and decides nothing.
+    """
+    found = None
+    for line in (raw or "").splitlines():
+        try:
+            event = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if type(event) is dict and event.get("type") == "turn.completed" and type(event.get("usage")) is dict:
+            found = event["usage"]
+    if found is None:
+        return None
+    usage = {key: found[key] for key in ("input_tokens", "cached_input_tokens", "output_tokens",
+                                         "reasoning_output_tokens")
+             if type(found.get(key)) is int and 0 <= found[key] < 10**10}
+    return usage or None
+
+
 def limitations(metadata, original=()):
     """Close worker prose; certify only after both observations succeeded."""
     labels = list(closed_limitations(original))

@@ -274,17 +274,19 @@ def _outcome(payload: dict) -> str:
     return "failed"
 
 
-def record_run(payload: dict, *, working_directory, task_type, trigger, path: Path | None = None
-               ) -> list[Finding] | None:
+def record_run(payload: dict, *, working_directory, task_type, trigger, path: Path | None = None,
+               seconds: float | None = None) -> list[Finding] | None:
     """Record one Codex call and its findings; returns the findings (None: unknown)."""
     decision_id = payload.get("decision_id")
     findings = parse_findings(payload.get("output"))
     if not decision_id:
         return findings
     metadata = payload.get("metadata") or {}
-    metrics = metadata.get("worker_metrics") or {}
+    metrics = metadata.get("worker_tokens") or metadata.get("worker_metrics") or {}
     audit = metadata.get("file_audit") or {}
     duration = payload.get("duration_seconds")
+    if not isinstance(duration, (int, float)):
+        duration = seconds
     conn = connect(path)
     try:
         conn.execute(
