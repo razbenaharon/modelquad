@@ -1067,9 +1067,12 @@ def _run_split_summary(args: argparse.Namespace, config) -> int:
         return 2
     current = tuple(read_status(provider, refresh=False)
                     for provider in build_providers(config, args.usage_directory))
+    from . import review_ledger
     summary = split_summary.summarize(
         _history_db_path(args), workspace_key=key, period=args.since,
-        now=datetime.now(timezone.utc), current=current, thresholds=config.freshness)
+        now=datetime.now(timezone.utc), current=current, thresholds=config.freshness,
+        ledger_path=review_ledger.ledger_path(),
+        ledger_workspace=review_ledger.workspace_id(str(folder.resolve())))
     if args.as_json:
         print(json.dumps(summary, indent=2, sort_keys=True))
     else:
@@ -1124,44 +1127,21 @@ def _run_repo_setting(choice: str | None, project: str | None) -> int:
     return 0
 
 
-def _run_settings_page(project: str | None, *, no_browser: bool = False,
-                       open_browser=None) -> int:
-    """``modelquad settings open``: serve the one-time settings page until Done or idle."""
-    import webbrowser
+def _run_settings_show(project: str | None, args: argparse.Namespace) -> int:
+    """``modelquad settings`` / ``settings show``: the three settings, changing nothing."""
+    from . import settings_view
+    from .localpath import reason as local_reason
 
-    from . import settings_page
-
-    folder = settings_page.project_folder(project)
-    if project is not None and folder is None:
-        print("That project folder does not exist or is not a local folder ModelQuad can use.",
-              file=sys.stderr)
+    folder = Path(project) if project else Path.cwd()
+    # Before any file-system call: a network share is never opened.
+    if local_reason(os.path.abspath(folder)) is not None:
+        print(_NOT_LOCAL_FOLDER, file=sys.stderr)
         return 2
-    try:
-        page = settings_page.SettingsPage(folder, DEFAULT_USAGE_DIRECTORY)
-    except OSError as exc:
-        print(f"The settings page could not start: {exc.strerror or exc}", file=sys.stderr)
-        return 1
-    opened = False
-    if not no_browser:
-        try:
-            opened = bool((open_browser or webbrowser.open)(page.url))
-        except Exception:  # noqa: BLE001 -- no browser means the address is printed instead
-            opened = False
-    if opened:
-        print("ModelQuad settings are open in your browser.")
-    else:
-        print("Open this address in your browser (it works only on this computer, "
-              "and only while this command runs):")
-        print(f"  {page.url}")
-    print("Press Done on the page when you finish. The page closes by itself after "
-          f"{settings_page.IDLE_SECONDS // 60} minutes without use.")
-    try:
-        ended = page.serve()
-    except KeyboardInterrupt:
-        ended = "interrupted"
-    print({"done": "Settings page closed. New Claude Code sessions use your settings.",
-           "idle": "Settings page closed after 15 minutes without use. Saved choices stay saved.",
-           "interrupted": "Settings page closed. Saved choices stay saved."}[ended])
+    if not folder.is_dir():
+        print("That project folder does not exist.", file=sys.stderr)
+        return 2
+    for line in settings_view.lines(folder.resolve(), _selected_db_path(args)):
+        print(line)
     return 0
 
 
@@ -1201,12 +1181,11 @@ def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
         if on and folder is not None and not grant.allows(folder):
             print("Codex is off in this repository, which outranks the grant.")
         return 0
-    if args.choice == "on" and (os.environ.get("CLAUDECODE") == "1"
-                                or os.environ.get("MODELQUAD_WORKER") == "1"):
-        # Only the user turns a grant on: never Claude Code (or a worker) on their behalf,
-        # whatever --yes says. Turning it off stays open to anyone.
-        print("Not changed. Turn the standing grant on yourself: run this in your own "
-              "terminal, not from inside Claude Code.", file=sys.stderr)
+    if args.choice == "on" and os.environ.get("MODELQUAD_WORKER") == "1":
+        # A worker never re-enters orchestration (invariant 1), so it cannot grant either.
+        # Turning it off stays open to anyone.
+        print("Not changed: a ModelQuad worker cannot turn the standing grant on.",
+              file=sys.stderr)
         return 2
     if args.choice == "on":
         print_lines((*DATA_FLOW, *grant.NOTICE))
@@ -1966,8 +1945,16 @@ def build_parser() -> argparse.ArgumentParser:
     integrations.add_argument("integrations_action", choices=("status", "on", "off"))
     integrations.add_argument("--json", action="store_true", dest="as_json")
     integrations.add_argument("--dry-run", action="store_true", help="Report without saving or changing host files.")
-    settings_cmd = subcommands.add_parser('settings', help='Manage persisted user preferences.')
-    settings_actions = settings_cmd.add_subparsers(dest='settings_action', required=True)
+    settings_cmd = subcommands.add_parser(
+        'settings', help='With no subcommand, show ModelQuad on or off, the mode and the '
+        'history for the current folder (settings show --project DIR for another). '
+        'The subcommands change a persisted preference.')
+    settings_actions = settings_cmd.add_subparsers(dest='settings_action')
+    show_cmd = settings_actions.add_parser(
+        'show', help='Show ModelQuad on or off in Claude Code, automatic or approve each call, '
+        'and the history here, with the command that changes each. Changes nothing.')
+    show_cmd.add_argument('--project', metavar='DIR',
+                          help='The project folder (default: the current folder).')
     job_runner_cmd = settings_actions.add_parser('job-runner', help='Keep delegated work running after closing the chat.')
     job_runner_cmd.add_argument('choice', choices=('on', 'off'))
     job_runner_cmd.add_argument(
@@ -1985,14 +1972,6 @@ def build_parser() -> argparse.ArgumentParser:
     plan_cmd.add_argument('provider', nargs='?', choices=('claude', 'codex'))
     plan_cmd.add_argument('value', nargs='?', metavar='plan|unset',
                           help='A listed plan, or unset. Run without it to see the list.')
-    open_cmd = settings_actions.add_parser(
-        'open',
-        help='Open a settings page in your browser, served only on this computer. It closes '
-        'when you press Done or after 15 minutes without use.')
-    open_cmd.add_argument('--project', metavar='DIR',
-                          help="The project whose own Codex choice the page shows (default: the current folder).")
-    open_cmd.add_argument('--no-browser', action='store_true',
-                          help='Print the page address instead of opening the browser.')
     auto_cmd = settings_actions.add_parser(
         'auto',
         help="The standing grant: let Claude ask Codex without Claude Code's prompt for each "
@@ -2360,6 +2339,8 @@ def _run_command(argv: Sequence[str] | None) -> int:
         return 0
     if args.command == "integrations":
         return _run_integrations_command(args, parser)
+    if args.command == 'settings' and args.settings_action in (None, 'show'):
+        return _run_settings_show(getattr(args, 'project', None), args)
     if args.command == 'settings' and args.settings_action == 'proactive':
         return _run_proactive_setting(args.choice == 'on')
     if args.command == 'settings' and args.settings_action == 'repo':
@@ -2368,8 +2349,6 @@ def _run_command(argv: Sequence[str] | None) -> int:
         return _run_auto_setting(args)
     if args.command == 'review':
         return _run_review_command(args)
-    if args.command == 'settings' and args.settings_action == 'open':
-        return _run_settings_page(args.project, no_browser=args.no_browser)
     if args.command == 'settings' and args.settings_action == 'plan':
         return _run_plan_setting(args.provider, args.value)
     if args.command == 'settings':
