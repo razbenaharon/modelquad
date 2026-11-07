@@ -40,6 +40,12 @@ _WHEN = (
     "your final message on it (trigger review_gate); before a commit or PR; a bug survived "
     "one fix attempt; a design choice has real trade-offs. A small, routine change needs none. "
 )
+#: Said in the standing-grant guidance and in the general guidance alike. "Asks" covers
+#: both the user's words and their pick in /modelquad:settings.
+_NEVER_REENABLE = (
+    "Never turn on a grant, reconnect ModelQuad or undo an exclusion unless the user asks for "
+    "it this turn."
+)
 _OFFER = _WHEN + (
     "At such a moment, offer the user a Codex review in one short sentence. Call "
     "`modelquad_delegate` only when the user agrees or asks for it. Claude Code asks the "
@@ -54,8 +60,7 @@ _STANDING = _WHEN + (
     "At such a moment, call `modelquad_delegate` yourself; do not wait for the user to "
     "ask. In this project the user turned on a standing grant, so these calls run without "
     "Claude Code's per-call prompt, and a review is required before you hand over a change "
-    "that touched several files. Never run `modelquad settings auto on` yourself; only "
-    "the user turns a standing grant on, in their own terminal."
+    "that touched several files. " + _NEVER_REENABLE
 )
 _VERIFY = (
     "Check each finding's claim and reasoning against the code and the requirements before "
@@ -84,6 +89,7 @@ _REST = (
     "Divide a task between Claude and Codex with `modelquad_split`, not by hand; it "
     "starts nothing.",
     "If `MODELQUAD_WORKER=1`, do not call ModelQuad.",
+    _NEVER_REENABLE,
 )
 
 
@@ -224,4 +230,6 @@ def server_instructions(proactive: bool | None = None, standing: bool = False) -
     if proactive is None:
         proactive = read_proactive()
     when = _STANDING if standing else (_DECIDE if proactive else _OFFER)
-    return "\n\n".join((_INTRO, when, _VERIFY, _FILES, *_REST))
+    # The standing guidance already ends with the never-re-enable sentence: say it once.
+    rest = tuple(line for line in _REST if not (standing and line == _NEVER_REENABLE))
+    return "\n\n".join((_INTRO, when, _VERIFY, _FILES, *rest))
