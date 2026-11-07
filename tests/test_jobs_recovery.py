@@ -21,6 +21,9 @@ OLD = NOW - timedelta(minutes=5)
 
 # Scheduling and teardown need slack on the shared, memory-constrained runner.
 LOAD_HEADROOM_S = 60
+# conftest gives every test a 60 s recovery budget; tests that claim the
+# deadline itself pin the product value.
+PRODUCT_DEADLINE_S = 10.0
 
 
 class Probe:
@@ -216,6 +219,7 @@ def test_background_schedule_returns_while_sink_is_blocked(case, monkeypatch):
 
 
 def test_deadline_checked_after_store_operation(case, monkeypatch):
+    monkeypatch.setattr(recovery, 'DEADLINE_SECONDS', PRODUCT_DEADLINE_S)
     original = case[2].purge_expired
     clock = [0.0]
     def purge(now):
@@ -227,6 +231,43 @@ def test_deadline_checked_after_store_operation(case, monkeypatch):
     before = row(case)
     assert run(case)['deferred'] == 1
     assert row(case) == before
+
+
+def test_suite_headroom_leaves_product_deadline_alone():
+    import ast
+    import inspect
+    tree = ast.parse(inspect.getsource(recovery))
+    values = [node.value.value for node in tree.body if isinstance(node, ast.Assign)
+              and any(getattr(t, 'id', None) == 'DEADLINE_SECONDS' for t in node.targets)]
+    assert values == [PRODUCT_DEADLINE_S]
+    assert recovery.DEADLINE_SECONDS == 60  # conftest headroom, restored after each test
+
+
+def test_pass_past_deadline_after_decision_defers_and_next_pass_restores(case, monkeypatch):
+    # The CI failure: SQLite commits on a loaded runner took the pass past
+    # its budget after the decision was persisted. The pass defers without
+    # finalizing; the next pass restores from the persisted decision once.
+    monkeypatch.setattr(recovery, 'DEADLINE_SECONDS', PRODUCT_DEADLINE_S)
+    clock = [0.0]
+    original_put = case[2].put
+    def slow_put(*args):
+        result = original_put(*args)
+        clock[0] = PRODUCT_DEADLINE_S + 1
+        return result
+    with monkeypatch.context() as patch:
+        patch.setattr(recovery.time, 'monotonic', lambda: clock[0])
+        patch.setattr(case[2], 'put', slow_put)
+        counts = run(case)
+    assert counts['deferred'] == 1 and counts['restored'] == 0 and counts['failed'] == 0
+    saved = row(case)
+    assert saved['recovery_decision'] == 'interrupted' and saved['ended_at'] is None
+    assert history.read_job_attempt(case[0], case[1])['resolved_at'] is None
+    later = NOW + timedelta(seconds=61)
+    assert run(case, later)['restored'] == 1
+    assert row(case)['status'] == 'interrupted'
+    assert row(case)['ended_at'] == saved['recovery_ended_at']
+    assert case[2].collect('recovery-job', later).output.job_status is JobStatus.INTERRUPTED
+    assert run(case, later)['restored'] == 0
 
 
 @pytest.mark.parametrize('kind,detail,expected', [
