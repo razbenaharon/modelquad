@@ -11,22 +11,28 @@ session's own folder, and acts at three moments:
   without a Codex review since, it adds one line of context when Claude next
   runs a command (usually the tests, at the end of the change), at most
   ``MAX_REMINDERS`` times, and only after further edits since the last one.
-* **PreToolUse**, advisory: the first time in a session that Claude is about
-  to change a sensitive file (authentication, cryptography, permissions,
-  secrets, migrations, installers, CI workflows), it adds one line asking
-  Claude to consult Codex before going further, unless Codex is off here.
+* **PreToolUse**, the consultation gate: in a folder with the standing grant,
+  before the first edit of a sensitive file (authentication, cryptography,
+  permissions, secrets, migrations, installers, CI workflows), or the edit
+  that would make the change three files, with no Codex consultation in this
+  change yet, it stops that one edit once and asks Claude to consult Codex on
+  the approach first. It never stops a change twice; after a refused or
+  failed consultation Claude goes on and says so. Without a grant it only
+  adds one line of context before a sensitive file, in "decide" mode.
 * **Stop**, the review gate, only in a folder where the user turned the
   standing grant on (``grant.py``): when Claude stops after a change of
   ``THRESHOLD`` files (or one sensitive file) with no Codex review since, it
-  blocks once, telling Claude to run the review now. That is the one
-  exception to AGENTS.md invariant 6: at most one block per change set, never
-  while Claude is already continuing because of a stop hook, and only to ask
-  for the review. If Claude stops again without one, or the review failed,
+  blocks once, telling Claude to run the review now. The two gates are the
+  exceptions in AGENTS.md invariant 6: at most one stop per change set each,
+  never while Claude is already continuing because of a stop hook, and only
+  to ask for Codex. If Claude stops again without one, or the review failed,
   the gate does not block again: it tells the user directly
   (``systemMessage``) that the change was not reviewed.
 
-A ``modelquad_delegate`` call that Codex answered starts the count again; one
-that was refused or failed marks the review failed. The hook never approves
+A review (``modelquad_delegate`` with task_type review or trigger
+review_gate) that Codex answered starts the count again; one that was refused
+or failed marks the review failed. Any other answered call counts as the
+change's consultation. The hook never approves
 or denies a tool call, never opens the transcript path Claude Code hands it,
 starts no process and never starts Codex.
 
@@ -85,6 +91,12 @@ CONSULT = (
     "architectural or security-relevant, consult Codex first: call `modelquad_delegate` "
     "with task_type architecture, trigger pre_change and the files involved, verify its "
     "advice, then continue. Skip it for a trivial edit.")
+CONSULT_GATE = (
+    "ModelQuad consultation gate: {why}, and Codex has not been consulted on this change. "
+    "Before this edit, call `modelquad_delegate` with task_type architecture, trigger "
+    "pre_change, your plan in the prompt and the files involved in `files`. Check its advice "
+    "against the code and the requirements, then make this edit again. If the call is "
+    "refused or Codex is unavailable, say so and go on: this gate stops a change only once.")
 GATE = (
     "ModelQuad review gate: this session changed {count} file(s){sensitive} and Codex has "
     "not reviewed them. Before you finish, call `modelquad_delegate` with task_type review, "
@@ -99,7 +111,11 @@ FAILED = ("ModelQuad: the Codex review of this change did not complete ({count} 
           "so it was not reviewed by Codex.")
 
 _EMPTY = {"files": [], "reminders": 0, "edits_since": 0, "sensitive": False,
-          "consulted": False, "gate": "none", "review": "none"}
+          "consulted": False, "consult_gate": False, "consult_reminded": False,
+          "skip_logged": 0, "gate": "none", "review": "none"}
+_CHANGE_RESET = {"files": [], "edits_since": 0, "reminders": 0, "sensitive": False,
+                 "consulted": False, "consult_gate": False, "consult_reminded": False,
+                 "skip_logged": 0, "gate": "none", "review": "none"}
 _GATES = ("none", "blocked", "reported")
 _REVIEWS = ("none", "done", "fixups", "failed")
 _EVENTS = ("PostToolUse", "PreToolUse", "Stop")
@@ -178,6 +194,9 @@ def _load(path: Path) -> dict:
             "edits_since": _count(payload.get("edits_since")),
             "sensitive": payload.get("sensitive") is True,
             "consulted": payload.get("consulted") is True,
+            "consult_gate": payload.get("consult_gate") is True,
+            "consult_reminded": payload.get("consult_reminded") is True,
+            "skip_logged": _count(payload.get("skip_logged")),
             "gate": payload.get("gate") if payload.get("gate") in _GATES else "none",
             "review": payload.get("review") if payload.get("review") in _REVIEWS else "none"}
 
@@ -239,6 +258,12 @@ def _review_failed(response) -> bool:
         "no_standing_grant"))
 
 
+def _is_review(tool_input) -> bool:
+    if not isinstance(tool_input, dict):
+        return False
+    return tool_input.get("task_type") == "review" or tool_input.get("trigger") == "review_gate"
+
+
 def _gate_event(cwd, session, event, files) -> None:
     from modelquad import review_ledger
 
@@ -253,16 +278,19 @@ def _context(event_name: str, text: str) -> str:
 
 def _stop(event, payload, cwd, session, standing) -> str | None:
     """The review gate's answer at Stop: a block, a message to the user, or None."""
-    if payload["review"] == "fixups":
-        # The change was reviewed and these edits fixed its findings. Close it.
-        payload.update(files=[], edits_since=0, reminders=0, sensitive=False, gate="none",
-                       review="none")
+    if payload["review"] in ("fixups", "done"):
+        # The change was reviewed (and these edits fixed its findings). Close it;
+        # later edits are a new change with its own consultation and review.
+        payload.update(_CHANGE_RESET, files=[])
         return None
-    if payload["review"] == "done":
-        payload["review"] = "none"  # The turn ended after a review; later edits are new work.
     count = len(payload["files"])
     pending = count >= THRESHOLD or (payload["sensitive"] and count >= 1)
-    if not pending or not (standing or _granted)(cwd):
+    if not pending:
+        if count and payload["skip_logged"] != count and (standing or _granted)(cwd):
+            payload["skip_logged"] = count
+            _gate_event(cwd, session, "skipped_small", count)
+        return None
+    if not (standing or _granted)(cwd):
         return None
     if payload["review"] == "failed":
         if payload["gate"] == "reported":
@@ -322,30 +350,55 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
             if tool not in EDIT_TOOLS:
                 return 0
             relative = _relative(event)
-            match = SENSITIVE.search(relative) if relative else None
-            if match is None:
+            if relative is None:
                 return 0
             payload = _load(record) if record.exists() else dict(_EMPTY, files=[])
-            if payload["consulted"] or payload["review"] == "done":
+            if payload["consulted"] or payload["review"] in ("done", "fixups"):
                 return 0
-            chosen = (mode or _codex_allowed_mode)(cwd)
-            if chosen != "decide" and not (standing or _granted)(cwd):
+            match = SENSITIVE.search(relative)
+            grows = (_digest(relative.casefold()) not in payload["files"]
+                     and len(payload["files"]) >= THRESHOLD - 1)
+            if match is None and not grows:
                 return 0
-            payload["consulted"] = True
-            _save(record, payload)
-            _gate_event(cwd, session, "consult_reminded", None)
-            kind = match.group(0).strip("/") or relative
-            output = _context("PreToolUse", CONSULT.format(kind=kind[:60]))
-        elif is_delegate:
-            if not record.exists():
-                return 0
-            payload = _load(record)
-            if _review_failed(event.get("tool_response")):
-                payload["review"] = "failed"
+            if (standing or _granted)(cwd):
+                if payload["consult_gate"]:
+                    return 0  # This change was stopped once already.
+                payload["consult_gate"] = True
+                _save(record, payload)
+                _gate_event(cwd, session, "consult_blocked", len(payload["files"]))
+                why = ("this edit changes a sensitive file" if match is not None
+                       else f"this edit makes the change {len(payload['files']) + 1} files")
+                output = json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": CONSULT_GATE.format(why=why)}},
+                    separators=(",", ":")) + "\n"
             else:
-                if payload["gate"] == "blocked":
-                    _gate_event(cwd, session, "review_done", len(payload["files"]))
-                payload = dict(_EMPTY, files=[], consulted=payload["consulted"], review="done")
+                if match is None or payload["consult_reminded"]:
+                    return 0
+                if (mode or _codex_allowed_mode)(cwd) != "decide":
+                    return 0
+                payload["consult_reminded"] = True
+                _save(record, payload)
+                _gate_event(cwd, session, "consult_reminded", None)
+                kind = match.group(0).strip("/") or relative
+                output = _context("PreToolUse", CONSULT.format(kind=kind[:60]))
+        elif is_delegate:
+            payload = _load(record) if record.exists() else dict(_EMPTY, files=[])
+            failed = _review_failed(event.get("tool_response"))
+            if _is_review(event.get("tool_input")):
+                if failed:
+                    payload["review"] = "failed"
+                else:
+                    if payload["gate"] == "blocked":
+                        _gate_event(cwd, session, "review_done", len(payload["files"]))
+                    payload.update(files=[], edits_since=0, reminders=0, sensitive=False,
+                                   gate="none", review="done", skip_logged=0)
+            else:
+                # A consultation: it counts for this change once Codex answered.
+                _gate_event(cwd, session, "consult_failed" if failed else "consult_done",
+                            len(payload["files"]))
+                if not failed:
+                    payload["consulted"] = True
             _save(record, payload)
             return 0
         elif tool in RUN_TOOLS:

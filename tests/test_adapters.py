@@ -200,8 +200,8 @@ def test_installed_host_instructions_state_the_advisory_contract(tmp_path, adapt
         assert "asks the user before" in flat, name
         assert "read-only" in flat, name
         assert re.search(r"not (?:as )?instructions", flat), name
-        # Writing changes belongs to OpenAI's Codex plugin, not to ModelQuad.
-        assert "`/codex:rescue`" in flat, name
+        # Claude writes the code; Codex through ModelQuad only reads and advises.
+        assert "Claude makes the code changes itself" in flat, name
         # Unchanged obligations: the worker guard and job scoping.
         assert "MODELQUAD_WORKER=1" in flat, name
         assert "`modelquad_job_*`" in flat and "absolute project directory" in flat, name

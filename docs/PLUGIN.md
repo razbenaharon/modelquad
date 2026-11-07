@@ -29,11 +29,12 @@ available for a setup without it (README, "Without the plugin").
   anything.
 - **The review reminder and review gate** (`modelquad hook-review claude`, on
   PostToolUse, PreToolUse and Stop). It counts the files Claude changes under
-  the session folder (as digests), reminds Claude of the review moment when
-  it runs the tests, asks for a consultation before a sensitive file changes,
-  and, only in a folder with the standing grant, stops Claude once to ask for
-  a Codex review before a multi-file change is handed over. It never approves
-  or denies a tool call ([PRIVACY.md](../PRIVACY.md)).
+  the session folder (as digests) and reminds Claude of the review moment when
+  it runs the tests. Only in a folder with the standing grant, it stops the
+  first edit of a sensitive file, or the edit that makes the change three
+  files, once until Codex is consulted, and stops Claude once to ask for a
+  Codex review before a multi-file change is handed over. It never approves a
+  tool call ([PRIVACY.md](../PRIVACY.md)).
 
 - **A quota band** (`plugin/hooks/quota-band.tsx`, a Claude Code hooks
   module). Where no status line is drawn (the desktop app's

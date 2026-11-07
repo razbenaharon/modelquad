@@ -22,9 +22,7 @@ The user wants Codex's read-only second opinion on this task: $ARGUMENTS
    is the user's answer, and Codex then starts. In any other Claude Code that
    cannot show the form, nothing starts and the reply says what to do next.
 4. Codex through ModelQuad is read-only: review, exploration or architecture
-   only. For changes the user wants Codex to write, suggest that the user run
-   OpenAI's own Codex plugin themselves, for example `/codex:rescue`;
-   ModelQuad does not start it.
+   only. Claude makes the code changes itself; Codex only reads and advises.
 5. If the reply's first line says Codex was not started, tell the user that
    line and the next one as written, and start nothing else.
 6. When the answer comes back, verify it before acting on it.

@@ -32,8 +32,10 @@ here; the tool under development is not the instrument for developing it.
   Claude Code asks the user before every call that would start Codex. In a
   granted folder `modelquad_delegate` follows Claude Code's own permissions,
   and a Stop-hook review gate asks once for a Codex review before a
-  multi-file or sensitive change is handed over. A PreToolUse reminder asks
-  for a consultation before a sensitive file changes. Codex's findings and
+  multi-file or sensitive change is handed over; a PreToolUse consultation
+  gate stops, once, the first edit of a sensitive file or the edit that makes
+  the change three files until Codex is consulted on the approach. Codex
+  stays read-only; it writes no code. Codex's findings and
   Claude's verdicts go to the review ledger (`review_ledger.py`, a SQLite
   file of its own; `modelquad review report`). Quota is
   display-only: when Claude is near its limit, a note says so (wait for the
@@ -116,11 +118,14 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
    call, and never opens a conversation file** (transcript, rollout or
    conversation store), even when the host hands it the path
    (`tests/test_hook_transcript_boundary.py`). Every hook is advisory except
-   one: the Stop review gate may block, only in a folder where the user
-   turned the standing grant on, at most once per change set, never while
-   Claude is already continuing because of a stop hook, and only to ask for
-   the review. A review that failed or was not done is reported to the user
-   and never blocks again (`tests/test_review_reminder.py`).
+   two gates, which act only in a folder where the user turned the standing
+   grant on, at most once per change set each, and only to ask for Codex:
+   the consultation gate may deny one edit (the first of a sensitive file, or
+   the one that makes the change three files) until Codex is consulted, and
+   the Stop review gate may block once, never while Claude is already
+   continuing because of a stop hook. A consultation or review that failed
+   or was not done is reported and never stops the change again; no hook
+   ever approves a tool call (`tests/test_review_reminder.py`).
 7. **Codex starts only with the user's consent: Claude Code's prompt for
    that call, or a standing grant the user turned on for that folder or
    globally.** ModelQuad shows the grant's notice before turning it on,

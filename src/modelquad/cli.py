@@ -1294,7 +1294,10 @@ def review_report_lines(data: dict, *, all_projects: bool = False) -> list[str]:
         f"  Acted on although refuted: {f['refuted_but_acted_on']}",
         f"  Review gate: asked {gate.get('blocked', 0)}, review done after asking "
         f"{gate.get('review_done', 0)}, not done and reported {gate.get('not_done_reported', 0)}, "
-        f"review failed {gate.get('review_failed', 0)}, consult reminders {gate.get('consult_reminded', 0)}",
+        f"review failed {gate.get('review_failed', 0)}, small changes skipped {gate.get('skipped_small', 0)}",
+        f"  Consultation gate: stopped {gate.get('consult_blocked', 0)}, consulted "
+        f"{gate.get('consult_done', 0)}, consultation failed {gate.get('consult_failed', 0)}, "
+        f"reminders {gate.get('consult_reminded', 0)}",
     ]
     if f["by_user"]:
         lines.append(f"  Your own verdicts: {f['by_user']}")

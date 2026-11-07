@@ -76,7 +76,7 @@ def test_a_codex_call_starts_the_count_again(tmp_path):
     for name in ("a", "b", "c"):
         _run(tmp_path, _event(path=f"C:/proj/{name}.py"))
     assert _run(tmp_path, _event(tool="mcp__plugin_modelquad_modelquad__modelquad_delegate",
-                                 tool_input={})) == ""
+                                 tool_input={"task_type": "review"})) == ""
     for name in ("d", "e"):
         _run(tmp_path, _event(path=f"C:/proj/{name}.py"))
     assert _run_tests(tmp_path) == ""
@@ -191,7 +191,8 @@ def _edits(tmp_path, *names):
 
 def _delegate(tmp_path, response):
     return _run(tmp_path, _event(tool="mcp__plugin_modelquad_modelquad__modelquad_delegate",
-                                 tool_input={}, tool_response=response))
+                                 tool_input={"task_type": "review", "trigger": "review_gate"},
+                                 tool_response=response))
 
 
 def test_the_gate_blocks_once_then_tells_the_user(tmp_path):
@@ -294,3 +295,68 @@ def test_fixes_after_a_review_are_not_reported_as_unreviewed(tmp_path):
     # The next change set starts clean and gets its own gate.
     _edits(tmp_path, "e.py", "f.py", "g.py")
     assert json.loads(_stop(tmp_path))["decision"] == "block"
+
+
+# ------------------------------------------------------- consultation gate
+
+
+def _consult(tmp_path, failed=False):
+    text = "Codex was not started." if failed else "Use a Decimal for money."
+    return _run(tmp_path, _event(tool="mcp__plugin_modelquad_modelquad__modelquad_delegate",
+                                 tool_input={"task_type": "architecture", "trigger": "pre_change"},
+                                 tool_response=[{"type": "text", "text": text}]))
+
+
+def _denied(output):
+    inner = json.loads(output)["hookSpecificOutput"]
+    assert inner["hookEventName"] == "PreToolUse" and inner["permissionDecision"] == "deny"
+    assert "trigger pre_change" in inner["permissionDecisionReason"]
+    return inner["permissionDecisionReason"]
+
+
+def test_a_sensitive_edit_is_stopped_once_until_codex_is_consulted(tmp_path):
+    assert "sensitive file" in _denied(_pre(tmp_path, "C:/proj/src/auth.py", granted=True))
+    # Stopped once per change: the retry goes ahead even without a consultation.
+    assert _pre(tmp_path, "C:/proj/src/auth.py", granted=True) == ""
+
+
+def test_the_edit_that_makes_three_files_is_stopped_once(tmp_path):
+    _edits(tmp_path, "a.py", "b.py")
+    assert _pre(tmp_path, "C:/proj/a.py", granted=True) == ""  # a file already in the change
+    assert "3 files" in _denied(_pre(tmp_path, "C:/proj/c.py", granted=True))
+    assert _pre(tmp_path, "C:/proj/c.py", granted=True) == ""
+
+
+def test_a_consultation_before_the_edit_passes_the_gate(tmp_path):
+    _consult(tmp_path)
+    assert _pre(tmp_path, "C:/proj/src/auth.py", granted=True) == ""
+    _edits(tmp_path, "a.py", "b.py")
+    assert _pre(tmp_path, "C:/proj/c.py", granted=True) == ""
+
+
+def test_a_failed_consultation_does_not_count_and_does_not_stop_twice(tmp_path):
+    _denied(_pre(tmp_path, "C:/proj/src/auth.py", granted=True))
+    _consult(tmp_path, failed=True)
+    assert _pre(tmp_path, "C:/proj/src/auth.py", granted=True) == ""
+
+
+def test_without_a_grant_the_consultation_is_only_a_reminder(tmp_path):
+    out = _pre(tmp_path, "C:/proj/src/auth.py", granted=False)
+    assert "permissionDecision" not in out and "additionalContext" in out
+    _edits(tmp_path, "a.py", "b.py")
+    assert _pre(tmp_path, "C:/proj/c.py", granted=False) == ""
+
+
+def test_a_new_change_after_a_reviewed_one_gets_its_own_consultation(tmp_path):
+    _consult(tmp_path)
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _delegate(tmp_path, {"content": [{"type": "text", "text": "FINDINGS: none"}]})
+    assert _stop(tmp_path) == ""
+    _edits(tmp_path, "d.py", "e.py")
+    _denied(_pre(tmp_path, "C:/proj/f.py", granted=True))
+
+
+def test_the_gate_never_allows_a_tool_call(tmp_path):
+    _edits(tmp_path, "a.py", "b.py")
+    for path in ("C:/proj/c.py", "C:/proj/install.ps1", "C:/proj/readme.md"):
+        assert '"allow"' not in _pre(tmp_path, path, granted=True)

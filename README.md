@@ -134,7 +134,11 @@ Status: early, source-only release. Windows only.
   again" the first time Claude Code asks.
 - In a granted repository Claude consults Codex before a large,
   architectural or sensitive change, and asks for a review when a change of
-  three files or more (or one sensitive file) is done. If Claude stops
+  three files or more (or one sensitive file) is done. The consultation is
+  enforced: the first edit of a sensitive file, or the edit that makes the
+  change three files, is stopped once until Codex was consulted. A change
+  that grows to three files is caught at its third file, not before its
+  first: ModelQuad cannot see a plan Claude has not yet carried out. If Claude stops
   without one, the review gate stops it once and asks for the review. If
   Codex fails or is unavailable, Claude says so, and ModelQuad tells you
   directly that the change was not reviewed. The gate never blocks twice.

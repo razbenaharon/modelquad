@@ -176,14 +176,16 @@ What it does not protect:
 - At most one active attempt per request is allowed. A unique index in the
   database enforces it.
 
-**Hooks ModelQuad installs.** They never approve or deny a Claude Code tool
-call, and they never open a conversation transcript, even when Claude Code
+**Hooks ModelQuad installs.** They never approve a Claude Code tool call, and
+they never open a conversation transcript, even when Claude Code
 passes its path (`tests/test_hook_transcript_boundary.py`). All are advisory
-except the Stop review gate: in a folder with the standing grant, it may
-block Claude once per change set to ask for a Codex review, never while
-Claude is already continuing for a stop hook; a review that failed or was
-not done is told to the user and never blocks again
-(`tests/test_review_reminder.py`).
+except two gates, only in a folder with the standing grant and at most once
+per change set each: the consultation gate may deny one edit (the first of a
+sensitive file, or the one that makes the change three files) until Codex is
+consulted, and the Stop review gate may block Claude once to ask for a Codex
+review, never while Claude is already continuing for a stop hook. A
+consultation or review that failed or was not done is told to the user and
+never stops the change again (`tests/test_review_reminder.py`).
 
 **Credentials.** ModelQuad does not extract or proxy provider credentials. The
 Codex CLI and Claude Code use their own logins. Two kinds of files can still

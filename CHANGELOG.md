@@ -19,7 +19,9 @@ The first open-source release.
   outranks it, and turning it off refuses the next call.
 - **The review gate.** In a granted repository, a Stop hook asks once for a
   Codex review before a change of three or more files, or of one sensitive
-  file, is handed over. A review that failed or was not done is reported to
+  file, is handed over, and a consultation gate stops the first edit of a
+  sensitive file, or the edit that makes the change three files, once until
+  Codex is consulted on the approach. A review that failed or was not done is reported to
   you, never claimed.
 - **Reasoned findings.** Each Codex finding carries its location (line or
   range when one applies), claim, reasoning, severity and Codex's confidence
