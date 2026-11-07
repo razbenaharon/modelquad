@@ -61,8 +61,9 @@ def test_plugin_ships_no_permissions_and_only_the_reminder_hooks():
     config = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     assert config["modules"] == ["./quota-band.tsx"]
     hooks = config["hooks"]
-    # The startup reminder, and the review reminder (tests/test_review_reminder.py).
-    assert set(hooks) == {"SessionStart", "PostToolUse"}
+    # The startup reminder, and the review reminder, consultation reminder and
+    # review gate (tests/test_review_reminder.py).
+    assert set(hooks) == {"SessionStart", "PostToolUse", "PreToolUse", "Stop"}
     (entry,) = hooks["SessionStart"]
     (hook,) = entry["hooks"]
     assert hook["command"] == "modelquad" and hook["args"] == ["hook-pending", "claude"]

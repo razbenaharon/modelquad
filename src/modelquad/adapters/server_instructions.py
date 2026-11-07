@@ -35,9 +35,10 @@ _INTRO = (
     "ModelQuad, Codex cannot write files or run shell commands."
 )
 _WHEN = (
-    "These moments call for Codex: a change that touched several files is complete, "
-    "before your final message on it; before a commit or PR; a bug survived one fix "
-    "attempt; a design choice has real trade-offs. A small, routine change needs none. "
+    "These moments call for Codex: before a large, architectural or security-sensitive "
+    "change (trigger pre_change); a change that touched several files is complete, before "
+    "your final message on it (trigger review_gate); before a commit or PR; a bug survived "
+    "one fix attempt; a design choice has real trade-offs. A small, routine change needs none. "
 )
 _OFFER = _WHEN + (
     "At such a moment, offer the user a Codex review in one short sentence. Call "
@@ -48,6 +49,17 @@ _DECIDE = _WHEN + (
     "At such a moment, call `modelquad_delegate` yourself; do not wait for the user to "
     "ask, and do not ask them first. Claude Code asks the user before each ModelQuad "
     "Codex call. That prompt is their choice."
+)
+_STANDING = _WHEN + (
+    "At such a moment, call `modelquad_delegate` yourself; do not wait for the user to "
+    "ask. In this project the user turned on a standing grant, so these calls run without "
+    "Claude Code's per-call prompt, and a review is required before you hand over a change "
+    "that touched several files."
+)
+_VERIFY = (
+    "Verify each finding against the code or a test before changing anything, then record "
+    "your decisions with `modelquad_review_verdict`. If Codex fails or is unavailable, say "
+    "plainly that the review was not done; never claim it was."
 )
 _FILES = (
     "Pass the files you want Codex to read in `files` (paths relative to the working "
@@ -200,9 +212,14 @@ def write_claude_plugin(enabled: bool, path: Path | None = None) -> Path:
     return target
 
 
-def server_instructions(proactive: bool | None = None) -> str:
-    """The MCP server's ``instructions``: short, and under Claude Code's 4,096-character cut."""
+def server_instructions(proactive: bool | None = None, standing: bool = False) -> str:
+    """The MCP server's ``instructions``: short, and under Claude Code's 4,096-character cut.
+
+    ``standing``: the session started in a folder with the user's standing grant
+    (grant.py). Claude then decides, whatever the proactive setting says.
+    """
 
     if proactive is None:
         proactive = read_proactive()
-    return "\n\n".join((_INTRO, _DECIDE if proactive else _OFFER, _FILES, *_REST))
+    when = _STANDING if standing else (_DECIDE if proactive else _OFFER)
+    return "\n\n".join((_INTRO, when, _VERIFY, _FILES, *_REST))

@@ -11,6 +11,10 @@ import sys
 
 import pytest
 
+# The MCP server reads the user's standing grant when it is imported (grant.py).
+# A grant on the developer's own machine must never change what the suite sees.
+os.environ["MODELQUAD_NO_STANDING_GRANT"] = "1"
+
 from modelquad import paths
 
 if sys.platform == "win32":

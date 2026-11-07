@@ -1184,6 +1184,122 @@ def _run_proactive_setting(enabled: bool) -> int:
     return 0
 
 
+def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
+    """Turn the standing grant on or off (grant.py), after its notice and a typed yes."""
+    from . import grant
+    from .disclosure import DATA_FLOW, print_lines
+
+    folder = None if args.everywhere else Path(args.project or Path.cwd())
+    if folder is not None and not folder.is_dir():
+        print(f"The folder does not exist: {folder}", file=sys.stderr)
+        return 2
+    if args.choice == "status":
+        on = grant.granted(folder)
+        print("Standing grant: " + ("on" if on else "off")
+              + ("" if folder is None else " for this repository"))
+        if on and folder is not None and not grant.allows(folder):
+            print("Codex is off in this repository, which outranks the grant.")
+        return 0
+    if args.choice == "on":
+        print_lines((*DATA_FLOW, *grant.NOTICE))
+        if not args.consent:
+            if not sys.stdin or not sys.stdin.isatty():
+                print("Not changed. After reading the notice above, run again with --yes.",
+                      file=sys.stderr)
+                return 2
+            try:
+                answer = input_fn("Type yes to turn the standing grant on: ")
+            except (EOFError, KeyboardInterrupt):
+                answer = ""
+            if answer.strip().lower() != "yes":
+                print("Not changed.", file=sys.stderr)
+                return 2
+    try:
+        scope = grant.write(args.choice == "on", directory=folder, everywhere=args.everywhere)
+    except (OSError, ValueError) as exc:
+        print(f"The setting was not saved: {getattr(exc, 'strerror', None) or exc}", file=sys.stderr)
+        return 1
+    if args.choice == "on":
+        print(f"Standing grant: on, for {scope}.")
+        print("For Claude Code to skip its prompt, add this rule to permissions.allow in your "
+              "Claude Code settings (or answer \"don't ask again\" on the first prompt):")
+        print("  " + grant.ALLOW_RULE)
+        print("Takes effect in new Claude Code sessions.")
+    else:
+        print(f"Standing grant: off, for {scope}. Codex calls ask you again in new sessions; "
+              "a session that started with the grant refuses its next call.")
+    return 0
+
+
+def _run_review_command(args: argparse.Namespace) -> int:
+    """``modelquad review report`` and ``modelquad review verdict``."""
+    from . import review_ledger
+
+    if args.review_action == "verdict":
+        try:
+            count = review_ledger.record_verdicts(args.decision_id, [{
+                "finding": args.finding, "verdict": args.verdict, "evidence": args.evidence,
+                "action": args.action, "note": args.note}], source="user")
+        except review_ledger.VerdictRefused as exc:
+            print(f"Not recorded: {exc}", file=sys.stderr)
+            return 2
+        except (OSError, sqlite3.Error, review_ledger.LedgerVersionError) as exc:
+            print(f"Not recorded: {exc}", file=sys.stderr)
+            return 1
+        print(f"Recorded your verdict ({count}). Your word outranks Claude's in the report.")
+        return 0
+    workspace = None if args.all_projects else review_ledger.workspace_id(
+        Path(args.project or Path.cwd()))
+    try:
+        data = review_ledger.report(days=args.days, workspace=workspace)
+    except (OSError, sqlite3.Error, review_ledger.LedgerVersionError) as exc:
+        print(f"The review ledger could not be read: {exc}", file=sys.stderr)
+        return 1
+    if args.as_json:
+        print(json.dumps(data, indent=2, sort_keys=True))
+        return 0
+    for line in review_report_lines(data, all_projects=args.all_projects):
+        print(line)
+    return 0
+
+
+def review_report_lines(data: dict, *, all_projects: bool = False) -> list[str]:
+    """The review report as plain lines. Unknown stays unknown."""
+    def value(item, unit=""):
+        return "unknown" if item is None else f"{item}{unit}"
+
+    f = data["findings"]
+    outcomes = ", ".join(f"{name} {count}" for name, count in sorted(data["runs_by_outcome"].items())) or "none"
+    triggers = ", ".join(f"{name} {count}" for name, count in sorted(data["runs_by_trigger"].items())) or "none"
+    gate = data["gate"]
+    lines = [
+        f"Codex reviews and consultations, last {data['days']:g} days"
+        + (" (all projects)" if all_projects else " (this project)"),
+        f"  Calls: {data['runs']} ({outcomes})",
+        f"  Why: {triggers}",
+        f"  Time: median {value(data['median_seconds'], ' s')}, total {value(data['total_seconds'], ' s')}",
+        f"  Codex tokens: in {value(data['input_tokens'])}, out {value(data['output_tokens'])}",
+        f"  Findings: {f['findings']}"
+        + (f" (and {data['runs_with_unknown_findings']} answer(s) not in the findings format)"
+           if data["runs_with_unknown_findings"] else ""),
+        f"    Confirmed with independent evidence (test, reproduction, CI or your verdict): "
+        f"{f['confirmed_independent']}",
+        f"    Confirmed by Claude's reading only (not proof): {f['confirmed_claude_only']}",
+        f"    Wrong (refuted): {f['refuted']}",
+        f"    Could not be decided: {f['undecidable']}",
+        f"    Not judged yet: {f['unjudged']}",
+        f"  Fixed after a finding: {f['fixed']} (fix verified by a test or reproduction: "
+        f"{f['fixed_and_verified']})",
+        f"  Acted on although refuted: {f['refuted_but_acted_on']}",
+        f"  Review gate: asked {gate.get('blocked', 0)}, review done after asking "
+        f"{gate.get('review_done', 0)}, not done and reported {gate.get('not_done_reported', 0)}, "
+        f"review failed {gate.get('review_failed', 0)}, consult reminders {gate.get('consult_reminded', 0)}",
+    ]
+    if f["by_user"]:
+        lines.append(f"  Your own verdicts: {f['by_user']}")
+    return lines
+
+
 def _background_work_consented(args: argparse.Namespace, *, input_fn=input) -> bool:
     """Separate, explicit consent before the job runner is turned on.
 
@@ -1858,6 +1974,17 @@ def build_parser() -> argparse.ArgumentParser:
                           help="The project whose own Codex choice the page shows (default: the current folder).")
     open_cmd.add_argument('--no-browser', action='store_true',
                           help='Print the page address instead of opening the browser.')
+    auto_cmd = settings_actions.add_parser(
+        'auto',
+        help="The standing grant: let Claude ask Codex without Claude Code's prompt for each "
+        'call, in this repository (or every folder with --global). status shows it.')
+    auto_cmd.add_argument('choice', choices=('on', 'off', 'status'))
+    auto_cmd.add_argument('--project', metavar='DIR',
+                          help='The project folder (default: the current folder).')
+    auto_cmd.add_argument('--global', action='store_true', dest='everywhere',
+                          help='Every folder, instead of one repository.')
+    auto_cmd.add_argument('--yes', action='store_true', dest='consent',
+                          help='Confirm you have read the notice (needed when not typing at a prompt).')
     repo_cmd = settings_actions.add_parser(
         'repo',
         help='Your own Codex setting for one repository: on (Claude may decide on its own), '
@@ -2086,6 +2213,28 @@ def build_parser() -> argparse.ArgumentParser:
             "e.g. --detail execution:42. Ignores every other filter/limit flag."
         ),
     )
+    review_cmd = subcommands.add_parser(
+        "review", help="What Codex's reviews found, what was verified and what it cost.")
+    review_actions = review_cmd.add_subparsers(dest="review_action", required=True)
+    review_report_cmd = review_actions.add_parser(
+        "report", help="Calls, findings by verdict and evidence, fixes, time and tokens.")
+    review_report_cmd.add_argument('--project', metavar='DIR',
+                                   help='The project folder (default: the current folder).')
+    review_report_cmd.add_argument('--all-projects', action='store_true',
+                                   help='Every project instead of one.')
+    review_report_cmd.add_argument('--days', type=float, default=30.0,
+                                   help='The period in days (default: 30).')
+    review_report_cmd.add_argument('--json', action='store_true', dest='as_json', help='Print JSON.')
+    review_verdict_cmd = review_actions.add_parser(
+        "verdict", help="Record your own verdict on one finding; it outranks Claude's.")
+    review_verdict_cmd.add_argument("decision_id")
+    review_verdict_cmd.add_argument("finding", help="The finding's reference, such as F1.")
+    review_verdict_cmd.add_argument("verdict", choices=("confirmed", "refuted", "undecidable"))
+    review_verdict_cmd.add_argument("--evidence", default="none",
+                                    choices=("test", "reproduced", "ci", "code_reading", "none"))
+    review_verdict_cmd.add_argument("--action", default="no_change",
+                                    choices=("fixed", "no_change", "deferred"))
+    review_verdict_cmd.add_argument("--note", help="A short reason, no code.")
     split_cmd = subcommands.add_parser(
         "split", help="What happened after the work: Codex requests and quota per window.")
     split_actions = split_cmd.add_subparsers(dest="split_action", required=True)
@@ -2196,6 +2345,10 @@ def _run_command(argv: Sequence[str] | None) -> int:
         return _run_proactive_setting(args.choice == 'on')
     if args.command == 'settings' and args.settings_action == 'repo':
         return _run_repo_setting(args.choice, args.project)
+    if args.command == 'settings' and args.settings_action == 'auto':
+        return _run_auto_setting(args)
+    if args.command == 'review':
+        return _run_review_command(args)
     if args.command == 'settings' and args.settings_action == 'open':
         return _run_settings_page(args.project, no_browser=args.no_browser)
     if args.command == 'settings' and args.settings_action == 'plan':

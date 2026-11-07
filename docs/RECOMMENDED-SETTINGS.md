@@ -152,7 +152,9 @@ which servers may run at all, use an allowlist with
 
 What makes a person approve each Codex call is Claude Code's own
 approval prompt: both tools that start Codex are marked as requiring user
-interaction, which no allow rule or mode skips. The extra confirmation form
+interaction, which no allow rule or mode skips, unless you turn the standing
+grant on for a folder (`modelquad settings auto on`): sessions there register
+`modelquad_delegate` without that mark, and your allow rule applies. The extra confirmation form
 the handoff tool shows is a second check, not the main one.
 
 See Claude Code's documentation on managed settings and on controlling MCP

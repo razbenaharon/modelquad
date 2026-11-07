@@ -1168,7 +1168,11 @@ INSTRUCTION = ("\nYou have no command or file tools. Work only from the supplied
                "Cite file paths and line numbers, state missing context and hypotheses, "
                "and propose verification steps for the Host. Diagnosis is not verification. "
                "<credential> marks a value ModelQuad redacted before sending; it is not in the "
-               "real file and is not a defect.\n")
+               "real file and is not a defect. "
+               "List each concrete problem you find on its own line, exactly as: "
+               "FINDING F1 | high|medium|low | relative/path.ext:line | category | claim "
+               "(category one word such as bug, security, correctness, test-gap, design, perf). "
+               "If you find none, write the line: FINDINGS: none\n")
 
 
 def supplied_prompt(prompt, workspace, *, files=(), completion_protocol=False, diagnostics=None,

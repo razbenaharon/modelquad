@@ -15,9 +15,17 @@ def test_release_tools_are_small_and_delegation_requires_interaction():
         "modelquad_job_list_pending", "modelquad_doctor", "modelquad_usage_refresh",
         "modelquad_activity", "modelquad_activity_detail",
         "modelquad_handoff_confirm", "modelquad_handoff_wait", "modelquad_split",
+        "modelquad_review_verdict",
     }
+    # Without the user's standing grant (grant.py; the suite never has one),
+    # Claude Code prompts for every call. tests/test_standing_grant.py covers
+    # the session that starts in a granted folder.
     for name in ("modelquad_delegate", "modelquad_handoff"):
         assert tools[name].meta["anthropic/requiresUserInteraction"] is True
+    # Recording verdicts starts nothing and writes only the local ledger.
+    verdict = tools["modelquad_review_verdict"]
+    assert "anthropic/requiresUserInteraction" not in (verdict.meta or {})
+    assert verdict.annotations.open_world_hint is False
     # The wait tool starts Codex only after the approval page's button, which
     # only the page can press: the confirm tool is kept from the model.
     assert tools["modelquad_handoff_confirm"].meta["ui"]["visibility"] == ["app"]

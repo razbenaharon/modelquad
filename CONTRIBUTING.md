@@ -65,7 +65,8 @@ development is not the tool for developing it.
 
 [AGENTS.md](AGENTS.md) lists safety invariants, for example: a worker never
 starts another worker, unknown values stay unknown, ModelQuad does not
-extract or proxy provider credentials, installed hooks are advisory only, and
+extract or proxy provider credentials, installed hooks never approve or deny a tool call and only the review gate
+may block, and
 every call that starts Codex asks the user. A change must not weaken them. If
 you think one is wrong, open an issue.
 

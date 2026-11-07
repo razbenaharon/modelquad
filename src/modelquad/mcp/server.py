@@ -119,6 +119,15 @@ class WorkerGuardMCPServer(MCPServer):
 # The model guidance lives here, not in the user's global CLAUDE.md: Claude
 # Code reads a server's instructions at session start (adapters/server_instructions.py).
 from ..adapters.server_instructions import server_instructions as _server_instructions
+from .. import grant as _grant
+
+#: Whether this Claude Code session started in a folder where the user turned
+#: the standing grant on (grant.py). Read once: a tool's metadata is fixed when
+#: the server starts. Each call still re-checks the grant for its own folder.
+_STANDING_GRANT = _grant.active_at_start()
+#: Without a standing grant, Claude Code shows its approval prompt for every
+#: call (AGENTS.md invariant 7); with one, its ordinary permissions apply.
+_DELEGATE_META = None if _STANDING_GRANT else {"anthropic/requiresUserInteraction": True}
 
 #: Tools that only read local state. Claude Code may run these in parallel and
 #: retry them after a dropped connection. Never give this to a tool that starts
@@ -142,7 +151,8 @@ _apps.add_html_resource(handoff_widget.URI, handoff_widget.HTML, name="modelquad
                         title="Ask Codex for a read-only second opinion")
 
 server = WorkerGuardMCPServer(MCP_SERVER_NAME, version=current_build_info().identity,
-                              instructions=_server_instructions(), extensions=[_apps])
+                              instructions=_server_instructions(standing=_STANDING_GRANT),
+                              extensions=[_apps])
 
 # Where every tool reads its configuration and its quota snapshots. The model
 # names neither: a tool that took a settings file let the Host's
@@ -1743,6 +1753,31 @@ def _report_needed_files(payload: dict[str, Any], working_directory: str) -> Non
         payload["files_needed_note"] = noshell.NEEDED_FILES_NOTE
 
 
+FINDINGS_NOTE = (
+    "Verify each finding against the code or a test before changing anything; Codex did "
+    "not see the conversation and can be wrong. Then record what you decided with "
+    "modelquad_review_verdict (this decision_id, one entry per finding).")
+
+
+def _record_review(payload: dict[str, Any], working_directory: str, task_type: str, trigger: str) -> None:
+    """Record the call and its findings in the review ledger, and list the findings in the reply.
+
+    A ledger that cannot be written never fails the reply; the reply then says so.
+    """
+    from .. import review_ledger
+
+    try:
+        findings = review_ledger.record_run(payload, working_directory=working_directory,
+                                            task_type=task_type, trigger=trigger)
+    except Exception:  # noqa: BLE001 -- the answer matters more than its record
+        payload["findings_note"] = "ModelQuad could not record this call in its review ledger."
+        return
+    if findings:
+        payload["findings"] = [{"finding": item.ref, "severity": item.severity, "file": item.file,
+                                "line": item.line, "category": item.category} for item in findings]
+        payload["findings_note"] = FINDINGS_NOTE
+
+
 def _delegate_completion_notice(payload: dict[str, Any]) -> str:
     """Return a closed, content-free terminal phase for one inline call.
 
@@ -1758,7 +1793,7 @@ def _delegate_completion_notice(payload: dict[str, Any]) -> str:
     return "Codex answered" if isinstance(payload.get("output"), str) and payload["output"] else "Codex answer withheld"
 
 
-@server.tool(title="Ask Codex for a read-only second opinion", annotations=STARTS_CODEX, meta={"anthropic/requiresUserInteraction": True})
+@server.tool(title="Ask Codex for a read-only second opinion", annotations=STARTS_CODEX, meta=_DELEGATE_META)
 async def modelquad_delegate(
     task_type: str,
     prompt: str,
@@ -1769,11 +1804,14 @@ async def modelquad_delegate(
     ctx: Context | None = None,
     capsule: dict | None = None,
     files: FilesArgument = None,
+    trigger: str = "claude",
 ) -> CallToolResult:
     """Ask read-only Codex for a review, exploration, or architecture opinion.
     Codex sees only the task text and the files listed in `files` (paths relative to
     working_directory, at most 32); a path named only in the task text is not sent.
-    Claude Code asks the user before every call; quotas only inform the reply."""
+    `trigger` says why: review_gate, pre_change, user or claude.
+    Without the user's standing grant Claude Code asks before every call; quotas only
+    inform the reply."""
     if isinstance(capsule, dict) and "action_authority" in capsule:
         raise ToolError("capsule action authority is not accepted")
     files = _checked_files(files)
@@ -1782,6 +1820,12 @@ async def modelquad_delegate(
     unusable = None if _worker_refused() else _unusable_directory(working_directory)
     if unusable is not None:
         return unusable
+    if _STANDING_GRANT and not _worker_refused() and not _grant.allows(working_directory):
+        # Registered without Claude Code's per-call prompt: a folder without a
+        # grant (or a grant turned off since) gets nothing, by no other route.
+        return _refused_result({"delegated": False, "executed": False, "refused": True,
+                                "started": False, "recorded": False,
+                                "reason": _grant.NO_GRANT, "message": _grant.NO_GRANT_MESSAGE})
     first = _notice_before_first_call(task_type, working_directory, files)
     if first is not None:
         return first
@@ -1828,6 +1872,8 @@ async def modelquad_delegate(
         if "job_id" not in payload:
             await progress.report(_delegate_completion_notice(payload))
     _report_files(payload, prompt, working_directory, files)
+    if "job_id" not in payload:
+        _record_review(payload, working_directory, task_type, trigger)
     if "job_id" in payload:
         # A job response has its own evidence shape. Legacy presentation
         # expects process fields that the output seam deliberately cannot claim.
@@ -1849,13 +1895,54 @@ async def modelquad_delegate(
     visible = {key: payload.get(key) for key in ("task_type", "provider", "status", "partial", "output",
                                                  "sent_files", "skipped_files", "codex_account",
                                                  "suggested_files", "files_needed",
-                                                 "files_needed_note")
+                                                 "files_needed_note", "decision_id", "findings",
+                                                 "findings_note")
                if key in payload}
     if isinstance(visible.get("output"), str):
         from .jobs_tools import MAX_SHOWN_OUTPUT_CHARS
         visible["output"] = visible["output"][:MAX_SHOWN_OUTPUT_CHARS]
     result.content.append(TextContent(type="text", text=json.dumps(visible)))
     return result
+
+
+class FindingVerdict(BaseModel):
+    """What Claude decided about one Codex finding, and on what evidence."""
+
+    finding: str = Field(description="The finding's reference, such as F1.")
+    verdict: str = Field(description="confirmed, refuted or undecidable.")
+    evidence: str = Field(description="test (a test failed before the fix), reproduced, ci, "
+                                      "code_reading (your own reading only) or none.")
+    action: str = Field(description="fixed, no_change or deferred.")
+    fix_verified: bool | None = Field(default=None, description="After a fix: did a test or "
+                                      "reproduction confirm it works?")
+    note: str | None = Field(default=None, max_length=200, description="A short reason, no code.")
+
+
+#: Writes only ModelQuad's own local ledger; starts nothing and sends nothing.
+LOCAL_RECORD = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+                               open_world_hint=False)
+
+
+@server.tool(title="Record what became of Codex's findings", annotations=LOCAL_RECORD)
+def modelquad_review_verdict(
+    decision_id: str,
+    verdicts: Annotated[list[FindingVerdict], Field(min_length=1, max_length=50)],
+) -> CallToolResult:
+    """Record, for each finding of one Codex reply, whether it was right, on what
+    evidence, and what you did. Agreement from reading alone is evidence code_reading,
+    which ModelQuad never counts as proof. Starts nothing."""
+    from .. import review_ledger
+
+    if _worker_refused():
+        raise ToolError("a worker does not record review verdicts")
+    try:
+        count = review_ledger.record_verdicts(decision_id, [item.model_dump() for item in verdicts],
+                                              source="claude")
+    except review_ledger.VerdictRefused as exc:
+        raise ToolError(str(exc)) from None
+    payload = {"recorded": count, "decision_id": decision_id}
+    return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload))],
+                          structured_content=payload)
 
 
 class HandoffApproval(BaseModel):

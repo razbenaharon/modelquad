@@ -51,8 +51,8 @@ def test_it_reminds_when_a_command_runs_after_three_different_files(tmp_path):
     assert _run(tmp_path, _event(tool="MultiEdit", path="C:/proj/c.py")) == ""  # no reminder mid-edit
     text = _context(_run_tests(tmp_path))
     assert "changed 3 files" in text and "Before your final message" in text
-    assert "`modelquad_delegate`" in text and "asks the user first" in text
-    assert "if they decline, carry on without Codex" in text
+    assert "`modelquad_delegate`" in text and "trigger review_gate" in text
+    assert "declines, carry on without Codex" in text
     assert _run_tests(tmp_path) == ""  # no new edit since
 
 
@@ -169,3 +169,117 @@ def test_the_plugin_runs_it_after_edits_and_codex_calls():
                  "mcp__plugin_modelquad_modelquad__modelquad_delegate"):
         assert re.fullmatch(entry["matcher"], tool)
     assert not re.fullmatch(entry["matcher"], "Read")
+
+
+# ---------------------------------------------------------------- the gate
+
+
+def _stop(tmp_path, *, granted=True, active=False, session=SESSION):
+    event = {"hook_event_name": "Stop", "session_id": session, "cwd": "C:/proj",
+             "transcript_path": "C:/never/opened.jsonl", "stop_hook_active": active}
+    out = io.StringIO()
+    assert rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={},
+                       state=tmp_path, mode=lambda cwd: "decide",
+                       standing=lambda cwd: granted) == 0
+    return out.getvalue()
+
+
+def _edits(tmp_path, *names):
+    for name in names:
+        _run(tmp_path, _event(path=f"C:/proj/{name}"))
+
+
+def _delegate(tmp_path, response):
+    return _run(tmp_path, _event(tool="mcp__plugin_modelquad_modelquad__modelquad_delegate",
+                                 tool_input={}, tool_response=response))
+
+
+def test_the_gate_blocks_once_then_tells_the_user(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    first = json.loads(_stop(tmp_path))
+    assert first["decision"] == "block" and "trigger review_gate" in first["reason"]
+    assert "Do not run Codex any other way" in first["reason"]
+    # Claude stops again without a review: no second block, a message to the user instead.
+    second = json.loads(_stop(tmp_path, active=True))
+    assert "decision" not in second and "did not review this change" in second["systemMessage"]
+    assert _stop(tmp_path) == ""
+
+
+def test_the_gate_never_blocks_while_claude_continues_for_a_stop_hook(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    out = json.loads(_stop(tmp_path, active=True))
+    assert "decision" not in out and "systemMessage" in out
+
+
+def test_without_a_grant_the_gate_is_silent(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert _stop(tmp_path, granted=False) == ""
+
+
+def test_a_small_change_passes(tmp_path):
+    _edits(tmp_path, "a.py", "b.py")
+    assert _stop(tmp_path) == ""
+
+
+def test_one_sensitive_file_is_enough(tmp_path):
+    _edits(tmp_path, "src/auth/login.py")
+    out = json.loads(_stop(tmp_path))
+    assert out["decision"] == "block" and "sensitive" in out["reason"]
+
+
+def test_a_review_clears_the_gate(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _stop(tmp_path)
+    _delegate(tmp_path, {"content": [{"type": "text", "text": "FINDINGS: none"}]})
+    assert _stop(tmp_path) == ""
+    # A new change set gets its own gate.
+    _edits(tmp_path, "d.py", "e.py", "f.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+
+
+def test_a_failed_review_is_reported_not_blocked_again(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _stop(tmp_path)
+    _delegate(tmp_path, [{"type": "text", "text": "Codex was not started."}])
+    out = json.loads(_stop(tmp_path, active=True))
+    assert "decision" not in out and "did not complete" in out["systemMessage"]
+    _edits(tmp_path, "d.py")
+    assert _stop(tmp_path) == ""
+
+
+def test_files_outside_the_session_folder_do_not_count(tmp_path):
+    for path in ("D:/scratch/a.py", "C:/elsewhere/b.py", "C:/proj2/c.py"):
+        _run(tmp_path, _event(path=path))
+    _edits(tmp_path, "a.py")
+    assert _stop(tmp_path) == ""
+
+
+def _pre(tmp_path, path, *, mode="decide", granted=False):
+    event = {"hook_event_name": "PreToolUse", "tool_name": "Edit", "session_id": SESSION,
+             "cwd": "C:/proj", "tool_input": {"file_path": path}}
+    out = io.StringIO()
+    rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={}, state=tmp_path,
+                mode=lambda cwd: mode, standing=lambda cwd: granted)
+    return out.getvalue()
+
+
+def test_a_sensitive_file_asks_for_a_consultation_once(tmp_path):
+    assert _pre(tmp_path, "C:/proj/readme.md") == ""
+    payload = json.loads(_pre(tmp_path, "C:/proj/.github/workflows/ci.yml"))
+    inner = payload["hookSpecificOutput"]
+    assert inner["hookEventName"] == "PreToolUse" and "permissionDecision" not in inner
+    assert "trigger pre_change" in inner["additionalContext"]
+    assert _pre(tmp_path, "C:/proj/src/crypto.py") == ""
+
+
+def test_no_consultation_reminder_in_offer_mode_without_a_grant(tmp_path):
+    assert _pre(tmp_path, "C:/proj/src/auth.py", mode="offer") == ""
+    assert _pre(tmp_path, "C:/proj/src/auth.py", mode=None) == ""
+
+
+def test_the_hook_never_approves_or_denies(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    outputs = [_pre(tmp_path, "C:/proj/install.ps1"), _stop(tmp_path), _stop(tmp_path, active=True),
+               _run_tests(tmp_path)]
+    for output in outputs:
+        assert "permissionDecision" not in output and '"approve"' not in output

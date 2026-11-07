@@ -1,22 +1,40 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Advisory PostToolUse context: a reminder of the review moment after several files change.
+"""The review reminder and the review gate: Claude Code hooks that make Codex reviews happen.
 
 Claude tends to forget an instruction it read at session start while it is
-deep in a task, and a reminder given in the middle of the edits is forgotten
-by the end (a recorded trial of fresh sessions, 2026-11-06). So the hook
-counts the different files Claude changes in a session, and once there are
-``THRESHOLD`` without a Codex review since, it adds one line of context when
-Claude next runs a command (usually the tests, at the end of the change),
-at most ``MAX_REMINDERS`` times, and only after further edits since the last
-one. A ``modelquad_delegate`` call starts the count again. It is advisory (AGENTS.md invariant 6): it prints context or nothing,
-never a decision, never blocks or approves, and never opens the transcript
-path Claude Code hands it. It starts no process and never starts Codex.
+deep in a task (recorded trials of fresh sessions, 2026-11-06). So this
+module counts the different files Claude changes in a session, under the
+session's own folder, and acts at three moments:
+
+* **PostToolUse**, advisory, everywhere: once ``THRESHOLD`` files changed
+  without a Codex review since, it adds one line of context when Claude next
+  runs a command (usually the tests, at the end of the change), at most
+  ``MAX_REMINDERS`` times, and only after further edits since the last one.
+* **PreToolUse**, advisory: the first time in a session that Claude is about
+  to change a sensitive file (authentication, cryptography, permissions,
+  secrets, migrations, installers, CI workflows), it adds one line asking
+  Claude to consult Codex before going further, unless Codex is off here.
+* **Stop**, the review gate, only in a folder where the user turned the
+  standing grant on (``grant.py``): when Claude stops after a change of
+  ``THRESHOLD`` files (or one sensitive file) with no Codex review since, it
+  blocks once, telling Claude to run the review now. That is the one
+  exception to AGENTS.md invariant 6: at most one block per change set, never
+  while Claude is already continuing because of a stop hook, and only to ask
+  for the review. If Claude stops again without one, or the review failed,
+  the gate does not block again: it tells the user directly
+  (``systemMessage``) that the change was not reviewed.
+
+A ``modelquad_delegate`` call that Codex answered starts the count again; one
+that was refused or failed marks the review failed. The hook never approves
+or denies a tool call, never opens the transcript path Claude Code hands it,
+starts no process and never starts Codex.
 
 What it keeps: one small file per session under ``<state>/review-reminder/``,
 named by a digest of the session id, holding SHA-256 digests of the changed
-file paths (never the paths) and how often it reminded. Files older than
-two days are removed.
+file paths (never the paths), whether one was sensitive, and the gate's
+state; files older than two days are removed. Gate events go to the review
+ledger (``review_ledger.py``) with digests of the folder and the session.
 """
 
 from __future__ import annotations
@@ -25,6 +43,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import threading
 import time
 from pathlib import Path
@@ -42,19 +61,48 @@ EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 RUN_TOOLS = frozenset({"Bash", "PowerShell"})
 DELEGATE_TOOL_SUFFIX = "modelquad_delegate"
 
+#: Paths whose change calls for a consultation first and a review at the end,
+#: even when it is one file. Matched against the path relative to the session
+#: folder, case-insensitively.
+SENSITIVE = re.compile(
+    r"(^|/)(\.github/workflows/|[^/]*(auth|login|password|passwd|secret|token|credential|crypt|"
+    r"permission|security|migration|migrate|install|deploy)[^/]*(/|$))|\.(ps1|pem|key)$",
+    re.IGNORECASE)
+
 DECIDE = (
     "ModelQuad: you have changed {count} files in this session and Codex has not reviewed "
     "them. Before your final message on this change, call `modelquad_delegate` for a "
-    "review, with the changed files in `files`. Claude Code asks the user first; if they "
-    "decline, carry on without Codex. A change across this many files is not a small "
-    "one, so this applies to it.")
+    "review (trigger review_gate), with the changed files in `files`. If the user or "
+    "Claude Code declines, carry on without Codex. A change across this many files is not "
+    "a small one, so this applies to it.")
 OFFER = (
     "ModelQuad: you have changed {count} files in this session and Codex has not reviewed "
     "them. In your final message on this change, offer the user a Codex review in one "
     "short sentence. A change across this many files is not a small one, so this "
     "applies to it.")
+CONSULT = (
+    "ModelQuad: you are about to change a sensitive file ({kind}). If this change is large, "
+    "architectural or security-relevant, consult Codex first: call `modelquad_delegate` "
+    "with task_type architecture, trigger pre_change and the files involved, verify its "
+    "advice, then continue. Skip it for a trivial edit.")
+GATE = (
+    "ModelQuad review gate: this session changed {count} file(s){sensitive} and Codex has "
+    "not reviewed them. Before you finish, call `modelquad_delegate` with task_type review, "
+    "trigger review_gate and the changed files in `files`. Verify each finding against the "
+    "code or a test before changing anything, record your decisions with "
+    "`modelquad_review_verdict`, and say in your final message what the review found. If "
+    "the call fails or Codex is unavailable, say plainly that the review was not done. Do "
+    "not run Codex any other way.")
+NOT_DONE = ("ModelQuad: Codex did not review this change ({count} file(s)). The review gate "
+            "asked for one and none was done.")
+FAILED = ("ModelQuad: the Codex review of this change did not complete ({count} file(s)), "
+          "so it was not reviewed by Codex.")
 
-_EMPTY = {"files": [], "reminders": 0, "edits_since": 0}
+_EMPTY = {"files": [], "reminders": 0, "edits_since": 0, "sensitive": False,
+          "consulted": False, "gate": "none", "review": "none"}
+_GATES = ("none", "blocked", "reported")
+_REVIEWS = ("none", "done", "failed")
+_EVENTS = ("PostToolUse", "PreToolUse", "Stop")
 
 
 def _read_event(stdin, clock, deadline):
@@ -75,7 +123,7 @@ def _read_event(stdin, clock, deadline):
     if len(raw) > BYTE_CAP:
         return None
     event = json.loads(raw)
-    if not isinstance(event, dict) or event.get("hook_event_name") != "PostToolUse":
+    if not isinstance(event, dict) or event.get("hook_event_name") not in _EVENTS:
         return None
     return event
 
@@ -84,14 +132,34 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
 
 
-def _changed_path(event) -> str | None:
+def _norm(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path.replace("/", os.sep)))
+
+
+def _relative(event) -> str | None:
+    """The changed file's path relative to the session folder; None when outside it.
+
+    A file outside the folder (a scratch file, another project) is not part of
+    the change under review, so it is not counted.
+    """
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict):
         return None
     path = tool_input.get("file_path") or tool_input.get("notebook_path")
+    cwd = event.get("cwd")
     if not isinstance(path, str) or not path or len(path) > 4096:
         return None
-    return os.path.normcase(os.path.normpath(path))
+    if not isinstance(cwd, str) or not cwd:
+        return None
+    full, root = _norm(path), _norm(cwd)
+    if not os.path.isabs(full):
+        full = _norm(os.path.join(root, full))
+    try:
+        if os.path.commonpath([full, root]) != root:
+            return None
+    except ValueError:  # different drives
+        return None
+    return os.path.relpath(full, root).replace(os.sep, "/")
 
 
 def _count(value) -> int:
@@ -107,7 +175,11 @@ def _load(path: Path) -> dict:
     if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
         return dict(_EMPTY, files=[])
     return {"files": files[:MAX_DIGESTS], "reminders": _count(payload.get("reminders")),
-            "edits_since": _count(payload.get("edits_since"))}
+            "edits_since": _count(payload.get("edits_since")),
+            "sensitive": payload.get("sensitive") is True,
+            "consulted": payload.get("consulted") is True,
+            "gate": payload.get("gate") if payload.get("gate") in _GATES else "none",
+            "review": payload.get("review") if payload.get("review") in _REVIEWS else "none"}
 
 
 def _save(path: Path, payload: dict) -> None:
@@ -147,8 +219,65 @@ def _codex_allowed_mode(cwd) -> str | None:
     return {repo_settings.PROACTIVE: "decide", repo_settings.OFFER: "offer"}.get(result.offer)
 
 
+def _granted(cwd) -> bool:
+    from modelquad import grant
+    from modelquad.localpath import reason as local_reason
+
+    if not isinstance(cwd, str) or not cwd or not Path(cwd).is_absolute() or local_reason(cwd):
+        return False
+    return grant.allows(cwd)
+
+
+def _review_failed(response) -> bool:
+    """Whether a modelquad_delegate reply says Codex did not answer."""
+    try:
+        text = response if isinstance(response, str) else json.dumps(response)
+    except (TypeError, ValueError):
+        return True
+    return any(marker in text for marker in (
+        '"refused": true', '"refused":true', "Codex was not started", "Codex answer withheld",
+        "no_standing_grant"))
+
+
+def _gate_event(cwd, session, event, files) -> None:
+    from modelquad import review_ledger
+
+    review_ledger.record_gate_event(cwd, session, event, files)
+
+
+def _context(event_name: str, text: str) -> str:
+    return json.dumps({"hookSpecificOutput": {"hookEventName": event_name,
+                                              "additionalContext": text}},
+                      separators=(",", ":")) + "\n"
+
+
+def _stop(event, payload, cwd, session, standing) -> str | None:
+    """The review gate's answer at Stop: a block, a message to the user, or None."""
+    count = len(payload["files"])
+    pending = count >= THRESHOLD or (payload["sensitive"] and count >= 1)
+    if not pending or not (standing or _granted)(cwd):
+        return None
+    if payload["review"] == "failed":
+        if payload["gate"] == "reported":
+            return None
+        payload["gate"] = "reported"
+        _gate_event(cwd, session, "review_failed", count)
+        return json.dumps({"systemMessage": FAILED.format(count=count)}) + "\n"
+    if payload["gate"] == "none" and event.get("stop_hook_active") is not True:
+        payload["gate"] = "blocked"
+        _gate_event(cwd, session, "blocked", count)
+        reason = GATE.format(count=count, sensitive=", including a sensitive one"
+                             if payload["sensitive"] else "")
+        return json.dumps({"decision": "block", "reason": reason}) + "\n"
+    if payload["gate"] != "reported":
+        payload["gate"] = "reported"
+        _gate_event(cwd, session, "not_done_reported", count)
+        return json.dumps({"systemMessage": NOT_DONE.format(count=count)}) + "\n"
+    return None
+
+
 def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=None,
-             mode=None, now=time.time):
+             mode=None, standing=None, now=time.time):
     """Fail silent: any failure prints nothing and exits 0."""
     environ = os.environ if environ is None else environ
     if environ.get("MODELQUAD_WORKER") == "1" or host != "claude":
@@ -158,23 +287,61 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
         event = _read_event(stdin, clock, deadline)
         if event is None:
             return 0
+        name = event["hook_event_name"]
         tool = event.get("tool_name")
         session = event.get("session_id")
-        if not isinstance(tool, str) or not isinstance(session, str) or not session:
+        cwd = event.get("cwd")
+        if not isinstance(session, str) or not session:
             return 0
-        is_delegate = tool.endswith(DELEGATE_TOOL_SUFFIX)
-        if tool not in EDIT_TOOLS and tool not in RUN_TOOLS and not is_delegate:
+        if name != "Stop" and not isinstance(tool, str):
+            return 0
+        is_delegate = isinstance(tool, str) and tool.endswith(DELEGATE_TOOL_SUFFIX)
+        if name != "Stop" and tool not in EDIT_TOOLS and tool not in RUN_TOOLS and not is_delegate:
             return 0
         if state is None:
             from modelquad.paths import state_root
             state = state_root()
         folder = Path(state) / FOLDER_NAME
         record = folder / f"{_digest(session)[:32]}.json"
-        if is_delegate:
-            if record.exists():
-                _save(record, dict(_EMPTY, files=[]))
+        output = None
+
+        if name == "Stop":
+            if not record.exists():
+                return 0
+            payload = _load(record)
+            output = _stop(event, payload, cwd, session, standing)
+            _save(record, payload)
+        elif name == "PreToolUse":
+            if tool not in EDIT_TOOLS:
+                return 0
+            relative = _relative(event)
+            match = SENSITIVE.search(relative) if relative else None
+            if match is None:
+                return 0
+            payload = _load(record) if record.exists() else dict(_EMPTY, files=[])
+            if payload["consulted"] or payload["review"] == "done":
+                return 0
+            chosen = (mode or _codex_allowed_mode)(cwd)
+            if chosen != "decide" and not (standing or _granted)(cwd):
+                return 0
+            payload["consulted"] = True
+            _save(record, payload)
+            _gate_event(cwd, session, "consult_reminded", None)
+            kind = match.group(0).strip("/") or relative
+            output = _context("PreToolUse", CONSULT.format(kind=kind[:60]))
+        elif is_delegate:
+            if not record.exists():
+                return 0
+            payload = _load(record)
+            if _review_failed(event.get("tool_response")):
+                payload["review"] = "failed"
+            else:
+                if payload["gate"] == "blocked":
+                    _gate_event(cwd, session, "review_done", len(payload["files"]))
+                payload = dict(_EMPTY, files=[], consulted=payload["consulted"], review="done")
+            _save(record, payload)
             return 0
-        if tool in RUN_TOOLS:
+        elif tool in RUN_TOOLS:
             if not record.exists():
                 return 0  # Nothing changed yet: a command alone keeps nothing.
             payload = _load(record)
@@ -182,30 +349,33 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
                       and payload["reminders"] < MAX_REMINDERS)
             if not remind:
                 return 0
+            if clock() < deadline:
+                chosen = (mode or _codex_allowed_mode)(cwd)
+                if chosen in ("decide", "offer"):
+                    output = _context("PostToolUse", (DECIDE if chosen == "decide" else OFFER)
+                                      .format(count=len(payload["files"])))
+            payload["reminders"] += 1
+            payload["edits_since"] = 0
+            _save(record, payload)
         else:
-            changed = _changed_path(event)
-            if changed is None:
+            relative = _relative(event)
+            if relative is None:
                 return 0
             payload = _load(record)
-            digest = _digest(changed)
+            digest = _digest(relative.casefold())
             if digest not in payload["files"] and len(payload["files"]) < MAX_DIGESTS:
                 payload["files"].append(digest)
             payload["edits_since"] += 1
-            remind = False
-        text = None
-        if remind and clock() < deadline:
-            chosen = (mode or _codex_allowed_mode)(event.get("cwd"))
-            if chosen in ("decide", "offer"):
-                text = (DECIDE if chosen == "decide" else OFFER).format(
-                    count=len(payload["files"]))
-            payload["reminders"] += 1
-            payload["edits_since"] = 0
-        _save(record, payload)
+            if SENSITIVE.search(relative):
+                payload["sensitive"] = True
+            if payload["review"] == "done":
+                payload["review"] = "none"
+            if payload["gate"] == "reported" and payload["review"] != "failed":
+                payload["gate"] = "none"  # A new change set after a reported one.
+            _save(record, payload)
         _prune(folder, now())
-        if text is not None and clock() < deadline:
-            stdout.write(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PostToolUse", "additionalContext": text}},
-                separators=(",", ":")) + "\n")
+        if output is not None and clock() < deadline:
+            stdout.write(output)
     except Exception:
         pass  # No diagnostic text, state marker or user-facing message.
     return 0

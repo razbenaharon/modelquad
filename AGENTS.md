@@ -27,8 +27,15 @@ here; the tool under development is not the instrument for developing it.
   change. `modelquad settings proactive off` makes Claude offer instead and
   call only when the user agrees or asks.
   The guidance is the MCP server's `instructions`
-  (`adapters/server_instructions.py`), not a global `CLAUDE.md` block. Claude
-  Code asks the user before every call that would start Codex. Quota is
+  (`adapters/server_instructions.py`), not a global `CLAUDE.md` block.
+  Without the user's standing grant (`grant.py`, `modelquad settings auto`),
+  Claude Code asks the user before every call that would start Codex. In a
+  granted folder `modelquad_delegate` follows Claude Code's own permissions,
+  and a Stop-hook review gate asks once for a Codex review before a
+  multi-file or sensitive change is handed over. A PreToolUse reminder asks
+  for a consultation before a sensitive file changes. Codex's findings and
+  Claude's verdicts go to the review ledger (`review_ledger.py`, a SQLite
+  file of its own; `modelquad review report`). Quota is
   display-only: when Claude is near its limit, a note says so (wait for the
   reset, or ask Codex for a review) and starts nothing.
 - Division of work: `modelquad_split` (and `/modelquad-split`) proposes who
@@ -105,15 +112,28 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
    and the `*.modelquad-backup-*` files) can hold secrets the user put in
    configuration: keep them private and never show their contents
    (`tests/test_registration_backup_is_product_state.py`).
-6. **A host hook ModelQuad installs is advisory.** It never blocks or approves
-   a host tool call, and it never opens a conversation file (transcript,
-   rollout or conversation store), even when the host hands it the path
-   (`tests/test_hook_transcript_boundary.py`).
-7. **Every call that starts Codex asks the user.** `modelquad_delegate` and
-   `modelquad_handoff` carry `anthropic/requiresUserInteraction`, so Claude
-   Code shows its approval prompt for each call
-   (`tests/test_oss_export_surface.py`). ModelQuad installs no permission rule
-   for its tools, and quota never starts work. `modelquad_handoff_wait` starts
+6. **A host hook ModelQuad installs never approves or denies a host tool
+   call, and never opens a conversation file** (transcript, rollout or
+   conversation store), even when the host hands it the path
+   (`tests/test_hook_transcript_boundary.py`). Every hook is advisory except
+   one: the Stop review gate may block, only in a folder where the user
+   turned the standing grant on, at most once per change set, never while
+   Claude is already continuing because of a stop hook, and only to ask for
+   the review. A review that failed or was not done is reported to the user
+   and never blocks again (`tests/test_review_reminder.py`).
+7. **Codex starts only with the user's consent: Claude Code's prompt for
+   that call, or a standing grant the user turned on for that folder or
+   globally.** ModelQuad shows the grant's notice before turning it on,
+   records it, and the user can turn it off at any time; no MCP tool can turn
+   it on (`tests/test_standing_grant.py`). Without a grant,
+   `modelquad_delegate` and `modelquad_handoff` carry
+   `anthropic/requiresUserInteraction`, so Claude Code shows its approval
+   prompt for each call (`tests/test_oss_export_surface.py`). Every call
+   re-checks the grant and the repository's choices, which outrank it. A
+   refusal, a grant turned off or a provider refusal is final for that
+   request: ModelQuad never starts Codex by another route. ModelQuad installs
+   no permission rule for its tools, and quota never starts work.
+   `modelquad_handoff` keeps its prompt either way. `modelquad_handoff_wait` starts
    Codex only after the handoff window's Approve button, whose tool
    (`modelquad_handoff_confirm`) is app-only, so a host keeps it from the
    model, and refuses in a client that renders no window

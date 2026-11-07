@@ -411,7 +411,7 @@ def test_the_tool_is_read_only_asks_for_nothing_and_says_so_plainly():
 def test_the_server_instructions_name_the_split_and_stay_small(proactive):
     text = server_instructions(proactive)
     assert "with `modelquad_split`, not by hand; it starts nothing." in text
-    assert len(text.encode("utf-8")) <= 1900 and len(text) < 4096
+    assert len(text.encode("utf-8")) <= 2400 and len(text) < 4096
     assert banned_in(text.replace("ModelQuad", "")) == []
 
 

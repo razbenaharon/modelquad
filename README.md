@@ -54,8 +54,14 @@ Status: early, source-only release. Windows only.
   can show who could take each step: Claude builds and runs, Codex reviews,
   explores and advises, read-only. It starts nothing; see
   [Division of work](#division-of-work).
-- **An approval prompt on every Codex call.** Claude Code asks you before each
-  call that would start Codex.
+- **An approval prompt on every Codex call, unless you grant it once.**
+  Claude Code asks you before each call that would start Codex. With the
+  standing grant for a repository, Claude consults Codex there on its own,
+  and a review gate asks for a review before a multi-file change is handed
+  over. See [Working without prompts](#working-without-prompts).
+- **A record of what the reviews were worth.** Each finding Codex reports,
+  what Claude decided about it and on what evidence, and what it cost:
+  `modelquad review report`.
 - **Optional background jobs.** With the local service running and background
   work turned on (off by default), a delegated task keeps running after you
   close the chat. Answers are kept for 7 days by default.
@@ -114,8 +120,33 @@ Status: early, source-only release. Windows only.
 - The two tools that start Codex, `modelquad_delegate` and `modelquad_handoff`,
   are marked as needing your interaction (`anthropic/requiresUserInteraction`).
   Claude Code shows its approval prompt before every call, also in auto mode
-  and in bypass-permissions mode. ModelQuad adds no permission rule for its
-  tools.
+  and in bypass-permissions mode, unless you turned the standing grant on for
+  that folder (below). ModelQuad adds no permission rule for its tools.
+
+### Working without prompts
+
+- `modelquad settings auto on --yes` (in the repository, or with
+  `--project DIR`; `--global` for every folder) turns the standing grant on
+  after showing what it means. New Claude Code sessions there register the
+  Codex tool without the per-call mark, so Claude Code's own permissions
+  apply. Add the rule it prints to `permissions.allow`, or answer "don't ask
+  again" the first time Claude Code asks.
+- In a granted repository Claude consults Codex before a large,
+  architectural or sensitive change, and asks for a review when a change of
+  three files or more (or one sensitive file) is done. If Claude stops
+  without one, the review gate stops it once and asks for the review. If
+  Codex fails or is unavailable, Claude says so, and ModelQuad tells you
+  directly that the change was not reviewed. The gate never blocks twice.
+- Claude verifies each finding before changing code and records its verdict
+  (`modelquad_review_verdict`). `modelquad review report` shows what Codex
+  found, what was confirmed with independent evidence (a test, a
+  reproduction, CI or your own verdict), what Claude only agreed with, what
+  was wrong, what was fixed and verified, and the time and tokens it took.
+  `modelquad review verdict <decision_id> <F1> confirmed|refuted|undecidable`
+  records your own verdict, which outranks Claude's.
+- `modelquad settings auto off` turns it off; a session that started with
+  the grant refuses its next Codex call. `modelquad settings repo <dir> off`
+  and a `.modelquad.toml` that turns Codex off outrank the grant.
 - In a terminal, `modelquad_handoff` then shows the handoff form. Codex starts
   only if you tick the box and accept. In the desktop app's Code tab, which
   shows no forms, Claude Code's approval prompt is your answer, and Codex then
@@ -262,11 +293,12 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
   and the startup reminder.
 - `claude plugin marketplace add .` adds this checkout as a local plugin
   marketplace, and `claude plugin install modelquad@modelquad` installs the
-  plugin from it. The plugin carries the server, the five commands
+  plugin from it. The plugin carries the server, the six commands
   (`/modelquad:review`, `/modelquad:handoff`, `/modelquad:quota`,
-  `/modelquad:setup` and `/modelquad:split`), the guide skill Claude reads
-  (`/modelquad:guide`), the startup reminder, and, in the desktop app's Code
-  tab, a line above the prompt with Codex's quota.
+  `/modelquad:setup`, `/modelquad:split` and `/modelquad:settings`), the
+  guide skill Claude reads (`/modelquad:guide`), the startup reminder, the
+  review reminder and review gate, and, in the desktop app's Code tab, a line
+  above the prompt with Codex's quota.
 - `modelquad install claude --plugin` prints what ModelQuad sends where, then
   adds the status line, which a plugin cannot set. It also takes back the
   server, commands and reminder an earlier `modelquad install claude` added,
@@ -486,7 +518,10 @@ write code and offers its own reviews. ModelQuad adds:
 - both quotas in the Claude Code status line;
 - a note when Claude is near its limit: wait for the reset, or ask Codex for
   a review;
-- read-only Codex reviews, with an approval prompt on every call;
+- read-only Codex reviews, with an approval prompt on every call unless you
+  grant it once for a repository, and a review gate before a multi-file
+  change is handed over;
+- a record of each review's findings, Claude's verdicts and their evidence;
 - optional background jobs that keep running after you close the chat.
 
 ModelQuad is an independent project. It is not affiliated with OpenAI or
@@ -512,7 +547,7 @@ licence. A changed version needs a name of its own. See
 - ModelQuad does not change any usage limit. Each provider's limits apply as
   they are, and a note that Claude is near its limit starts nothing.
 - Every Codex call runs your own Codex CLI, under your own sign-in, after you
-  approve it. Do not run ModelQuad unattended, in CI or on behalf of other
+  approve it or within a standing grant you turned on. Do not run ModelQuad unattended, in CI or on behalf of other
   people. OpenAI recommends API-key sign-in for programmatic Codex workflows
   such as CI/CD.
 - Anthropic and OpenAI can limit, suspend or close accounts, and can change

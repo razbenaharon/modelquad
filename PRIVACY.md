@@ -298,6 +298,15 @@ session transcript. **ModelQuad never opens, reads or inspects that file**
   `preferences.json`, the installation id, the repository's `.git` entry (to
   find the repository, without starting Git) and its `.modelquad.toml`. It
   writes nothing.
+- **Review reminder and review gate** (`modelquad hook-review claude`, in the
+  plugin, after Claude edits a file or runs a command, before it edits a
+  file, and when it stops): the event and tool names, the session id, the
+  working directory and the edited file's path. It never reads file contents,
+  even though an edit's payload carries them, and never the transcript. It
+  keeps one small file per session in `review-reminder\`: SHA-256 digests of
+  the changed paths under the working directory (never the paths), whether
+  one looked sensitive, and the gate's state. It records gate events in the
+  review ledger with digests of the folder and the session.
 
 ### Other reads
 
@@ -391,6 +400,8 @@ service (`modelquad service stop`) before you delete anything here.
 | `host-observation-claude.json` | The last status-line facts: Claude Code version, model id and display name, large-context flag, a 16-character session fingerprint, time | Overwritten on each update | Low; the raw session id is not written |
 | `host-integrations.json` | Whether global host integrations are on or off | Kept | No |
 | `preferences.json` | Your settings: proactive use on or off, whether the plugin install is in use, the plans you set with `modelquad settings plan` (values from a fixed list), and your per-repository choices from `modelquad settings repo` (one word each, keyed by a hash of the repository made with your installation id; no path or folder name) | Kept until you change or unset them | Low: the names of your plans |
+| `review-reminder\` | One file per Claude Code session: SHA-256 digests of the paths Claude changed, a sensitive-file flag and the review gate's state | Deleted after 2 days | No: digests only |
+| `review-ledger.db` | The review ledger (below): each Codex call's time, a digest of the project folder, the task kind and why it was made, the code version (Git commit and a digest of the sent files), outcome, duration and Codex's token counts; each finding's reference, repository-relative file and line, severity, category and claim; each verdict and its evidence; review gate events | No automatic expiry | In a limited way: a finding's claim describes your code. Claims are redacted for credentials and paths and capped at 300 characters |
 | `data-flow-notice.json` | That the notice of what ModelQuad sends where was shown, where (install, onboard or the first Codex call) and when | Kept, so the notice is shown once | No |
 | `service.pid`, `service*.lock`, `service.launch-unconfirmed` | The service's process id, start time and launch command line, which includes the Python interpreter's path; lock and marker files | Replaced on each service start | Low: a local path |
 | `logs\job-runner.log`, `logs\job-runner.log.1` | Runner events (UTC time, job id, a fixed label or an exception class name) and the runner's error output | Rotated above 1 MiB when opened, one older file kept | Possibly: a Python traceback can contain paths and lines of code |
@@ -461,14 +472,14 @@ bytes from disk.
 | Claim | Where it is enforced |
 |---|---|
 | Prompts are not stored in the history. A prompt is on disk only in a short-lived `job-<random>.json`; `request_key` is a truncated hash, not the text | `service/db.py` schema, `jobs/handle.py` |
-| Codex's answers are not stored in the history. A background job's answer waits in `pending-output\` until it is acknowledged or expires | `service/history.record_execution`, `jobs/store.py` |
+| Codex's answers are not stored in the history. A background job's answer waits in `pending-output\` until it is acknowledged or expires. The review ledger keeps only the findings Codex lists in the agreed one-line form, redacted and capped, never the whole answer | `service/history.record_execution`, `jobs/store.py`, `review_ledger.py` |
 | The contents of files sent to Codex are not stored. They are read into memory, sent, and dropped | `execution/noshell.py` |
 | The text of Codex's error output is not stored, in any mode; only its size and a category | `execution/base.result_error`, `workerevidence.py` |
 | Conversation transcripts are never opened | `cli_entry.dispatch_gate` (a no-op), `adapters/pending_reminder.py`, `hostobs.record_host_push`; `tests/test_hook_transcript_boundary.py` |
 | Absolute paths do not reach the history | `privacy.py`, `service/history.py`; `tests/test_privacy_paths.py` |
 | The raw Claude Code session id is not stored. It becomes a 16-character HMAC keyed by the installation id | `hostobs.session_fingerprint` |
 | Provider credential files are not opened, copied or sent to Codex. Sign-in checks test only whether they exist. Two kinds of copies can still hold secrets you put in configuration: `host-registration-backup.json` and the `*.modelquad-backup-*` files | `provider_connection.py`, `execution/noshell.py`, `adapters/registration.py` |
-| Only six named environment variables of the Claude Code process are read to observe Claude Code. ModelQuad also reads its own `MODELQUAD_*` settings, `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, checks whether `OPENAI_API_KEY` is set, and passes Codex the filtered environment described above | `hostobs.CLAUDE_ENV_ALLOWLIST`; `tests/test_host_observability.py` |
+| Only six named environment variables of the Claude Code process are read to observe Claude Code. ModelQuad also reads its own `MODELQUAD_*` settings, `CLAUDE_CONFIG_DIR`, `CLAUDE_PROJECT_DIR` (the folder a session started in, to check the standing grant) and `CODEX_HOME`, checks whether `OPENAI_API_KEY` is set, and passes Codex the filtered environment described above | `hostobs.CLAUDE_ENV_ALLOWLIST`; `tests/test_host_observability.py` |
 | Nothing is collected for telemetry | ModelQuad has no telemetry code |
 
 ## The installation id
@@ -501,6 +512,8 @@ delete history.
 ## How to delete it
 
 - **One answer**: acknowledge it from Claude Code, or let it expire.
+- **The review ledger**: delete `review-ledger.db` in the state folder;
+  ModelQuad creates an empty one on the next Codex call.
 - **Everything**:
   1. `modelquad service stop`, then `modelquad service uninstall`, to stop the
      local service and remove its sign-in task.

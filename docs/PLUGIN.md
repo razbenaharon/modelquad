@@ -13,18 +13,27 @@ available for a setup without it (README, "Without the plugin").
   pip puts on PATH. A plugin's server tools are named
   `mcp__plugin_modelquad_modelquad__<tool>` instead of
   `mcp__modelquad__<tool>`; the tools and their annotations are the same, so
-  Claude Code asks the user before every call that would start Codex.
-- **Six skills**, copied from the package's own templates
+  Claude Code asks the user before every call that would start Codex, unless
+  the session started in a folder with the standing grant
+  (`modelquad settings auto on`).
+- **Seven skills**, copied from the package's own templates
   (`src/modelquad/adapters/templates/claude/skills/`). A plugin namespaces its
   skills, so they appear as `/modelquad:guide`, `/modelquad:review`,
-  `/modelquad:handoff`, `/modelquad:quota`, `/modelquad:setup` and
-  `/modelquad:split`. All but the
+  `/modelquad:handoff`, `/modelquad:quota`, `/modelquad:setup`,
+  `/modelquad:split` and `/modelquad:settings`. All but the
   guide are commands only you start.
 - **The SessionStart reminder hook** (`modelquad hook-pending claude`), the
   same one the installer adds. It reports retained answers and, when your
   setting for the repository differs from your global one, one line about
   Codex there ([REPO-POLICY.md](REPO-POLICY.md)); it never blocks or approves
   anything.
+- **The review reminder and review gate** (`modelquad hook-review claude`, on
+  PostToolUse, PreToolUse and Stop). It counts the files Claude changes under
+  the session folder (as digests), reminds Claude of the review moment when
+  it runs the tests, asks for a consultation before a sensitive file changes,
+  and, only in a folder with the standing grant, stops Claude once to ask for
+  a Codex review before a multi-file change is handed over. It never approves
+  or denies a tool call ([PRIVACY.md](../PRIVACY.md)).
 
 - **A quota band** (`plugin/hooks/quota-band.tsx`, a Claude Code hooks
   module). Where no status line is drawn (the desktop app's
@@ -49,7 +58,9 @@ the templates; `tests/test_plugin_prototype.py` fails while a copy differs.
 - **No status line.** A plugin cannot set Claude Code's status line. Run
   `modelquad install claude --plugin` for it (below).
 - **No permission rules, agents, output styles or settings.** Every call that
-  starts Codex keeps Claude Code's approval prompt.
+  starts Codex keeps Claude Code's approval prompt, unless you turned the
+  standing grant on for that folder (`modelquad settings auto on`) and added
+  the allow rule it prints.
 - **No executables.** The plugin needs the `modelquad` package installed with
   pip; the server and the hook run its `modelquad-mcp` and `modelquad`
   commands.
