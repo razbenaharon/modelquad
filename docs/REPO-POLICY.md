@@ -70,8 +70,10 @@ ModelQuad treats the file as untrusted, because anyone can commit one to any
 repository you might clone. So the file cannot:
 
 - approve a call. Claude Code still asks you before every Codex call, with or
-  without the file. The file has no setting for approval, permission rules or
-  proactive mode, and ModelQuad never writes Claude Code's settings files.
+  without the file, unless you turned on the standing grant yourself
+  (`modelquad settings auto on`). The file has no setting for approval, the
+  standing grant, permission rules or proactive mode, and ModelQuad never
+  writes Claude Code's settings files.
 - add files. It cannot name files to send or include folders; you still choose
   the files on each call. To keep files out, use `.modelquadignore` or Claude
   Code's Read deny rules (see [RECOMMENDED-SETTINGS.md](RECOMMENDED-SETTINGS.md)).
@@ -167,7 +169,8 @@ choice it shows what applies there.
 
 Only you can choose `on`: the repository file has no setting that turns
 proactive use on. Claude Code still asks you before every Codex call whatever
-you choose.
+you choose, unless you turned on the standing grant for the repository.
+`off` outranks the grant.
 
 The setting is stored in `preferences.json` in ModelQuad's state folder under
 `repos`, keyed by a hash of the repository (HMAC keyed by this installation's
@@ -179,7 +182,8 @@ repository.
 ### How the layers combine
 
 1. ModelQuad's own rules always win: read-only, no tools, an empty folder,
-   your approval on every call, loopback only, the file rules.
+   your approval on every call (or the standing grant you turned on),
+   loopback only, the file rules.
 2. Restrictions (Codex allowed, task kinds, file limits, account) are the most
    restrictive of the layers: your `off` and the file each refuse on their own.
 3. Who decides to consult Codex: your choice for the repository beats your

@@ -9,7 +9,8 @@ programs it starts make, and how to check.
   refuses any other connection from them. There is no ModelQuad server, no
   update check and no telemetry.
 - ModelQuad talks to Claude Code over standard input and output, and to its
-  own optional local service over loopback (`127.0.0.1`).
+  own optional local service over loopback (`127.0.0.1`). `modelquad settings
+  open` serves a one-time settings page on loopback too, while you use it.
 - The Codex CLI, which ModelQuad starts, connects to OpenAI under your own
   Codex login. Claude Code, which starts ModelQuad, connects to Anthropic.
   ModelQuad does not proxy, intercept or observe that traffic.
@@ -101,6 +102,14 @@ them.
     [SECURITY.md](SECURITY.md) for what the secret does and does not protect.
   - Every minute while it runs, it reads the local quota files and runs the
     doctor checks. It does not start a Codex quota read.
+- **Settings page** (`modelquad settings open`): a one-time page for your
+  browser, served on `127.0.0.1` on a port the system picks. It makes no
+  outgoing connection.
+  - The page's address carries a random secret made for this run, and every
+    request must carry it.
+  - It answers only requests that name this server exactly in `Host` and,
+    when the browser sends one, in `Origin`.
+  - It closes when you press Done, or after 15 minutes without a request.
 - **Other local clients**: the startup reminder hook, the MCP server (for
   background jobs and waiting answers) and some CLI commands (for example
   `modelquad settings job-runner`) reach the local service over loopback.

@@ -7,7 +7,8 @@ description: How Claude asks Codex, through ModelQuad, for a read-only second op
 
 ModelQuad complements Claude Code and OpenAI's Codex plugin for Claude Code.
 It can request a read-only Codex review, exploration, or architecture opinion.
-Claude Code asks the user before every ModelQuad Codex call.
+Claude Code asks the user before every ModelQuad Codex call, unless the user
+turned on the standing grant for this folder (`modelquad settings auto`).
 After an important task (a multi-file change, a risky fix, before a commit or
 PR), ask Codex for a review as the server instructions say: by default call
 `modelquad_delegate` yourself; when they say to offer, call only on a yes.

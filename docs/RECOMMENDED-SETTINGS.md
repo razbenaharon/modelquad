@@ -1,15 +1,16 @@
 # Recommended settings
 
-Plain-language advice for using ModelQuad safely, from a single developer to
-an organization. Each section says what to do and why. None of it is required
+Plain-language advice for choosing what ModelQuad may do, from a single
+developer to an organization. Each section says what to do and why. None of it is required
 to use ModelQuad.
 
 ## Do not use bypass mode on work code
 
 Claude Code's bypass-permissions mode (`--dangerously-skip-permissions`) lets
 Claude run commands and edit files without asking you. ModelQuad still asks
-before every Codex call, even in that mode, but everything else Claude does
-would happen without a prompt. On code that matters (your employer's, a
+before every Codex call, even in that mode, unless you turned on the standing
+grant for that folder (`modelquad settings auto on`); everything else Claude
+does would happen without a prompt. On code that matters (your employer's, a
 client's, anything you cannot easily restore) use the default mode, or plan
 mode when you only want ideas.
 
@@ -93,10 +94,19 @@ that must not happen, use a deny rule (above): Claude Code enforces those.
 
 ## Choose who decides to ask Codex
 
-By default Claude offers a Codex opinion and calls Codex only when you agree
-or ask. `modelquad settings proactive on` lets Claude decide on its own; Claude
-Code still asks you before each call. `modelquad settings proactive off` goes
-back to the default. The change applies to new Claude Code sessions.
+By default Claude decides on its own to ask Codex at the moments its
+instructions name, such as a multi-file change that is done or a bug that
+survived one fix. Claude Code still asks you before each call, unless you
+turned on the standing grant for that folder. `modelquad settings proactive
+off` makes Claude offer instead and call Codex only when you agree or ask;
+`modelquad settings proactive on` goes back to the default. The change applies
+to new Claude Code sessions.
+
+The standing grant (`modelquad settings auto on --yes`, for one repository or
+with `--global`) lets `modelquad_delegate` run without Claude Code's prompt
+for each call, once you add the allow rule it prints or choose "don't ask
+again". Only you can turn it on, from your own terminal; `modelquad_handoff`
+always asks, and `modelquad settings auto off` turns it off.
 
 ## Turn off model training in ChatGPT and Claude
 

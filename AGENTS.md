@@ -127,8 +127,9 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
    or was not done is reported and never stops the change again; no hook
    ever approves a tool call (`tests/test_review_reminder.py`).
 7. **Codex starts only with the user's consent: Claude Code's prompt for
-   that call, or a standing grant the user turned on for that folder or
-   globally.** ModelQuad shows the grant's notice before turning it on,
+   that call, or a standing grant the user turned on, from their own
+   terminal, for that folder or globally.** The grant removes the per-call
+   mark from `modelquad_delegate` only. ModelQuad shows the grant's notice before turning it on,
    records it, and the user can turn it off at any time; no MCP tool can turn
    it on (`tests/test_standing_grant.py`). Without a grant,
    `modelquad_delegate` and `modelquad_handoff` carry
@@ -153,8 +154,10 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
    installs the audit hook in `netpolicy.py` (`tests/test_netpolicy.py`).
 
 Privacy rules live in `src/modelquad/privacy.py`: free text and metadata
-are path-redacted where history is written, including folder names with
-spaces (`tests/test_privacy_paths.py`). Tool stdout and the stderr body are
+are path-redacted where history is written (`tests/test_privacy_paths.py`):
+a path under home, `AppData`, `TEMP`, OneDrive or the working folder is
+removed whole even with spaces; elsewhere the part after its first space can
+remain. Tool stdout and the stderr body are
 not persisted in any mode; the persisted worker command names only the
 executable and its flags, and persisted argv carries no absolute path
 (`tests/test_execution.py`). ModelQuad has no telemetry. See

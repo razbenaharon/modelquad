@@ -26,10 +26,11 @@ CLAUDE_PRIVACY_SETTINGS = "https://claude.ai/settings/data-privacy-controls"
 
 DATA_FLOW = (
     "Before you use ModelQuad",
-    "- Claude offers to ask Codex for a read-only second opinion when it would",
-    "  help (with modelquad settings proactive on, it may decide on its own).",
+    "- When it would help, Claude asks Codex for a read-only second opinion on",
+    "  its own (with modelquad settings proactive off, it offers instead).",
     "  Claude Code asks you before each call, also in auto and bypass-permissions",
-    "  modes.",
+    "  modes, unless you turn on the standing grant for that folder",
+    "  (modelquad settings auto on).",
     "- For each call, ModelQuad reads the files the request names, inside the",
     "  working folder only. It skips credential files and replaces secret-looking",
     "  values. Your Codex CLI then sends the task and that text to OpenAI, under",
