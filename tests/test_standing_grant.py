@@ -144,6 +144,18 @@ def test_the_cli_needs_a_typed_yes(tmp_path, capsys, monkeypatch):
     assert not grant.granted(repo)
 
 
+def test_only_the_global_grant_warns_about_folders_opened_later(tmp_path, capsys):
+    from modelquad import cli
+
+    repo = _repo(tmp_path / "r")
+    assert cli.main(["settings", "auto", "on", "--project", str(repo), "--yes"]) == 0
+    assert "every folder you open later" not in capsys.readouterr().out
+    assert cli.main(["settings", "auto", "on", "--global", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "every folder you open later" in out and "a client's code" in out
+    assert "modelquad settings repo off" in out
+
+
 def test_a_worker_cannot_turn_the_grant_on(tmp_path, capsys, monkeypatch):
     from modelquad import cli
 

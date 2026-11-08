@@ -1231,7 +1231,8 @@ def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
               file=sys.stderr)
         return 2
     if args.choice == "on":
-        print_lines((*DATA_FLOW, *grant.NOTICE))
+        print_lines((*DATA_FLOW, *grant.NOTICE,
+                     *(grant.GLOBAL_NOTICE if args.everywhere else ())))
         if not args.consent:
             if not sys.stdin or not sys.stdin.isatty():
                 print("Not changed. After reading the notice above, run again with --yes.",

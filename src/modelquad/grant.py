@@ -47,6 +47,12 @@ NOTICE = (
     "or a .modelquad.toml that turns Codex off, outranks the grant.",
 )
 
+#: Shown after NOTICE when the grant is turned on for every folder.
+GLOBAL_NOTICE = (
+    "For every folder means every folder you open later too, including an employer's or "
+    "a client's code. To keep a folder out, run in it: modelquad settings repo off",
+)
+
 #: The allow rule the user adds to Claude Code's settings (permissions.allow).
 ALLOW_RULE = "mcp__plugin_modelquad_modelquad__modelquad_delegate"
 
