@@ -29,6 +29,11 @@ session's own folder, and acts at three moments:
   the gate does not block again: it tells the user directly
   (``systemMessage``) that the change was not reviewed.
 
+Once the gate has told the user, that change set is closed. A further edit to
+one of its files is a follow-up to it and stops nothing again. An edit to a
+file outside it starts a new change set, which gets its own consultation gate
+and review gate.
+
 A review (``modelquad_delegate`` with task_type review or trigger
 review_gate) that Codex answered starts the count again; one that was refused
 or failed marks the review failed. Any other answered call counts as the
@@ -221,6 +226,15 @@ def _prune(folder: Path, now: float) -> None:
             pass
 
 
+def _new_set(payload: dict, digest: str) -> bool:
+    """Whether an edit of this file starts a new change set after a reported one.
+
+    A reported change set is closed: editing one of its files again is a
+    follow-up and stays reported, so neither gate stops it a second time.
+    """
+    return payload["gate"] == "reported" and digest not in payload["files"]
+
+
 def _codex_allowed_mode(cwd) -> str | None:
     """'decide' or 'offer' for this folder, or None when Codex is off or only on request."""
     from modelquad import repo_settings
@@ -388,11 +402,13 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
             if relative is None:
                 return 0
             payload = _load(record) if record.exists() else dict(_EMPTY, files=[])
+            digest = _digest(relative.casefold())
+            if _new_set(payload, digest):
+                payload = dict(_CHANGE_RESET, files=[])
             if payload["consulted"] or payload["review"] in ("done", "fixups"):
                 return 0
             match = SENSITIVE.search(relative)
-            grows = (_digest(relative.casefold()) not in payload["files"]
-                     and len(payload["files"]) >= THRESHOLD - 1)
+            grows = digest not in payload["files"] and len(payload["files"]) >= THRESHOLD - 1
             if match is None and not grows:
                 return 0
             if (standing or _granted)(cwd):
@@ -458,6 +474,8 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
                 return 0
             payload = _load(record)
             digest = _digest(relative.casefold())
+            if _new_set(payload, digest):
+                payload.update(_CHANGE_RESET, files=[])
             if digest not in payload["files"] and len(payload["files"]) < MAX_DIGESTS:
                 payload["files"].append(digest)
             payload["edits_since"] += 1
@@ -467,8 +485,6 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
                 # Edits after a review, before Claude stops, are the fixes for its
                 # findings: not a new change set to review again.
                 payload["review"] = "fixups"
-            if payload["gate"] == "reported" and payload["review"] != "failed":
-                payload["gate"] = "none"  # A new change set after a reported one.
             _save(record, payload)
         _prune(folder, now())
         if output is not None and clock() < deadline:

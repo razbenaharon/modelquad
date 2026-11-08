@@ -213,6 +213,44 @@ def test_the_gate_blocks_once_then_tells_the_user(tmp_path):
     assert _stop(tmp_path) == ""
 
 
+def test_a_further_edit_to_a_reported_change_does_not_block_again(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+    assert "systemMessage" in json.loads(_stop(tmp_path, active=True))
+    # Follow-up tweaks to files of the reported change: no second block, no second message.
+    _edits(tmp_path, "a.py")
+    assert _stop(tmp_path) == ""
+    _edits(tmp_path, "b.py", "c.py")
+    assert _stop(tmp_path) == ""
+    assert _pre(tmp_path, "C:/proj/a.py", granted=True) == ""
+
+
+def test_a_new_file_after_a_reported_change_starts_a_new_change_set(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _stop(tmp_path)
+    _stop(tmp_path, active=True)
+    _edits(tmp_path, "d.py")
+    assert _stop(tmp_path) == ""  # one file of a new change set
+    _edits(tmp_path, "e.py", "f.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+    assert "(3 file(s))" in json.loads(_stop(tmp_path, active=True))["systemMessage"]
+    _edits(tmp_path, "d.py")
+    assert _stop(tmp_path) == ""
+
+
+def test_a_new_change_after_a_reported_one_gets_its_own_consultation(tmp_path):
+    _edits(tmp_path, "a.py")
+    _denied(_pre(tmp_path, "C:/proj/src/auth.py", granted=True))
+    _edits(tmp_path, "src/auth.py")
+    _stop(tmp_path)
+    _stop(tmp_path, active=True)
+    # A sensitive file of the reported change: not stopped again.
+    assert _pre(tmp_path, "C:/proj/src/auth.py", granted=True) == ""
+    # A sensitive file outside it starts a new change, stopped once.
+    _denied(_pre(tmp_path, "C:/proj/src/token_store.py", granted=True))
+    assert _pre(tmp_path, "C:/proj/src/token_store.py", granted=True) == ""
+
+
 def test_the_gate_never_blocks_while_claude_continues_for_a_stop_hook(tmp_path):
     _edits(tmp_path, "a.py", "b.py", "c.py")
     out = json.loads(_stop(tmp_path, active=True))
