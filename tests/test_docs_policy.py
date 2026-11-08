@@ -16,6 +16,20 @@ def _tracked_markdown() -> list[Path]:
     return documents
 
 
+def test_the_readme_links_resolve_off_github():
+    """README.md is the package's long description (pyproject ``readme``).
+
+    PyPI cannot resolve a path relative to the repository, so every image and
+    link must be absolute (or an anchor in the README itself).
+    """
+    import re
+
+    text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    relative = re.findall(r'(?:src|srcset|href)="(?!https://|#)[^"]*"', text)
+    relative += re.findall(r"\]\((?!https://|#)[^)]*\)", text)
+    assert not relative, f"relative links in README.md: {relative}"
+
+
 def test_no_document_carries_a_control_byte():
     """A NUL in a tracked Markdown file is not a cosmetic problem.
 

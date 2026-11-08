@@ -33,6 +33,27 @@ def test_the_data_flow_notice_names_every_destination_and_setting():
     assert "Codex can read files" not in text
 
 
+def test_unattended_is_defined_once_and_the_readme_says_the_same():
+    # "Unattended" must not forbid what the product offers: the definition
+    # names the job runner the user turned on as the consented exception.
+    from pathlib import Path
+
+    def flat(text: str) -> str:
+        return " ".join(text.replace("`", "").split())
+
+    notice = flat("\n".join(DATA_FLOW))
+    definition = ("every Codex call should come from a Claude Code session a person"
+                  " started for their own work.")
+    exception = "Background jobs you turned on yourself (modelquad settings job-runner)"
+    for required in ("Do not run ModelQuad unattended: " + definition, exception,
+                     "Do not script or schedule ModelQuad, run it in CI"):
+        assert required in notice
+    readme = flat((Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8"))
+    for required in ("Do not run ModelQuad unattended: " + definition, exception,
+                     "Do not script or schedule ModelQuad, run it in CI"):
+        assert required in readme
+
+
 def test_the_background_notice_says_what_runs_unattended_and_how_to_stop_it():
     text = "\n".join(BACKGROUND_WORK)
     assert "after Claude Code" in text and "closes" in text

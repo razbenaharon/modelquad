@@ -71,6 +71,10 @@ def _install_wheel(venv_python: Path, wheel: Path, *, cwd: Path, env: dict[str, 
     )
 
 
+#: The documents NOTICE and README point to, which the sdist must carry.
+SDIST_DOCUMENTS = ("PRIVACY.md", "TRADEMARK.md", "THIRD_PARTY.md", "SECURITY.md")
+
+
 def private_build_root(repo_root: Path, tmp_path: Path) -> Path:
     """Copy the package inputs so setuptools writes only into this test's scratch.
 
@@ -79,7 +83,7 @@ def private_build_root(repo_root: Path, tmp_path: Path) -> Path:
     """
     root = tmp_path / "source"
     root.mkdir()
-    for name in ("pyproject.toml", "README.md", "LICENSE", "NOTICE"):
+    for name in ("pyproject.toml", "MANIFEST.in", "README.md", "LICENSE", "NOTICE", *SDIST_DOCUMENTS):
         shutil.copy2(repo_root / name, root / name)
     shutil.copytree(
         repo_root / "src",
@@ -203,3 +207,22 @@ def test_wheel_install_exposes_package_data_without_the_source_checkout(tmp_path
         cwd=tmp_path,
         env=isolated_env,
     )
+
+
+@pytest.mark.ci_only
+def test_sdist_carries_the_documents_notice_and_readme_point_to(tmp_path):
+    import tarfile
+
+    repo_root = Path(__file__).resolve().parents[1]
+    build_root = private_build_root(repo_root, tmp_path)
+    dist_dir = tmp_path / "dist"
+    _run(
+        [sys.executable, "-m", "build", "--sdist", "--outdir", str(dist_dir)],
+        cwd=build_root,
+        env=env_without_the_source_tree(),
+    )
+    (sdist,) = dist_dir.glob("*.tar.gz")
+    with tarfile.open(sdist) as source:
+        names = {name.split("/", 1)[1] for name in source.getnames() if "/" in name}
+    for name in ("LICENSE", "NOTICE", "README.md", *SDIST_DOCUMENTS):
+        assert name in names, f"{name} missing from the sdist"

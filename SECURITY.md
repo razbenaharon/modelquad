@@ -58,9 +58,11 @@ This section describes what the code does now, not a promise about the future.
 
 **Local only.** ModelQuad has no server of its own. Its own processes connect
 only to loopback addresses: each entry point adds an audit hook that refuses
-any other `socket.connect` or `socket.sendto` (`src/modelquad/netpolicy.py`,
-`tests/test_netpolicy.py`). The hook does not cover the programs ModelQuad
-starts. Provider traffic is made by the provider CLIs. See
+any other `socket.connect` or `socket.sendto` made through Python's socket
+module (`src/modelquad/netpolicy.py`, `tests/test_netpolicy.py`). It does not
+intercept connects made by Windows asyncio's Proactor event loop, or host
+name lookups; ModelQuad's own code makes neither. The hook does not cover the
+programs ModelQuad starts. Provider traffic is made by the provider CLIs. See
 [NETWORK.md](NETWORK.md).
 
 **MCP server.** Claude Code starts it as a child process and talks to it over

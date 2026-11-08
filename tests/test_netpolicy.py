@@ -90,3 +90,29 @@ def test_an_api_execution_provider_is_refused_before_routing(monkeypatch):
     assert netpolicy.providers_refused_by_policy() == {"vendor": netpolicy.LOOPBACK_ONLY_REASON}
     monkeypatch.setattr(registry, "api_execution_providers", lambda registry=None: ())
     assert netpolicy.providers_refused_by_policy() == {}
+
+
+def test_modelquad_code_makes_none_of_the_calls_the_guard_cannot_see():
+    # NETWORK.md and SECURITY.md say the hook does not see asyncio Proactor
+    # connects or host name lookups, and that ModelQuad's own code makes
+    # neither. Keep that last claim true: a new call of this kind needs the
+    # guard widened, or the documents changed, first.
+    from pathlib import Path
+    import re
+
+    unseen = re.compile(
+        r"\b(?:open_connection|create_connection|sock_connect|create_datagram_endpoint"
+        r"|getaddrinfo|gethostbyname(?:_ex)?|getnameinfo)\s*\("
+    )
+    src = Path(netpolicy.__file__).resolve().parent
+    found = []
+    for path in sorted(src.rglob("*.py")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if unseen.search(line):
+                found.append(f"{path.relative_to(src).as_posix()}: {line.strip()}")
+    # The one outbound connect names the literal loopback address, so the
+    # lookup inside socket.create_connection makes no resolver query.
+    assert found == [
+        'service/listener.py: sock = socket.create_connection(("127.0.0.1", port),'
+        " timeout=_remaining(deadline, 0.75))"
+    ], found

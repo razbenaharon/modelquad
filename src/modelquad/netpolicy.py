@@ -11,6 +11,12 @@ entry points install it: the ``modelquad`` command (``cli_entry.main``,
 which the background service's entry also runs), the MCP server
 (``mcp/server.main``) and the detached job runner (``jobs/runner.main``).
 
+Only calls that raise those audit events are seen, which means calls made
+through Python's ``socket`` module. A connect by Windows asyncio's Proactor
+event loop (``_overlapped.ConnectEx``) and a host name lookup
+(``socket.getaddrinfo``) raise neither and are not refused. ModelQuad's own
+code makes neither; NETWORK.md says so to users.
+
 The guard covers ModelQuad's own process only. The Codex CLI that ModelQuad
 starts is a separate program; it connects to OpenAI itself, under the user's
 own login, and this hook does not see or restrict it.

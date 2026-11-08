@@ -2559,14 +2559,20 @@ def _run_command(argv: Sequence[str] | None) -> int:
 
         payload = {
             "modelquad_process": LOOPBACK_ONLY_REASON,
-            "enforcement": "an audit hook refuses any other socket connection from this process",
+            "enforcement": (
+                "an audit hook refuses socket.connect and socket.sendto to any other address"
+                " made through Python's socket module; asyncio Proactor connects and host name"
+                " lookups are not intercepted, and ModelQuad's own code makes neither"
+            ),
             "codex_cli": "a separate program that connects to OpenAI itself, under your own sign-in",
         }
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             print(f"{PRODUCT_NAME} network rule: {LOOPBACK_ONLY_REASON}.")
-            print("An audit hook refuses any other socket connection from this process.")
+            print("An audit hook refuses socket.connect and socket.sendto to any other address,")
+            print("made through Python's socket module. Asyncio Proactor connects and host name")
+            print("lookups are not intercepted; ModelQuad's own code makes neither.")
             print("The Codex CLI is a separate program that connects to OpenAI itself, under your own sign-in.")
         return 0
     if args.command == "usage-refresh":

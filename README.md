@@ -1,12 +1,12 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/modelquad-logo-dark.svg">
-    <img src="docs/images/modelquad-logo-color.svg" alt="ModelQuad" width="320">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/razbenaharon/modelquad/main/docs/images/modelquad-logo-dark.svg">
+    <img src="https://raw.githubusercontent.com/razbenaharon/modelquad/main/docs/images/modelquad-logo-color.svg" alt="ModelQuad" width="320">
   </picture>
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+  <a href="https://github.com/razbenaharon/modelquad/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/platform-Windows-0078D6" alt="Platform: Windows">
 </p>
@@ -39,7 +39,7 @@ Claude keeps doing the work; Codex only reads and advises.
 ## How it works
 
 <p align="center">
-  <img src="docs/images/how-it-works.svg" alt="Claude consults Codex, Codex reads the named files read-only, Claude checks each finding, you see the result" width="820">
+  <img src="https://raw.githubusercontent.com/razbenaharon/modelquad/main/docs/images/how-it-works.svg" alt="Claude consults Codex, Codex reads the named files read-only, Claude checks each finding, you see the result" width="820">
 </p>
 
 1. Claude reaches a moment where a second opinion helps: before a large,
@@ -132,13 +132,14 @@ In short:
 - Other AI providers, a desktop window, a tray icon, an installer and team
   features are not supported.
 
-## Claude asks Codex at the right moments; you approve each call
+## When Claude asks Codex
 
 - By default, Claude decides on its own to ask Codex for a read-only review at
   set moments: when a change that touched several files is complete, before a
   commit or PR, when a bug survived one fix attempt, or before a design choice
   with real trade-offs. You need not ask, and you approve each call once, in
-  the prompt below. After Claude has changed three files without a Codex
+  the prompt below, unless you turned on the standing grant for that folder
+  (see [Working without prompts](#working-without-prompts)). After Claude has changed three files without a Codex
   review, the plugin reminds it of that moment; the reminder only adds a line
   for Claude and never starts Codex. `modelquad settings proactive off` makes
   Claude offer a review in one sentence instead and call only when you agree
@@ -161,7 +162,8 @@ In short:
   under a keyed hash of the repository, never its path or name. `off` applies
   from the next call; the other choices reach Claude as one line when a new
   Claude Code session starts in that repository. The approval prompt still
-  appears before each call.
+  appears before each call, unless you turned on the standing grant for that
+  folder.
 - `/modelquad:settings` in Claude Code shows three things: whether ModelQuad
   is on in Claude Code, whether Codex calls are automatic or approved one by
   one, and the history of consultations and reviews here. It then asks which
@@ -191,7 +193,12 @@ In short:
   runs the same command after you confirm. Claude is told never to turn a
   grant on, reconnect ModelQuad or undo an exclusion unless you ask for it
   in that turn: when a call is refused because the grant is off or the
-  folder is excluded, Claude tells you and changes nothing. New Claude Code sessions there register the
+  folder is excluded, Claude tells you and changes nothing. That is an
+  instruction to Claude, not a lock: the commands are shell commands, and
+  ModelQuad cannot tell whether you or Claude ran one. What stops Claude
+  from turning the grant on or lifting an exclusion by itself is Claude
+  Code's own permission prompt for that shell command, so keep that prompt
+  on for `modelquad settings` commands. New Claude Code sessions there register the
   Codex tool without the per-call mark, so Claude Code's own permissions
   apply. Add the rule it prints to `permissions.allow`, or answer "don't ask
   again" the first time Claude Code asks.
@@ -275,7 +282,7 @@ narrows Codex use there: Codex off, fewer task kinds, lower file limits, a
 work account only (one Codex itself reports), or Claude calling Codex only
 when you ask. It can never approve a call, add files, turn on Claude's own
 initiative or change how Codex runs, and a broken file refuses Codex in that
-repository. See [docs/REPO-POLICY.md](docs/REPO-POLICY.md).
+repository. See [docs/REPO-POLICY.md](https://github.com/razbenaharon/modelquad/blob/main/docs/REPO-POLICY.md).
 
 **Your own setting for a repository.**
 `modelquad settings repo on|off|offer-only|inherit [--project DIR]` records
@@ -283,8 +290,9 @@ your choice for one repository: `off` (no Codex there), `offer-only` (Claude
 offers and calls only when you agree or ask), `on` (Claude may decide on its
 own there) or `inherit` (your global `modelquad settings proactive` applies).
 Only you can choose `on`. When the choice differs from your global setting,
-ModelQuad's startup reminder tells Claude in one line. Claude Code still asks
-you before every Codex call whatever you choose.
+ModelQuad's startup reminder tells Claude in one line. Whatever you choose,
+Claude Code still asks you before every Codex call, unless you turned on the
+standing grant for that folder.
 
 **Afterwards.** `modelquad split summary [--project DIR] [--since 1d|7d]` (and
 a `split` block for this session in `modelquad_activity`) shows what happened,
@@ -317,7 +325,7 @@ reads unknown, and one that reset during the period says so.
   in `preferences.json` in ModelQuad's state folder, keyed by a hash of the
   repository, with no path or folder name. Claude sees only each account's
   kind (personal, work or unknown), never the plan name, and the repository's
-  Codex setting. See [PRIVACY.md](PRIVACY.md).
+  Codex setting. See [PRIVACY.md](https://github.com/razbenaharon/modelquad/blob/main/PRIVACY.md).
 
 ## Terminal or desktop app
 
@@ -396,7 +404,7 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
 - `modelquad doctor` checks the setup, including that the plugin is installed
   and that the folder pip put the commands in is on the PATH Claude Code sees.
 
-See [docs/PLUGIN.md](docs/PLUGIN.md) for what the plugin contains.
+See [docs/PLUGIN.md](https://github.com/razbenaharon/modelquad/blob/main/docs/PLUGIN.md) for what the plugin contains.
 
 To upgrade, close every Claude Code window first (in a terminal session, type
 `/exit`), then run `git pull` and the same `pip install` again, and refresh the
@@ -521,7 +529,7 @@ While it runs, ModelQuad also writes:
 - The state folder (see Install): the history database, answers waiting to be
   collected, logs, the service secret, an installation id, the record of any
   registration that install replaced, and the other small files listed in
-  [PRIVACY.md](PRIVACY.md). The registration record can include `env` values
+  [PRIVACY.md](https://github.com/razbenaharon/modelquad/blob/main/PRIVACY.md). The registration record can include `env` values
   from your old entry, such as keys.
 
 Only when you ask for them:
@@ -569,8 +577,11 @@ the file.
 ## Privacy and network
 
 - ModelQuad has no server of its own, no update check and no telemetry. Its
-  own processes connect only to loopback addresses; an audit hook refuses any
-  other connection from them. `modelquad network` shows the rule.
+  own processes connect only to loopback addresses; an audit hook refuses a
+  socket connect or send through Python's socket module to any other address
+  (asyncio Proactor connects and host name lookups are outside it; ModelQuad's
+  own code makes neither, see [NETWORK.md](https://github.com/razbenaharon/modelquad/blob/main/NETWORK.md)). `modelquad network`
+  shows the rule.
 - For a Codex call, ModelQuad reads the files the request names, inside the
   working folder only. It skips credential files such as `.env` and
   `auth.json`, replaces secret-looking values with `<credential>`, and refuses,
@@ -595,10 +606,10 @@ the file.
   history as training data. Opting out does not cover feedback you submit or
   conversations flagged for safety review.
 
-Details: [PRIVACY.md](PRIVACY.md), [NETWORK.md](NETWORK.md). For settings that
+Details: [PRIVACY.md](https://github.com/razbenaharon/modelquad/blob/main/PRIVACY.md), [NETWORK.md](https://github.com/razbenaharon/modelquad/blob/main/NETWORK.md). For settings that
 keep ModelQuad away from sensitive work (a repository it must not touch, secret
 files, employer code), see
-[docs/RECOMMENDED-SETTINGS.md](docs/RECOMMENDED-SETTINGS.md).
+[docs/RECOMMENDED-SETTINGS.md](https://github.com/razbenaharon/modelquad/blob/main/docs/RECOMMENDED-SETTINGS.md).
 
 ## ModelQuad and OpenAI's Codex plugin
 
@@ -627,7 +638,7 @@ trademarks of Anthropic. "OpenAI" and "Codex" are trademarks of OpenAI.
 
 The code is open source; the ModelQuad name and logo are not part of the
 licence. A changed version needs a name of its own. See
-[TRADEMARK.md](TRADEMARK.md).
+[TRADEMARK.md](https://github.com/razbenaharon/modelquad/blob/main/TRADEMARK.md).
 
 <!-- disclaimer: owner review 2026-11-03; re-read provider terms before each release -->
 
@@ -639,8 +650,12 @@ licence. A changed version needs a name of its own. See
 - ModelQuad does not change any usage limit. Each provider's limits apply as
   they are, and a note that Claude is near its limit starts nothing.
 - Every Codex call runs your own Codex CLI, under your own sign-in, after you
-  approve it or within a standing grant you turned on. Do not run ModelQuad unattended, in CI or on behalf of other
-  people. OpenAI recommends API-key sign-in for programmatic Codex workflows
+  approve it or within a standing grant you turned on. Do not run ModelQuad
+  unattended: every Codex call should come from a Claude Code session a
+  person started for their own work. Background jobs you turned on yourself
+  (`modelquad settings job-runner`) are the one exception you agree to. Do
+  not script or schedule ModelQuad, run it in CI, or run it on behalf of
+  other people. OpenAI recommends API-key sign-in for programmatic Codex workflows
   such as CI/CD.
 - Anthropic and OpenAI can limit, suspend or close accounts, and can change
   their terms at any time. That risk is yours. If a provider tells you that a
@@ -658,7 +673,7 @@ licence. A changed version needs a name of its own. See
 
 ModelQuad is free software, provided "as is", without warranties or
 conditions of any kind, under the Apache License 2.0; see sections 7 and 8 of
-[LICENSE](LICENSE). To the extent the law allows, its author is not liable for
+[LICENSE](https://github.com/razbenaharon/modelquad/blob/main/LICENSE). To the extent the law allows, its author is not liable for
 any damage that comes from using it, including lost work, code or data sent to
 a provider, a wrong answer from Codex, or action a provider takes on your
 account. This does not limit rights that the law where you live gives you and
@@ -671,22 +686,22 @@ maintainer directed, reviewed and tested the work and is responsible for it.
 
 ## Documentation
 
-- [PRIVACY.md](PRIVACY.md): what ModelQuad reads, sends and stores, and how to
+- [PRIVACY.md](https://github.com/razbenaharon/modelquad/blob/main/PRIVACY.md): what ModelQuad reads, sends and stores, and how to
   delete it.
-- [docs/RECOMMENDED-SETTINGS.md](docs/RECOMMENDED-SETTINGS.md): recommended
+- [docs/RECOMMENDED-SETTINGS.md](https://github.com/razbenaharon/modelquad/blob/main/docs/RECOMMENDED-SETTINGS.md): recommended
   Claude Code settings, in plain language.
-- [docs/REPO-POLICY.md](docs/REPO-POLICY.md): the `.modelquad.toml` file a
+- [docs/REPO-POLICY.md](https://github.com/razbenaharon/modelquad/blob/main/docs/REPO-POLICY.md): the `.modelquad.toml` file a
   repository can use to narrow what ModelQuad does with Codex, and your own
   setting for one repository.
-- [NETWORK.md](NETWORK.md): which connections ModelQuad and the programs it
+- [NETWORK.md](https://github.com/razbenaharon/modelquad/blob/main/NETWORK.md): which connections ModelQuad and the programs it
   starts make.
-- [docs/PLUGIN.md](docs/PLUGIN.md): the Claude Code plugin, how ModelQuad is
+- [docs/PLUGIN.md](https://github.com/razbenaharon/modelquad/blob/main/docs/PLUGIN.md): the Claude Code plugin, how ModelQuad is
   installed.
-- [SECURITY.md](SECURITY.md): how to report a vulnerability, and the security
+- [SECURITY.md](https://github.com/razbenaharon/modelquad/blob/main/SECURITY.md): how to report a vulnerability, and the security
   design.
-- [CONTRIBUTING.md](CONTRIBUTING.md): how to contribute.
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): community standards.
-- [AGENTS.md](AGENTS.md): build, test and safety rules for contributors.
-- [THIRD_PARTY.md](THIRD_PARTY.md): the packages pip installs with ModelQuad.
-- [TRADEMARK.md](TRADEMARK.md): how you may use the ModelQuad name and logo.
-- [LICENSE](LICENSE): Apache License 2.0.
+- [CONTRIBUTING.md](https://github.com/razbenaharon/modelquad/blob/main/CONTRIBUTING.md): how to contribute.
+- [CODE_OF_CONDUCT.md](https://github.com/razbenaharon/modelquad/blob/main/CODE_OF_CONDUCT.md): community standards.
+- [AGENTS.md](https://github.com/razbenaharon/modelquad/blob/main/AGENTS.md): build, test and safety rules for contributors.
+- [THIRD_PARTY.md](https://github.com/razbenaharon/modelquad/blob/main/THIRD_PARTY.md): the packages pip installs with ModelQuad.
+- [TRADEMARK.md](https://github.com/razbenaharon/modelquad/blob/main/TRADEMARK.md): how you may use the ModelQuad name and logo.
+- [LICENSE](https://github.com/razbenaharon/modelquad/blob/main/LICENSE): Apache License 2.0.

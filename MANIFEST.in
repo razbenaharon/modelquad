@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Raz Ben Aharon
+# SPDX-License-Identifier: Apache-2.0
+# The documents NOTICE and README point to travel with the source
+# distribution (tests/test_wheel_packaging.py).
+include PRIVACY.md TRADEMARK.md THIRD_PARTY.md SECURITY.md
