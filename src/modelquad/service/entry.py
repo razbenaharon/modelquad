@@ -45,7 +45,16 @@ def _restore_installation(image: str) -> None:
     sys.path[:] = [path for path in sys.path if os.path.normcase(os.path.realpath(path)) not in base_sites]
     sys.executable = str(executable)
     sys.prefix = sys.exec_prefix = str(root)
-    site.PREFIXES[:] = [sys.base_prefix, sys.base_exec_prefix]
+    if sys.version_info >= (3, 14):
+        # Python 3.14's site.venv() adds the venv's own site-packages itself
+        # and appends the base prefixes only when include-system-site-packages
+        # is true, so PREFIXES starts as a normal venv start leaves it. Base
+        # prefixes here would add the base site-packages whatever the policy.
+        site.PREFIXES[:] = [sys.prefix, sys.exec_prefix]
+    else:
+        # Python 3.11-3.13's site.venv() replaces PREFIXES with the venv, or
+        # puts the venv in front of these when the policy is true.
+        site.PREFIXES[:] = [sys.base_prefix, sys.base_exec_prefix]
     site.main()
 
 
