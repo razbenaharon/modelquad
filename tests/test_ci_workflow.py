@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Guards on the Windows CI workflow definition.
+"""Guards on the Windows CI and release workflow definitions.
 
 CI is the only evidence that the product installs and passes its suite without
 a maintainer's machine state, so the workflow failing *open* -- passing for the
@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -257,3 +258,126 @@ def test_a_private_repository_runs_only_on_manual_dispatch(workflow: dict):
         condition = definition.get("if", "")
         assert "github.event.repository.private" in condition, name
         assert "workflow_dispatch" in condition, name
+
+
+def test_the_dco_skip_needs_more_than_dependabots_author_email(workflow: dict):
+    """Anyone can set an author e-mail. A Dependabot commit is skipped only
+    when GitHub is also the committer and GitHub reports the signature
+    verified; a failed lookup reads as unverified."""
+    script = _dco_script(workflow)
+    skip = script[script.index("dependabot[bot]"):script.index("continue")]
+    assert "%ce" in script
+    assert '[ "$committer" = "noreply@github.com" ]' in skip
+    assert "--jq '.commit.verification.verified' || echo false" in skip
+    assert '[ "$verified" = "true" ]' in skip
+    env = workflow["jobs"]["dco"]["steps"][1]["env"]
+    assert env["GH_TOKEN"] == "${{ github.token }}"
+    assert env["REPO"] == "${{ github.repository }}"
+    # The lookup needs read access only.
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "permissions" not in workflow["jobs"]["dco"]
+
+
+def test_a_failed_advisory_leg_is_reported_on_the_summary(job: dict):
+    """continue-on-error keeps the run green, so an advisory failure must be
+    written where a reader sees it, for exactly the advisory versions."""
+    report = job["steps"][-1]
+    assert report["name"] == "Report a failed advisory leg"
+    condition = report["if"]
+    assert condition.startswith("${{ failure() && ")
+    advisory = set(re.findall(r"'(3\.\d+)'", str(job["continue-on-error"])))
+    assert advisory and set(re.findall(r"'(3\.\d+)'", condition)) == advisory
+    assert "GITHUB_STEP_SUMMARY" in report["run"]
+    assert "::warning" in report["run"]
+
+
+def test_dependabot_watches_the_python_dependencies():
+    config = yaml.safe_load(
+        (WORKFLOW.parents[1] / "dependabot.yml").read_text(encoding="utf-8")
+    )
+    entries = [u for u in config["updates"] if u["package-ecosystem"] == "pip"]
+    assert len(entries) == 1
+    pip = entries[0]
+    assert pip["directory"] == "/"
+    assert pip["schedule"]["interval"] == "weekly"
+    assert 1 <= pip["open-pull-requests-limit"] <= 5
+
+
+RELEASE = WORKFLOW.parent / "release.yml"
+
+
+@pytest.fixture(scope="module")
+def release() -> dict:
+    return yaml.safe_load(RELEASE.read_text(encoding="utf-8"))
+
+
+def _on(definition: dict) -> dict:
+    # PyYAML reads the bare key `on` as the boolean True.
+    return definition.get("on", definition.get(True))
+
+
+def test_release_runs_only_on_a_version_tag(release: dict):
+    """No manual dispatch and no branch push: a release is a pushed v-tag."""
+    trigger = _on(release)
+    assert set(trigger) == {"push"}
+    assert set(trigger["push"]) == {"tags"}
+    assert trigger["push"]["tags"] == ["v[0-9]+.[0-9]+.[0-9]+"]
+
+
+def test_release_grants_nothing_by_default(release: dict):
+    assert release["permissions"] == {}
+    assert release["jobs"]["build"]["permissions"] == {"contents": "read"}
+
+
+def test_only_the_publish_job_can_mint_an_oidc_token(release: dict):
+    assert set(release["jobs"]) == {"build", "publish"}
+    publish = release["jobs"]["publish"]
+    assert publish["needs"] == "build"
+    assert publish["permissions"] == {"id-token": "write"}
+    assert publish["environment"]["name"] == "pypi"
+    assert publish["environment"]["url"].startswith("https://pypi.org/project/modelquad/")
+    # Trusted Publishing: no stored token is handed to the publish action.
+    assert "${{ secrets." not in RELEASE.read_text(encoding="utf-8")
+
+
+def test_release_checks_the_tag_against_the_package_version(release: dict):
+    steps = release["jobs"]["build"]["steps"]
+    names = [step.get("name") for step in steps]
+    check = names.index("The tag matches the package version")
+    build = names.index("Build and check the distributions")
+    assert check < build
+    script = steps[check]["run"]
+    assert 'tag="${GITHUB_REF_NAME#v}"' in script
+    assert "src/modelquad/__init__.py" in script
+    assert 'if [ "$tag" != "$ver" ]; then' in script and "exit 1" in script
+    assert "python -m build" in steps[build]["run"]
+    assert "twine check --strict" in steps[build]["run"]
+
+
+def test_the_release_version_lookup_reads_the_real_version():
+    """The workflow's own one-liner, run against this checkout."""
+    line = re.search(r'ver=\$\(python -c "(.+)"\)$', RELEASE.read_text(encoding="utf-8"),
+                     re.MULTILINE)
+    assert line is not None
+    code = line.group(1).replace('\\"', '"')
+    root = WORKFLOW.parents[2]
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", code], cwd=root, capture_output=True, text=True,
+        check=True, **no_window_kwargs(),
+    )
+    namespace: dict = {}
+    exec((root / "src" / "modelquad" / "__init__.py").read_text(encoding="utf-8"), namespace)
+    assert completed.stdout.strip() == namespace["__version__"]
+
+
+def test_every_release_action_is_pinned_by_commit_sha_with_its_version(release: dict):
+    uses = _USES.findall(RELEASE.read_text(encoding="utf-8"))
+    assert any(target.startswith("pypa/gh-action-pypi-publish@") for target, _ in uses)
+    for target, rest in uses:
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", target), target
+        assert re.fullmatch(r"\s+# v\d+\.\d+\.\d+\s*", rest), f"{target}: no `# vX.Y.Z` comment"
+    for name, definition in release["jobs"].items():
+        assert "self-hosted" not in str(definition["runs-on"]), name
+    checkout = release["jobs"]["build"]["steps"][0]
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"]["persist-credentials"] is False
