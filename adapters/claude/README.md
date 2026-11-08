@@ -4,9 +4,9 @@
 `src/modelquad/adapters/templates/claude/`; this directory intentionally
 does not duplicate them.
 
-- The six skills in `skills/` (`modelquad` and the commands `modelquad-review`,
-  `modelquad-handoff`, `modelquad-quota`, `modelquad-setup` and
-  `modelquad-split`) become `~/.claude/skills/<name>/SKILL.md`.
+- The seven skills in `skills/` (`modelquad` and the commands `modelquad-review`,
+  `modelquad-handoff`, `modelquad-quota`, `modelquad-setup`, `modelquad-split`
+  and `modelquad-settings`) become `~/.claude/skills/<name>/SKILL.md`.
 - `mcp/mcp-servers.json` is merged into `~/.claude.json` (a sibling of
   `~/.claude/`) as the `modelquad` MCP server entry, with its own tool
   `timeout`, without removing other servers.

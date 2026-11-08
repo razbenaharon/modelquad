@@ -171,6 +171,7 @@ class _AdmittedExecutor(Executor):
                     + ("; " + fate if (fate := describe_worker_termination(persisted.metadata)) else "")
                 ),
                 worker_descendants=persisted.metadata.get("worker_descendants"),
+                roots=(request.working_directory,) if request.working_directory else (),
             )
         self._manager.launch_result = persisted
         return result

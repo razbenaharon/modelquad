@@ -300,14 +300,14 @@ delegation that reached no executor does not read as one that chose the
 recommended runtime."""
 
 
-def _sanitized_evidence_json(evidence_json: str | None) -> str | None:
+def _sanitized_evidence_json(evidence_json: str | None, roots: Iterable[Any] = ()) -> str | None:
     """The decision evidence with every absolute path removed."""
     if evidence_json is None:
         return None
     try:
-        return _privacy.sanitize_persisted_metadata_json(json.loads(evidence_json))
+        return _privacy.sanitize_persisted_metadata_json(json.loads(evidence_json), roots=roots)
     except (TypeError, ValueError):
-        return _privacy.sanitize_persisted_text(evidence_json)
+        return _privacy.sanitize_persisted_text(evidence_json, roots=roots)
 
 
 def record_routing_decision(
@@ -327,7 +327,15 @@ def record_routing_decision(
     decision_id: str | None = None,
     evidence_json: str | None = None,
     plan_decision_id: int | None = None,
+    roots: Iterable[Any] = (),
 ) -> bool:
+    """Write one routing row. ``roots`` names folders removed whole from its text.
+
+    A background process (the job runner, the service) does not run in the
+    task's working folder, so the caller names that folder here; otherwise a
+    folder outside the home folder whose name has a space keeps its tail.
+    """
+    roots = tuple(roots)
     # `result.target` (see RouteTarget in models.py) is optional and only
     # ever set when a configured model_policy prior exists for the winning
     # provider -- absent it, these columns stay NULL exactly like every
@@ -375,11 +383,12 @@ def record_routing_decision(
                 result.recommendation,
                 recorded_selection,
                 1 if overridden else 0,
-                _privacy.sanitize_persisted_text(override_reason),
+                _privacy.sanitize_persisted_text(override_reason, roots=roots),
                 # Provider statuses carry collector metadata (a usage file's
                 # location, "Usage file not found: <path>"): no absolute
                 # path is stored.
-                _privacy.sanitize_persisted_metadata_json([p.to_dict() for p in result.providers]),
+                _privacy.sanitize_persisted_metadata_json([p.to_dict() for p in result.providers],
+                                                          roots=roots),
                 source,
                 invocation_mode,
                 invocation_mode_source,
@@ -396,8 +405,8 @@ def record_routing_decision(
                 # and dropped, which left history unable to say WHY a
                 # recommendation won (only per-provider score reasons survived
                 # inside providers_json).
-                _privacy.sanitize_persisted_text(result.reason),
-                _sanitized_evidence_json(evidence_json),
+                _privacy.sanitize_persisted_text(result.reason, roots=roots),
+                _sanitized_evidence_json(evidence_json, roots),
                 plan_decision_id,
             ),
         )
@@ -431,7 +440,10 @@ def record_execution(
     reasoning_effort_requested: str | None = None,
     evidence: Any | None = None,
     decision_id: str | None = None,
+    roots: Iterable[Any] = (),
 ) -> None:
+    """Write one execution row. ``roots``: as for :func:`record_routing_decision`."""
+    roots = tuple(roots)
     try:
         conn = _db.connect_and_init(db_path)
     except (sqlite3.Error, OSError):
@@ -485,7 +497,7 @@ def record_execution(
             # is a copy: the caller's evidence, and what MCP tools return,
             # stay as they are.
             evidence_dict["blocked_reason"] = _privacy.sanitize_persisted_text(
-                evidence_dict.get("blocked_reason")
+                evidence_dict.get("blocked_reason"), roots=roots
             )
             effective_outcome_evidence_json = json.dumps(evidence_dict)
         # Project labels are intentionally only a basename.  History is shown
@@ -517,7 +529,7 @@ def record_execution(
                 # binary or endpoint that failed. The categorized structured
                 # signal is already path-free; this makes the column path-free
                 # in every mode, including a future executor that forgets.
-                _privacy.sanitize_persisted_text(execution_result.error),
+                _privacy.sanitize_persisted_text(execution_result.error, roots=roots),
                 source,
                 result,
                 1 if effective_fallback else 0,
@@ -525,9 +537,9 @@ def record_execution(
                 # Metadata is normalized execution context, never prompts or
                 # credentials -- and its serialized form is path-redacted at
                 # this boundary rather than trusted to stay that way.
-                _privacy.sanitize_persisted_metadata_json(metadata),
+                _privacy.sanitize_persisted_metadata_json(metadata, roots=roots),
                 task_status,
-                _privacy.sanitize_persisted_text(task_status_reason),
+                _privacy.sanitize_persisted_text(task_status_reason, roots=roots),
                 invocation_mode,
                 invocation_mode_source,
                 host,
@@ -582,7 +594,7 @@ CALLER_ABANDONMENT_REASONS: tuple[str, ...] = ("transport_cancelled", "transport
 _MAX_ATTEMPT_DETAIL_CHARS = 500
 
 
-def _safe_detail(detail: object) -> str | None:
+def _safe_detail(detail: object, roots: Iterable[Any] = ()) -> str | None:
     """Cap and path-redact one free-text attempt detail before storing it.
 
     ``detail`` is written from four sites that interpolate a live exception
@@ -596,7 +608,7 @@ def _safe_detail(detail: object) -> str | None:
 
     if not detail:
         return None
-    return _privacy.sanitize_persisted_text(str(detail))[:_MAX_ATTEMPT_DETAIL_CHARS]
+    return _privacy.sanitize_persisted_text(str(detail), roots=roots)[:_MAX_ATTEMPT_DETAIL_CHARS]
 
 
 def _resolved_attempt_detail(existing: str | None, detail: str | None) -> str | None:
@@ -854,7 +866,9 @@ def record_delegation_attempt(
                 requested_provider,
                 status,
                 failure_kind,
-                _safe_detail(detail),
+                # The working folder is removed whole even when this process
+                # runs somewhere else.
+                _safe_detail(detail, (working_directory,) if working_directory else ()),
                 source,
                 host,
                 invocation_mode,
@@ -1017,6 +1031,7 @@ def resolve_delegation_attempt(
     only_if_open: bool = False,
     exclude_job_owned: bool = False,
     worker_descendants: dict[str, Any] | None = None,
+    roots: Iterable[Any] = (),
 ) -> bool | None:
     """Close out a previously recorded attempt with what actually happened.
 
@@ -1044,6 +1059,11 @@ def resolve_delegation_attempt(
         return False if only_if_open else None
     if status not in DELEGATION_ATTEMPT_STATUSES:
         raise ValueError(f"status must be one of {DELEGATION_ATTEMPT_STATUSES}, got {status!r}")
+    roots = tuple(roots)
+    if roots and detail:
+        # The folders the caller names go first; the row function below
+        # redacts and caps again.
+        detail = _privacy.sanitize_persisted_text(str(detail), roots=roots)
     try:
         conn = _db.connect_and_init(db_path)
     except (sqlite3.Error, OSError):

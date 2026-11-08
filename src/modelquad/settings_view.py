@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """``modelquad settings`` (or ``settings show``): the three settings, in plain words.
 
-1. Whether ModelQuad is on for Claude Code: the ``modelquad host`` control,
-   read exactly as ``modelquad host status`` reads it.
+1. Whether ModelQuad is on for Claude Code: first whether it is installed
+   there at all (the plugin record or the regular install, as ``modelquad
+   doctor`` checks them), then the ``modelquad host`` control, read exactly
+   as ``modelquad host status`` reads it.
 2. The mode: automatic (the standing grant, for every folder or for this
    folder's repository) or approve each call, and whether this folder is
    excluded (``modelquad settings repo off`` or a ``.modelquad.toml`` that
@@ -26,9 +28,37 @@ from pathlib import Path
 HISTORY_DAYS = 30
 
 
+def _claude_installed() -> bool | None:
+    """Whether ModelQuad is installed in Claude Code, as ``modelquad doctor`` tells.
+
+    True: Claude Code's plugin record lists the plugin, or the regular install
+    (the skill and the ``modelquad`` server entry) is in place. False: neither,
+    and no plugin record exists or it does not list ModelQuad. None: unknown.
+    """
+    from .adapters.claude_adapter import ClaudeAdapter, plugin_recorded
+    from .adapters.paths import default_target_dir
+
+    try:
+        target = default_target_dir("claude")
+        plugin = plugin_recorded(target)
+        if plugin is True or ClaudeAdapter(via_plugin=False).is_installed(target):
+            return True
+        if plugin is False or not (target / "plugins" / "installed_plugins.json").exists():
+            return False
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def _host_line(db_path) -> str:
     from .service import history as service_history
 
+    installed = _claude_installed()
+    if installed is False:
+        return ("1. ModelQuad in Claude Code: not installed "
+                "(run modelquad install claude, or install the plugin).")
+    if installed is None:
+        return "1. ModelQuad in Claude Code: unknown (whether it is installed could not be read)."
     try:
         hosts = service_history.get_launch_state(db_path)["disconnected_hosts"]
     except (service_history.LaunchStateUnavailable, OSError, ValueError, sqlite3.Error):

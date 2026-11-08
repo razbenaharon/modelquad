@@ -586,6 +586,58 @@ def test_cli_privacy_command_reports_no_telemetry_and_the_loopback_rule(tmp_path
     assert "loopback" in payload["network"]
     assert not any("consent" in key for key in payload)
 
+
+def test_cli_privacy_delete_steps_and_retention_match_privacy_md(tmp_path, capsys, monkeypatch):
+    """`modelquad privacy` says what PRIVACY.md's "Everything" says, store by store."""
+    import modelquad.paths as paths_module
+
+    monkeypatch.setattr(paths_module, "state_root", lambda: tmp_path / "state")
+    doc = (Path(__file__).resolve().parents[1] / "PRIVACY.md").read_text(encoding="utf-8")
+    everything = doc.split("- **Everything**:", 1)[1].split("Deleting files is ordinary", 1)[0]
+
+    assert main(["privacy", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    steps = " ".join(payload["delete_everything"])
+    for needed in ("modelquad service stop", "modelquad service uninstall", "modelquad uninstall claude",
+                   "claude plugin uninstall modelquad", "*.modelquad-backup-*", "secrets",
+                   str(tmp_path / "state"), *cli_module.PRIVACY_QUOTA_FILES):
+        assert needed in steps, needed
+    for name in cli_module.PRIVACY_QUOTA_FILES:
+        assert f"`{name}`" in everything, name
+    assert "--global" not in steps
+    assert payload["retention"]["answers waiting to be collected (pending-output)"] == "7 days by default"
+    assert payload["retention"]["review reminders (review-reminder)"] == "deleted after 2 days"
+    assert "7 days by default" in doc and "Deleted after 2 days" in doc
+
+    assert main(["privacy"]) == 0
+    out = capsys.readouterr().out
+    assert "no automatic expiry; there is" not in out
+    assert "7 days by default" in out
+    assert "4. Delete usage-claude.json" in out
+
+
+def test_service_refusal_carries_no_secret_path(monkeypatch):
+    """An unverifiable secret's problem names its path; the service gets fixed text."""
+    import uvicorn
+    import modelquad.service.app as service_app_module
+    import modelquad.service.auth as auth_module
+    import modelquad.windowless_diagnostics as diagnostics
+
+    captured = {}
+    leaky = auth_module.ServiceSecret(problem=r"Delete C:\Users\Dana Cohen\.modelquad\service-secret")
+    monkeypatch.setattr(auth_module, "ensure_service_secret", lambda root: leaky)
+    monkeypatch.setattr(diagnostics, "emit", lambda *a, **k: None)
+    monkeypatch.setattr(service_app_module, "create_app",
+                        lambda **kwargs: captured.update(kwargs) or object())
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module.ServiceProcessManager, "admit_child", lambda self, **kw: True)
+    args = cli_module.build_parser().parse_args(["serve", "--managed-child"])
+    assert cli_module._run_service_command(args) == 0
+    secret = captured["write_secret"]
+    assert not secret.usable
+    assert secret.problem == cli_module.SERVICE_SECRET_UNAVAILABLE
+    assert "Dana" not in secret.problem and ":\\" not in secret.problem
+
 # --- recorded routing evidence agrees with the route taken -----
 
 

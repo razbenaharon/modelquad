@@ -194,8 +194,12 @@ def _clean_file(text: str) -> str | None:
     return text[:200]
 
 
-def _redact(text: str, limit: int) -> str:
-    """Credential redaction (as for files sent to Codex), then path redaction, then the cap."""
+def _redact(text: str, limit: int, roots=()) -> str:
+    """Credential redaction (as for files sent to Codex), then path redaction, then the cap.
+
+    ``roots`` names the working folder, removed whole even when this process
+    runs elsewhere.
+    """
     from .execution.noshell import _sanitize_supplied
     from .privacy import redact_paths
 
@@ -203,7 +207,7 @@ def _redact(text: str, limit: int) -> str:
         text = _sanitize_supplied(text)
     except Exception:  # noqa: BLE001 -- fall through to the path redaction and the cap
         text = "<redacted>"
-    return redact_paths(text)[:limit]
+    return redact_paths(text, roots=roots)[:limit]
 
 
 def _location(text: str) -> tuple[str | None, int | None, int | None]:
@@ -218,7 +222,7 @@ def _location(text: str) -> tuple[str | None, int | None, int | None]:
     return _clean_file(match.group("file")), line, end
 
 
-def _parse_line(ref: str, rest: str) -> Finding | None:
+def _parse_line(ref: str, rest: str, roots=()) -> Finding | None:
     parts = [part.strip() for part in rest.split("|")]
     if len(parts) < 4:
         return None
@@ -234,7 +238,7 @@ def _parse_line(ref: str, rest: str) -> Finding | None:
         match = _CONFIDENCE.match(parts[3])
         if match:
             confidence = match.group(1).lower()
-            note = _redact(match.group(2).strip(), MAX_NOTE_CHARS) or None
+            note = _redact(match.group(2).strip(), MAX_NOTE_CHARS, roots) or None
             claim = parts[4]
             reasoning = " | ".join(parts[5:]).strip() or None
         else:
@@ -243,12 +247,12 @@ def _parse_line(ref: str, rest: str) -> Finding | None:
         claim = " | ".join(parts[3:])
     if not claim.strip():
         return None
-    return Finding(ref, severity, file, line, category, _redact(claim.strip(), MAX_CLAIM_CHARS),
+    return Finding(ref, severity, file, line, category, _redact(claim.strip(), MAX_CLAIM_CHARS, roots),
                    end, confidence, note,
-                   _redact(reasoning, MAX_REASON_CHARS) if reasoning else None)
+                   _redact(reasoning, MAX_REASON_CHARS, roots) if reasoning else None)
 
 
-def parse_findings(output) -> list[Finding] | None:
+def parse_findings(output, *, roots=()) -> list[Finding] | None:
     """The findings in Codex's answer, or None when it lists none in the agreed form.
 
     None means "unknown", not zero: an answer that found nothing says
@@ -262,7 +266,7 @@ def parse_findings(output) -> list[Finding] | None:
         ref = match.group(1).upper()
         if ref in seen:
             continue
-        finding = _parse_line(ref, match.group(2))
+        finding = _parse_line(ref, match.group(2), roots)
         if finding is None:
             continue
         seen.add(ref)
@@ -347,7 +351,8 @@ def record_run(payload: dict, *, working_directory, task_type, trigger, path: Pa
                seconds: float | None = None) -> list[Finding] | None:
     """Record one Codex call and its findings; returns the findings (None: unknown)."""
     decision_id = payload.get("decision_id")
-    findings = parse_findings(payload.get("output"))
+    findings = parse_findings(payload.get("output"),
+                              roots=(working_directory,) if working_directory else ())
     if not decision_id:
         return findings
     metadata = payload.get("metadata") or {}

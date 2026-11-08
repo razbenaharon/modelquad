@@ -32,13 +32,32 @@ def _show(capsys, folder: Path, db: Path, *extra: str) -> str:
     return capsys.readouterr().out
 
 
+def _install_claude() -> Path:
+    """The regular install's two marks: the skill and the server entry."""
+    import json
+
+    from modelquad.adapters.paths import default_target_dir
+
+    target = default_target_dir("claude")
+    (target / "skills" / "modelquad").mkdir(parents=True, exist_ok=True)
+    (target / "skills" / "modelquad" / "SKILL.md").write_text("skill", encoding="utf-8")
+    (target.parent / f"{target.name}.json").write_text(
+        json.dumps({"mcpServers": {"modelquad": {"command": "modelquad"}}}), encoding="utf-8")
+    return target
+
+
+@pytest.fixture
+def installed():
+    return _install_claude()
+
+
 def _snapshot() -> dict:
     """Every stored file the view reads, to prove it writes none of them."""
     files = (preferences_path(), review_ledger.ledger_path())
     return {path: path.read_bytes() if path.exists() else None for path in files}
 
 
-def test_defaults_read_on_approve_each_call_and_no_history_yet(tmp_path, capsys):
+def test_defaults_read_on_approve_each_call_and_no_history_yet(tmp_path, capsys, installed):
     repo = _repo(tmp_path / "r")
     before = _snapshot()
     out = _show(capsys, repo, tmp_path / "history.db")
@@ -62,7 +81,7 @@ def test_settings_with_no_subcommand_shows_the_current_folder(tmp_path, capsys, 
     assert "2. Mode: approve each call." in capsys.readouterr().out
 
 
-def test_off_in_claude_code_reads_off(tmp_path, capsys):
+def test_off_in_claude_code_reads_off(tmp_path, capsys, installed):
     db = tmp_path / "history.db"
     repo = _repo(tmp_path / "r")
     assert cli.main(["--history-db", str(db), "host", "disconnect", "claude"]) == 0
@@ -73,11 +92,34 @@ def test_off_in_claude_code_reads_off(tmp_path, capsys):
     assert "1. ModelQuad in Claude Code: on (connected)." in _show(capsys, repo, db)
 
 
-def test_unreadable_host_controls_read_unknown(tmp_path, capsys):
+def test_unreadable_host_controls_read_unknown(tmp_path, capsys, installed):
     db = tmp_path / "history.db"
     db.write_bytes(b"not a database")
     out = _show(capsys, _repo(tmp_path / "r"), db)
     assert "1. ModelQuad in Claude Code: unknown" in out
+
+
+def test_a_fresh_profile_reads_not_installed(tmp_path, capsys):
+    """Nothing installed is not "on (connected)": unknown stays unknown."""
+    out = _show(capsys, _repo(tmp_path / "r"), tmp_path / "history.db")
+    assert "1. ModelQuad in Claude Code: not installed" in out
+    assert "on (connected)" not in out
+
+
+def test_the_plugin_record_counts_as_installed(tmp_path, capsys):
+    import json
+
+    from modelquad.adapters.paths import default_target_dir
+
+    record = default_target_dir("claude") / "plugins" / "installed_plugins.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"plugins": {"other@market": []}}), encoding="utf-8")
+    db = tmp_path / "history.db"
+    assert "1. ModelQuad in Claude Code: not installed" in _show(capsys, _repo(tmp_path / "r"), db)
+    record.write_text(json.dumps({"plugins": {"modelquad@modelquad": []}}), encoding="utf-8")
+    assert "1. ModelQuad in Claude Code: on (connected)." in _show(capsys, tmp_path / "r", db)
+    record.write_text("not json", encoding="utf-8")
+    assert "1. ModelQuad in Claude Code: unknown" in _show(capsys, tmp_path / "r", db)
 
 
 def test_automatic_global_versus_this_folder(tmp_path, capsys):

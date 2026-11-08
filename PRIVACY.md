@@ -377,7 +377,7 @@ Paths are relative to `%USERPROFILE%`.
 | `.claude\usage-codex.json` | Codex's 5-hour and weekly used percentages, reset times, plan type, when they were read, and why a read failed | The MCP server's background read, `modelquad usage-refresh` |
 | `.claude\quota-pace.json` | The first quota reading of each current 5-hour window, for the status line's pace hint | The status line command |
 | `.claude\usage-*.json.lock`, `.claude\usage-refresh-*.lock` | Empty lock files | The same writers |
-| `.claude.json`, `.claude\settings.json`, `.claude\skills\modelquad*\SKILL.md` (six skills) | The Claude Code integration listed in [README.md](README.md) | `modelquad install claude` |
+| `.claude.json`, `.claude\settings.json`, `.claude\skills\modelquad*\SKILL.md` (seven skills) | The Claude Code integration listed in [README.md](README.md) | `modelquad install claude` |
 | `<file>.modelquad-backup-<UTC time>` beside a changed file | A full copy of the file before ModelQuad changed or removed it. It holds whatever the file held, including secrets you put there, such as `env` values of MCP servers in `.claude.json` | Install and uninstall (`adapters/backup.py`) |
 | Windows Task Scheduler, task `ModelQuad_Service` | Starts the local service when you sign in | `modelquad service install` |
 | Your user `Path` variable (`HKCU\Environment`) | The folder of an installed but unreachable tool | `modelquad tools --fix-path` |
@@ -418,7 +418,7 @@ service (`modelquad service stop`) before you delete anything here.
 | `pending-output\` | Answers of background jobs waiting to be collected (below), plus `outcomes.jsonl`, `removal.intent` and `store.lock`. If `outcomes.jsonl` or `removal.intent` is damaged, removing all answers renames it to `outcomes.jsonl.corrupt-*` or `removal.intent.corrupt-*` and keeps it | 7 days by default; a renamed `*.corrupt-*` copy is kept until you delete it | Yes: an answer can quote your code. Private to you and SYSTEM |
 | `identity.json` | The installation id (below) | Until reset or deleted | A resettable pseudonym |
 | `service-secret` | The random secret every request to the local service must carry, except its listener check | Kept; created once and not overwritten | Yes: it authorizes the service. Private to you and SYSTEM |
-| `host-registration-backup.json` | Your earlier `modelquad` MCP entry in Claude Code, if install replaced one, stored verbatim so uninstall can put it back. Also ownership records for the timeout setting and the `SessionStart` hook, keyed by an unsalted SHA-256 of the settings file path. This file may contain credentials: an MCP entry can carry `args` and `env`, and `env` is where API keys live | Deleted when nothing is owed any more | Yes: it may contain credentials. Private to you and SYSTEM, and not shown by the CLI, `--json`, `doctor` or logs (`tests/test_registration_backup_is_product_state.py`) |
+| `host-registration-backup.json` | Your earlier `modelquad` MCP entry in Claude Code, if install replaced one, stored verbatim so uninstall can put it back. Also ownership records for the timeout setting and the `SessionStart` hook, keyed by an unsalted SHA-256 of the settings file path. This file may contain credentials: an MCP entry can carry `args` and `env`, and `env` is where API keys live | Emptied when nothing is owed any more; the empty file is kept as a record that the notice was shown | Yes: it may contain credentials. Private to you and SYSTEM, and not shown by the CLI, `--json`, `doctor` or logs (`tests/test_registration_backup_is_product_state.py`) |
 | `host-observation-claude.json` | The last status-line facts: Claude Code version, model id and display name, large-context flag, a 16-character session fingerprint, time | Overwritten on each update | Low; the raw session id is not written |
 | `host-integrations.json` | Whether global host integrations are on or off | Kept | No |
 | `preferences.json` | Your settings: proactive use on or off, whether the plugin install is in use, the plans you set with `modelquad settings plan` (values from a fixed list), and your per-repository choices from `modelquad settings repo` (one word each, keyed by a hash of the repository made with your installation id; no path or folder name), and the standing grant from `modelquad settings auto` (on for every folder, or the same repository hashes, each with when it was turned on and the notice version) | Kept until you change or unset them | Low: the names of your plans |
@@ -456,9 +456,15 @@ Schema version 24, defined in `service/db.py`; the writers are in
 anywhere. Free text and stored metadata pass through `privacy.py` before they
 are written, so absolute paths become `<path>`
 (`tests/test_privacy_paths.py`, `tests/test_provider_rows_carry_no_paths.py`).
+That covers drive paths, UNC paths with either slash, `file://` addresses,
+URL-encoded drive paths, Git for Windows paths such as `/c/Users/...`,
+`\Users\...` without a drive, `~` paths, and keys as well as values in
+stored metadata.
 A path under your home folder, `AppData`, `TEMP`, OneDrive or the working
-folder is removed whole, even when a folder name has a space; elsewhere, the
-part of a path after its first space can remain.
+folder is removed whole, even when a folder name has a space. The writers
+of a Codex run's rows name its working folder themselves, so this holds
+when the background job runner writes them too. Elsewhere, the part of a
+path after its first space can remain.
 Columns not described below hold fixed labels, numbers, times or ids.
 
 | Table | What a row records | Notable columns |
@@ -524,7 +530,8 @@ delete history.
 ## How to see what is stored
 
 - `modelquad privacy` (or `--json`): the state folder, the installation id,
-  the network rule, retention, and how to delete everything.
+  the network rule, how long each store keeps its data, and the steps under
+  "Everything" below.
 - `modelquad activity` (or `--json`, or `--detail execution:<id>`): the
   history.
 - `modelquad state`: which state folder each part of ModelQuad uses.

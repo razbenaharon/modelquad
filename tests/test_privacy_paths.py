@@ -124,3 +124,83 @@ def test_no_absolute_path_reaches_routing_decisions(tmp_path, monkeypatch):
         assert "John" not in text and "Smith" not in text, text
         assert str(tmp_path) not in text, text
         assert not privacy.contains_absolute_path(text), text
+
+
+@pytest.mark.parametrize("text", [
+    r"open //fileserver/clients/acme/x.py failed",
+    r"open /c/Users/dana/proj/x.py failed",
+    r"open /e/Projects/AcmeSecret/x.py failed",
+    r"open \Users\dana\proj\x.py failed",
+    r"open C%3A%5CUsers%5Cdana%5Cx.py failed",
+    r"open file:///C:/Users/dana/x.py failed",
+    r"open file://fileserver/clients/acme/x.py failed",
+])
+def test_other_absolute_path_forms_are_removed(text):
+    out = privacy.redact_paths(text)
+    assert out == "open <path> failed", out
+
+
+def test_redaction_leaves_no_stray_characters_around_the_placeholder():
+    assert privacy.redact_paths(r"<C:\Users\dana\x>") == "<<path>>"
+    assert privacy.redact_paths("see file:///C:/x.py") == "see <path>"
+
+
+@pytest.mark.parametrize("text", ["and/or 1/2 a/b/c", "// a comment", "src/modelquad/x.py", "./a/b"])
+def test_relative_paths_and_prose_with_slashes_stay(text):
+    assert privacy.redact_paths(text) == text
+
+
+def test_metadata_keys_are_redacted_too():
+    out = json.loads(privacy.sanitize_persisted_metadata_json({r"C:\Users\dana\key": 1}))
+    assert out == {"<path>": 1}
+
+
+FOLDER_WITH_SPACES = r"D:\Client Work\Acme Corp"
+
+
+def test_a_background_writer_removes_the_named_working_folder_whole(tmp_path, monkeypatch):
+    """The runner and the service run elsewhere, so the writer names the folder."""
+
+    from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+
+    monkeypatch.chdir(tmp_path)  # not the working folder, as for the runner
+    error = rf"FileNotFoundError: {FOLDER_WITH_SPACES}\src\billing.py"
+    db_path = tmp_path / "history.db"
+    result = ExecutionResult(
+        provider="codex", success=False, output="", exit_code=1, error=error,
+        task_status=WorkerTaskStatus.FAILED, task_status_reason=error,
+        metadata={"note": error, error: 1},
+    )
+    history.record_execution(db_path, TaskType.REVIEW, result, roots=(FOLDER_WITH_SPACES,))
+    attempt = history.record_delegation_attempt(
+        db_path, task_type=TaskType.REVIEW, detail=error, working_directory=FOLDER_WITH_SPACES)
+    history.resolve_delegation_attempt(db_path, attempt, status="failed", failure_kind="exception",
+                                       detail=error, roots=(FOLDER_WITH_SPACES,))
+
+    conn = sqlite3.connect(db_path)
+    try:
+        stored = [
+            *conn.execute("SELECT error, task_status_reason, metadata_json FROM execution_history").fetchone(),
+            *conn.execute("SELECT detail FROM delegation_attempts").fetchone(),
+        ]
+    finally:
+        conn.close()
+    for text in stored:
+        assert "Client" not in text and "Acme" not in text, text
+        assert "<path>" in text, text
+
+
+def test_without_the_named_folder_the_tail_would_remain(tmp_path, monkeypatch):
+    """Why the writers name it: the regex alone stops at the first space."""
+    monkeypatch.chdir(tmp_path)
+    assert "Acme" in privacy.redact_paths(rf"{FOLDER_WITH_SPACES}\src\billing.py")
+
+
+def test_the_review_ledger_removes_the_named_working_folder_whole(tmp_path, monkeypatch):
+    from modelquad import review_ledger
+
+    monkeypatch.chdir(tmp_path)
+    output = (rf"FINDING F1 | high | src/a.py:3 | correctness | reading {FOLDER_WITH_SPACES}\src\a.py fails"
+              "\n")
+    findings = review_ledger.parse_findings(output, roots=(FOLDER_WITH_SPACES,))
+    assert findings and findings[0].claim == "reading <path> fails"

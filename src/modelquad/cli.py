@@ -39,6 +39,49 @@ from .service.lifecycle import (
 SERVICE_DEFAULT_HOST = "127.0.0.1"
 SERVICE_DEFAULT_PORT = 8765
 
+#: What the service says when its secret cannot be created or verified. Fixed
+#: text: the raw problem names the secret's path, and so the user name.
+SERVICE_SECRET_UNAVAILABLE = (
+    "The ModelQuad service could not create or verify its installation secret, "
+    "so it refuses every request. Delete the file service-secret in ModelQuad's "
+    "state folder, then restart the service."
+)
+
+#: How long each store keeps what it holds, as PRIVACY.md's state-folder table
+#: says (`modelquad privacy` prints it; tests/test_cli.py checks both agree).
+PRIVACY_RETENTION: tuple[tuple[str, str], ...] = (
+    ("history (modelquad.db)", "no automatic expiry"),
+    ("review ledger (review-ledger.db)", "no automatic expiry"),
+    ("answers waiting to be collected (pending-output)", "7 days by default"),
+    ("review reminders (review-reminder)", "deleted after 2 days"),
+    ("background job launch files (job-*.json)",
+     "the runner deletes each when it reads it; a leftover older than 10 minutes goes at the "
+     "next job start"),
+    ("logs", "rotated above 1 MiB, one older file kept"),
+)
+
+#: The quota files and their locks in %USERPROFILE%\.claude, by exact name:
+#: other lock files there belong to Claude Code.
+PRIVACY_QUOTA_FILES: tuple[str, ...] = (
+    "usage-claude.json", "usage-codex.json", "quota-pace.json",
+    "usage-claude.json.lock", "usage-codex.json.lock",
+    "usage-refresh-claude.lock", "usage-refresh-codex.lock",
+)
+
+
+def _privacy_delete_steps(privacy_state_root: Path) -> list[str]:
+    """The steps of PRIVACY.md's "How to delete it: Everything", in order."""
+
+    return [
+        f"Run `{CLI_COMMAND} service stop`, then `{CLI_COMMAND} service uninstall`.",
+        f"Run `{CLI_COMMAND} uninstall claude`. If you installed the plugin, "
+        f"also run `claude plugin uninstall {CLI_COMMAND}`.",
+        f"Close the Claude Code sessions that use {PRODUCT_NAME}, then delete {privacy_state_root}.",
+        "Delete " + ", ".join(PRIVACY_QUOTA_FILES) + r" in %USERPROFILE%\.claude, by those exact "
+        "names. Then delete the *.modelquad-backup-* files. Check the backups first: they can "
+        "contain secrets you put in your configuration.",
+    ]
+
 
 def _surface_choice(choices: Sequence[str]):
     """Validate a choice with one plain error that lists the valid values."""
@@ -1495,13 +1538,16 @@ def _run_managed_service_child(args: argparse.Namespace) -> int:
     # Every change through the service needs this installation's secret.
     # A secret that cannot be created or verified does not stop
     # the service: it serves reads and refuses every change, and says why here
-    # through a closed diagnostic event; the raw problem is discarded.
-    from .service.auth import ensure_service_secret
+    # through a closed diagnostic event; the raw problem is discarded. It
+    # names the secret's path, and so the user name, and any local account
+    # may ask the loopback service: the refusal carries a fixed sentence.
+    from .service.auth import ServiceSecret, ensure_service_secret
 
     secret = ensure_service_secret(state_root())
     if not secret.usable:
         from .windowless_diagnostics import emit
         emit("backend_failed")
+        secret = ServiceSecret(problem=SERVICE_SECRET_UNAVAILABLE)
     try:
         app = create_app(
             db_path=options["db_path"],
@@ -2486,11 +2532,8 @@ def _run_command(argv: Sequence[str] | None) -> int:
             "identity_kind": "pseudonymous, random, resettable",
             "telemetry": "none",
             "network": LOOPBACK_ONLY_REASON,
-            "retention": "local history is kept until you delete it; there is no automatic expiry",
-            "delete_everything": (
-                f"run `{CLI_COMMAND} service uninstall` and `{CLI_COMMAND} uninstall --global`, "
-                f"then delete {privacy_state_root}"
-            ),
+            "retention": dict(PRIVACY_RETENTION),
+            "delete_everything": _privacy_delete_steps(privacy_state_root),
         }
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
@@ -2503,8 +2546,13 @@ def _run_command(argv: Sequence[str] | None) -> int:
         print(f"{PRODUCT_NAME} has no telemetry.")
         print(f"Network: {LOOPBACK_ONLY_REASON}. The Codex CLI connects to OpenAI itself.")
         print()
-        print(payload["retention"].capitalize() + ".")
-        print(f"Delete everything: {payload['delete_everything']}")
+        print("How long things are kept:")
+        for store, rule in PRIVACY_RETENTION:
+            print(f"  {store}: {rule}.")
+        print()
+        print("Delete everything:")
+        for number, step in enumerate(payload["delete_everything"], start=1):
+            print(f"  {number}. {step}")
         return 0
     if args.command == "network":
         from .netpolicy import LOOPBACK_ONLY_REASON
