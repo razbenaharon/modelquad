@@ -747,6 +747,14 @@ def _delegate_payload(
             task_type, decision_id=decision_id, provider=provider,
             host=host, invocation_mode=resolved_mode, **decision.to_dict(),
         )
+    # A kind ModelQuad does not know is the same closed refusal as a writable
+    # one, given before an attempt is reserved, never a raw ValueError.
+    from ..models import TaskType
+    if getattr(task_type, "value", task_type) not in {kind.value for kind in TaskType}:
+        return _launch_refusal(
+            "unknown", "task_type_not_read_only", decision_id=decision_id, provider=provider,
+            host=host, invocation_mode=resolved_mode,
+        )
     # The repository's .modelquad.toml, read fresh for this call. It can only
     # refuse or lower caps; only its closed reason code reaches history.
     repo_refusal = _repo_policy_refusal(task_type, working_directory, usage_directory,
