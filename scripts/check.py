@@ -912,7 +912,7 @@ BANNED_PHRASES: tuple[tuple[str, str], ...] = (
     ("integrated with", r"\bintegrated\s+with\b"),
     ("endorsed", r"\bendorse(?:s|d|ment|ments)?\b"),
     # Safety claims.
-    ("safe", r"\bsafe\b"),
+    ("safe", r"\bsaf(?:e|ely|er|est)\b"),
     ("secure", r"\bsecure(?:d|ly)?\b"),
     ("guaranteed", r"\bguarantee(?:s|d)?\b"),
     ("locked-down", r"\blocked[\s-]down\b"),

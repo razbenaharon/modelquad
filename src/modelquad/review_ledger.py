@@ -27,6 +27,7 @@ of ModelQuad.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import re
 import sqlite3
@@ -41,7 +42,9 @@ MAX_REASON_CHARS = 400
 MAX_NOTE_CHARS = 200
 MAX_FINDINGS = 50
 
-TRIGGERS = ("review_gate", "pre_change", "user", "claude")
+#: Why a Codex call was made. ``split_quota``: a step ``modelquad_split``
+#: proposed for Codex because Claude was near its limit (``split.QUOTA_TRIGGER``).
+TRIGGERS = ("review_gate", "pre_change", "user", "claude", "split_quota")
 VERDICTS = ("confirmed", "refuted", "undecidable")
 #: Evidence a verdict rests on. The first three are independent of Claude's
 #: own reading; ``code_reading`` is Claude's judgment and is never counted as
@@ -416,6 +419,27 @@ def record_verdicts(decision_id: str, verdicts: list[dict], *, source: str,
         conn.close()
 
 
+def session_pseudonym(session: str, state_dir: Path | None = None, length: int = 16) -> str:
+    """An installation-keyed pseudonym for a host session id; never raises.
+
+    The same derivation as ``hostobs.session_fingerprint`` (HMAC on the
+    installation id), kept here with the standard library only so the hook
+    that calls it stays light. A plain hash of the session id would let anyone
+    holding the id find its rows. If the installation id cannot be read or
+    made, a plain hash stands in so the hook still works.
+    """
+    raw = session.strip().encode("utf-8", "surrogatepass")
+    try:
+        from .identity import installation_id
+
+        key = installation_id(state_dir).encode("utf-8")
+        digest = hmac.new(key, b"modelquad:host-session-fingerprint:v1:" + raw,
+                          hashlib.sha256).hexdigest()
+    except Exception:  # noqa: BLE001 -- a pseudonym must never break a hook
+        digest = hashlib.sha256(raw).hexdigest()
+    return digest[:length]
+
+
 def record_gate_event(directory, session: str, event: str, files: int | None = None,
                       path: Path | None = None) -> None:
     """Record what the review gate did. Never raises: a hook must not fail on it."""
@@ -427,7 +451,7 @@ def record_gate_event(directory, session: str, event: str, files: int | None = N
             conn.execute("INSERT INTO gate_events (created_at, workspace, session, event, files) "
                          "VALUES (?,?,?,?,?)",
                          (time.time(), workspace_id(directory),
-                          hashlib.sha256(session.encode("utf-8", "surrogatepass")).hexdigest()[:16],
+                          session_pseudonym(session),
                           event, files))
             conn.commit()
         finally:
@@ -437,6 +461,41 @@ def record_gate_event(directory, session: str, event: str, files: int | None = N
 
 
 # ------------------------------------------------------------------ report
+
+def count_runs(*, trigger: str, since: float, until: float | None = None,
+               workspace: str | None = None, path: Path | None = None) -> dict | None:
+    """Calls recorded with one trigger in a period, by outcome; read-only.
+
+    ``since`` and ``until`` are epoch seconds; ``workspace`` a
+    :func:`workspace_id` (None: every project). No ledger file yet means no
+    call was recorded: zero. A ledger that cannot be read, or one a newer
+    build wrote, returns None (unknown), never zero. Nothing is created or written.
+    """
+    target = Path(path) if path is not None else ledger_path()
+    if not target.is_file():
+        return {"calls": 0, "by_outcome": {}}
+    try:
+        conn = sqlite3.connect(f"{target.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.Error:
+        return None
+    try:
+        if conn.execute("PRAGMA user_version").fetchone()[0] > SCHEMA_VERSION:
+            return None
+        where, args = "trigger = ? AND created_at >= ?", [trigger, since]
+        if until is not None:
+            where += " AND created_at <= ?"
+            args.append(until)
+        if workspace is not None:
+            where += " AND workspace = ?"
+            args.append(workspace)
+        by_outcome = {row[0]: row[1] for row in conn.execute(
+            f"SELECT outcome, COUNT(*) FROM runs WHERE {where} GROUP BY outcome", args)}
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    return {"calls": sum(by_outcome.values()), "by_outcome": by_outcome}
+
 
 def report(*, days: float = 30.0, workspace: str | None = None, path: Path | None = None) -> dict:
     """Counts for the review report. Claude's agreement alone is never counted as proof."""

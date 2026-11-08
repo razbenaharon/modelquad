@@ -1128,3 +1128,40 @@ def test_auth_named_code_stays_ordinary(tmp_path):
     content = "auth = make_auth(user)\nif auth:\n    use(auth)\nsettings = {'auth': True}\n"
     (tmp_path / "client.py").write_text(content, encoding="utf-8")
     assert noshell.pack_files(tmp_path, ["client.py"]).files == (("client.py", content),)
+
+
+def test_a_failed_cleanup_of_the_empty_folder_keeps_the_answer(worker, monkeypatch):
+    # A lingering Codex descendant can keep a file open in the empty folder, so
+    # removing it fails; the answer (or timeout, or stop) must still come back.
+    import shutil
+    import sys
+    import tempfile
+
+    executor, request, run, _ = worker
+    run.return_value.worker_descendants = {"enumerated": True, "descendants": [], "truncated": False}
+    real = shutil.rmtree
+
+    def held_open(path, ignore_errors=False, onerror=None, onexc=None, **kwargs):
+        # Python 3.11 cleans up through ``onerror``; 3.12 and later through ``onexc``.
+        if "modelquad-noshell-" not in str(path):
+            if onexc is not None:
+                kwargs["onexc"] = onexc
+            return real(path, ignore_errors=ignore_errors, onerror=onerror, **kwargs)
+        if ignore_errors:
+            return None
+        try:
+            raise PermissionError(32, "The process cannot access the file", str(path))
+        except PermissionError as exc:
+            if onexc is not None:
+                onexc(os.rmdir, path, exc)
+            elif onerror is not None:
+                onerror(os.rmdir, path, sys.exc_info())
+            else:
+                raise
+
+    monkeypatch.setattr(tempfile._shutil, "rmtree", held_open)
+    result = executor.execute(request)
+    run.assert_called_once()
+    assert result.output == "Diagnosis supplied."
+    monkeypatch.undo()
+    shutil.rmtree(run.call_args.kwargs["cwd"], ignore_errors=True)

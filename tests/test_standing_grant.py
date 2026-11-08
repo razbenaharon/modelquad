@@ -128,7 +128,7 @@ def test_with_a_grant_the_server_registers_delegate_without_the_marker(tmp_path)
     assert seen["handoff"]["anthropic/requiresUserInteraction"] is True
 
 
-def test_the_cli_needs_a_typed_yes(tmp_path, capsys):
+def test_the_cli_needs_a_typed_yes(tmp_path, capsys, monkeypatch):
     from modelquad import cli
 
     repo = _repo(tmp_path / "r")
@@ -140,5 +140,55 @@ def test_the_cli_needs_a_typed_yes(tmp_path, capsys):
     assert grant.granted(repo)
     assert cli.main(["settings", "auto", "status", "--project", str(repo)]) == 0
     assert "Standing grant: on" in capsys.readouterr().out
+    assert cli.main(["settings", "auto", "off", "--project", str(repo)]) == 0
+    assert not grant.granted(repo)
+
+
+def test_a_worker_cannot_turn_the_grant_on(tmp_path, capsys, monkeypatch):
+    from modelquad import cli
+
+    variable = "MODELQUAD_WORKER"
+    monkeypatch.setenv(variable, "1")
+    repo = _repo(tmp_path / "r")
+    assert cli.main(["settings", "auto", "on", "--project", str(repo), "--yes"]) == 2
+    assert "worker cannot turn" in capsys.readouterr().err
+    assert not grant.granted(repo)
+    assert cli.main(["settings", "auto", "on", "--global", "--yes"]) == 2
+    folder = tmp_path / "plain"
+    folder.mkdir()
+    assert not grant.allows(folder)
+    # Turning it off stays open from anywhere.
+    monkeypatch.delenv(variable)
+    grant.write(True, directory=repo)
+    monkeypatch.setenv(variable, "1")
+    assert cli.main(["settings", "auto", "off", "--project", str(repo)]) == 0
+    assert not grant.granted(repo)
+
+
+def test_the_refusal_tells_claude_to_tell_the_user_and_turn_nothing_on():
+    from modelquad.adapters.server_instructions import (
+        _NEVER_REENABLE, _REST, _STANDING, server_instructions)
+
+    message = grant.NO_GRANT_MESSAGE
+    assert "--yes" not in message
+    assert "Tell the user" in message and "started nothing" in message
+    assert "/modelquad:settings" in message and "own terminal" in message
+    assert "Do not run any command to turn it back on yourself" in message
+    assert "Never turn on a grant, reconnect ModelQuad or undo an exclusion unless the user asks" in _NEVER_REENABLE
+    assert _STANDING.endswith(_NEVER_REENABLE) and _NEVER_REENABLE in _REST
+    for proactive in (True, False):
+        assert server_instructions(proactive).count(_NEVER_REENABLE) == 1
+    assert server_instructions(True, standing=True).count(_NEVER_REENABLE) == 1
+
+
+def test_the_users_own_settings_inside_claude_code_are_not_refused(tmp_path, monkeypatch):
+    """/modelquad:settings runs the command inside Claude Code for the user who picked it."""
+    from modelquad import cli
+
+    monkeypatch.delenv("MODELQUAD_WORKER", raising=False)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    repo = _repo(tmp_path / "r")
+    assert cli.main(["settings", "auto", "on", "--project", str(repo), "--yes"]) == 0
+    assert grant.granted(repo)
     assert cli.main(["settings", "auto", "off", "--project", str(repo)]) == 0
     assert not grant.granted(repo)

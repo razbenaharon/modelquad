@@ -20,3 +20,6 @@ class SplitStep(BaseModel):
     independent: bool = Field(
         default=False,
         description="True for an opinion that should not come from Claude, such as a review of Claude's own change.")
+    size: Literal["small", "medium", "large"] = Field(
+        default="medium",
+        description="How much reading and thinking the step needs. A small step is not worth a Codex call.")

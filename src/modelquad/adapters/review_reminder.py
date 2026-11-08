@@ -247,15 +247,49 @@ def _granted(cwd) -> bool:
     return grant.allows(cwd)
 
 
+_FAILED_HEADLINES = ("Codex was not started", "Codex answer withheld")
+
+
+def _refused_payload(payload: dict) -> bool:
+    return payload.get("refused") is True or payload.get("reason") == "no_standing_grant"
+
+
 def _review_failed(response) -> bool:
-    """Whether a modelquad_delegate reply says Codex did not answer."""
+    """Whether a modelquad_delegate reply says Codex did not answer.
+
+    Decided from the reply's data when the host passes it, otherwise from the
+    reply's first line only (the outcome line, ``server._plain_result``):
+    Codex's own answer text may quote a refusal marker, and that is no refusal.
+    """
+    content = response
+    if isinstance(response, dict):
+        for key in ("structuredContent", "structured_content"):
+            if isinstance(response.get(key), dict):
+                return _refused_payload(response[key])
+        content = response.get("content")
+    text = None
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text = next((block.get("text") for block in content if isinstance(block, dict)
+                     and block.get("type") == "text" and isinstance(block.get("text"), str)), None)
+    if text is None:
+        # A shape this hook does not know: the old whole-reply search, which
+        # errs toward "failed".
+        try:
+            text = response if isinstance(response, str) else json.dumps(response)
+        except (TypeError, ValueError):
+            return True
+        return any(marker in text for marker in (
+            '"refused": true', '"refused":true', *_FAILED_HEADLINES, "no_standing_grant"))
     try:
-        text = response if isinstance(response, str) else json.dumps(response)
-    except (TypeError, ValueError):
-        return True
-    return any(marker in text for marker in (
-        '"refused": true', '"refused":true', "Codex was not started", "Codex answer withheld",
-        "no_standing_grant"))
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        return _refused_payload(data)
+    first = text.strip().splitlines()[0] if text.strip() else ""
+    return any(first.startswith(marker) for marker in _FAILED_HEADLINES)
 
 
 def _is_review(tool_input) -> bool:
@@ -337,7 +371,8 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
             from modelquad.paths import state_root
             state = state_root()
         folder = Path(state) / FOLDER_NAME
-        record = folder / f"{_digest(session)[:32]}.json"
+        from modelquad.review_ledger import session_pseudonym
+        record = folder / f"{session_pseudonym(session, Path(state), length=32)}.json"
         output = None
 
         if name == "Stop":

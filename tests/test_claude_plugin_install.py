@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from modelquad import cli, doctor
+from modelquad import __version__, cli, doctor
 from modelquad.adapters.claude_adapter import ClaudeAdapter, plugin_recorded
 from modelquad.adapters.registration import install_with_registration
 from modelquad.adapters.report import ActionKind
@@ -49,7 +49,7 @@ def _settings(home: Path) -> dict:
 def _record_plugin(home: Path, key: str = "modelquad@modelquad", value=None) -> None:
     folder = home / "plugins"
     folder.mkdir(exist_ok=True)
-    entry = value if value is not None else [{"scope": "user", "version": "0.4.0"}]
+    entry = value if value is not None else [{"scope": "user", "version": __version__}]
     (folder / "installed_plugins.json").write_text(
         json.dumps({"version": 2, "plugins": {key: entry}}), encoding="utf-8"
     )
@@ -146,3 +146,51 @@ def test_doctor_accepts_the_plugins_registration(state_root, claude_home):
     _record_plugin(claude_home)
     assert doctor._mcp_registration_check("claude", claude_home).status is doctor.CheckStatus.OK
     assert doctor._claude_duplicates_check(claude_home) is None
+
+
+def _plugin_cache(home: Path, skills) -> str:
+    folder = home / "plugins" / "cache" / "modelquad" / "modelquad" / __version__
+    for skill in skills:
+        (folder / "skills" / skill).mkdir(parents=True, exist_ok=True)
+        (folder / "skills" / skill / "SKILL.md").write_text("x", encoding="utf-8")
+    return str(folder)
+
+
+_PLUGIN_SKILLS = ("guide", "review", "handoff", "quota", "setup", "split", "settings")
+
+
+def test_doctor_checks_the_plugins_version_and_files(state_root, claude_home):
+    def check():
+        return doctor._claude_plugin_check("mcp", claude_home)
+
+    fresh = _plugin_cache(claude_home, _PLUGIN_SKILLS)
+    _record_plugin(claude_home, value=[{"version": __version__, "installPath": fresh}])
+    assert check().status is doctor.CheckStatus.OK
+
+    _record_plugin(claude_home, value=[{"version": "0.0.1", "installPath": fresh}])
+    older = check()
+    assert older.status is doctor.CheckStatus.WARN and "0.0.1" in older.detail
+    assert "claude plugin uninstall modelquad@modelquad" in older.detail
+    assert "claude plugin install modelquad@modelquad" in older.detail
+
+    _record_plugin(claude_home, value=[{"installPath": fresh}])
+    unknown = check()
+    assert unknown.status is doctor.CheckStatus.WARN and "unknown" in unknown.detail
+
+    # Same version, stale cached files: a skill the package ships is missing.
+    stale = claude_home / "stale"
+    (stale / "skills" / "guide").mkdir(parents=True)
+    _record_plugin(claude_home, value=[{"version": __version__, "installPath": str(stale)}])
+    missing = check()
+    assert missing.status is doctor.CheckStatus.WARN and "settings" in missing.detail
+    assert "claude plugin uninstall modelquad@modelquad" in missing.detail
+
+
+def test_the_plugin_skills_doctor_expects_are_the_ones_the_plugin_ships():
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("sync_plugin", root / "scripts" / "sync_plugin.py")
+    sync = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sync)
+    assert doctor._packaged_plugin_skills() == set(sync.SKILLS.values()) == set(_PLUGIN_SKILLS)

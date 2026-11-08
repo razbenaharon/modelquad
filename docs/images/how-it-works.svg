@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" role="img" aria-labelledby="t d" font-family="Segoe UI, system-ui, -apple-system, sans-serif">
+  <!-- SPDX-License-Identifier: Apache-2.0 -->
+  <title id="t">How ModelQuad works</title>
+  <desc id="d">After a one-time permission, Claude consults Codex before significant changes and asks for a review at the end; Codex reads only the named files, read-only; Claude checks each finding; failures are reported.</desc>
+  <defs>
+    <linearGradient id="g" x1="0" x2="1">
+      <stop offset="0" stop-color="#00D9FF"/><stop offset=".5" stop-color="#3880F5"/><stop offset="1" stop-color="#8A38D9"/>
+    </linearGradient>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#64748B"/>
+    </marker>
+    <style>
+      .box{fill:#FFFFFF;stroke:#CBD5E1;stroke-width:1.5}
+      .n{fill:url(#g)}
+      .num{fill:#FFFFFF;font-size:15px;font-weight:700}
+      .h{fill:#0F172A;font-size:17px;font-weight:650}
+      .p{fill:#475569;font-size:13px}
+      .bg{fill:#F8FAFC}
+      .ln{stroke:#64748B;stroke-width:1.8;fill:none}
+      @media (prefers-color-scheme: dark){
+        .bg{fill:#0B1220}.box{fill:#111A2E;stroke:#334155}.h{fill:#F1F5F9}.p{fill:#94A3B8}.ln{stroke:#94A3B8}
+      }
+    </style>
+  </defs>
+  <rect class="bg" width="960" height="300" rx="16"/>
+  <rect y="0" width="960" height="5" fill="url(#g)"/>
+  <g transform="translate(24,52)">
+    <rect class="box" width="204" height="200" rx="12"/>
+    <circle class="n" cx="30" cy="32" r="16"/><text class="num" x="30" y="37" text-anchor="middle">1</text>
+    <text class="h" x="18" y="80">Claude consults</text>
+    <text class="p" x="18" y="106">Before a significant change,</text>
+    <text class="p" x="18" y="124">and for a review when the</text>
+    <text class="p" x="18" y="142">change is done. You do not</text>
+    <text class="p" x="18" y="160">manage the exchange.</text>
+  </g>
+  <g transform="translate(256,52)">
+    <rect class="box" width="204" height="200" rx="12"/>
+    <circle class="n" cx="30" cy="32" r="16"/><text class="num" x="30" y="37" text-anchor="middle">2</text>
+    <text class="h" x="18" y="80">Codex reads</text>
+    <text class="p" x="18" y="106">Only the files Claude names,</text>
+    <text class="p" x="18" y="124">credentials skipped. Codex</text>
+    <text class="p" x="18" y="142">runs read-only in an empty</text>
+    <text class="p" x="18" y="160">folder, with no tools.</text>
+  </g>
+  <g transform="translate(488,52)">
+    <rect class="box" width="204" height="200" rx="12"/>
+    <circle class="n" cx="30" cy="32" r="16"/><text class="num" x="30" y="37" text-anchor="middle">3</text>
+    <text class="h" x="18" y="80">Claude checks</text>
+    <text class="p" x="18" y="106">Each finding is checked</text>
+    <text class="p" x="18" y="124">against the code before</text>
+    <text class="p" x="18" y="142">anything changes. Claude</text>
+    <text class="p" x="18" y="160">makes every change.</text>
+  </g>
+  <g transform="translate(720,52)">
+    <rect class="box" width="216" height="200" rx="12"/>
+    <circle class="n" cx="30" cy="32" r="16"/><text class="num" x="30" y="37" text-anchor="middle">4</text>
+    <text class="h" x="18" y="80">You see the result</text>
+    <text class="p" x="18" y="106">A review that failed or</text>
+    <text class="p" x="18" y="124">was skipped is reported,</text>
+    <text class="p" x="18" y="142">never claimed. History:</text>
+    <text class="p" x="18" y="160">modelquad review report.</text>
+  </g>
+  <path class="ln" d="M230 152H252" marker-end="url(#a)"/>
+  <path class="ln" d="M462 152H484" marker-end="url(#a)"/>
+  <path class="ln" d="M694 152H716" marker-end="url(#a)"/>
+  <text class="p" x="24" y="282">Automatic after a one-time permission; approving each call stays available. Named files go to OpenAI through your Codex CLI.</text>
+</svg>

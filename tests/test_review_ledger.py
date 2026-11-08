@@ -219,3 +219,75 @@ def test_verdict_before_the_fix_then_after_and_confidence_is_not_proof(tmp_path)
     assert report["findings"]["to_fix"] == 0 and report["findings"]["fixed_and_verified"] == 1
     assert report["by_confidence"]["medium"]["confirmed"] == 1
     assert report["by_confidence"]["low"]["refuted"] == 1
+
+
+def test_gate_events_store_an_installation_keyed_session_pseudonym(tmp_path):
+    import hashlib
+
+    from modelquad import hostobs
+
+    db = tmp_path / "ledger.db"
+    rl.record_gate_event(tmp_path, "session-a", "blocked", 4, path=db)
+    conn = sqlite3.connect(db)
+    try:
+        (stored,) = conn.execute("SELECT session FROM gate_events").fetchone()
+    finally:
+        conn.close()
+    assert stored != hashlib.sha256(b"session-a").hexdigest()[:16]
+    # The same derivation as the host-session fingerprint, without loading hostobs in a hook.
+    assert stored == hostobs.session_fingerprint("session-a")
+
+
+def test_a_split_quota_call_is_recorded_counted_and_reported(tmp_path):
+    """A call for a step modelquad_split moved because Claude was near its limit keeps that reason."""
+    import time
+
+    from modelquad import cli, split
+
+    assert split.QUOTA_TRIGGER in rl.TRIGGERS
+    db = tmp_path / "ledger.db"
+    rl.record_run(_payload("q-1"), working_directory=tmp_path, task_type="exploration",
+                  trigger="split_quota", path=db)
+    rl.record_run(_payload("q-2", output="", refused=True), working_directory=tmp_path,
+                  task_type="exploration", trigger="split_quota", path=db)
+    rl.record_run(_payload("c-1"), working_directory=tmp_path, task_type="review",
+                  trigger="claude", path=db)
+    rl.record_run(_payload("o-1"), working_directory=tmp_path / "other", task_type="review",
+                  trigger="split_quota", path=db)
+    data = rl.report(workspace=rl.workspace_id(tmp_path), path=db)
+    assert data["runs_by_trigger"] == {"split_quota": 2, "claude": 1}
+    assert "  Why: claude 1, split_quota 2" in cli.review_report_lines(data)
+    since = time.time() - 3600
+    assert rl.count_runs(trigger="split_quota", since=since, workspace=rl.workspace_id(tmp_path),
+                         path=db) == {"calls": 2, "by_outcome": {"answered": 1, "refused": 1}}
+    assert rl.count_runs(trigger="split_quota", since=since, path=db)["calls"] == 3
+    assert rl.count_runs(trigger="split_quota", since=time.time() + 60, path=db)["calls"] == 0
+    # No ledger yet: nothing was recorded, and nothing is created by reading.
+    missing = tmp_path / "none" / "ledger.db"
+    assert rl.count_runs(trigger="split_quota", since=since, path=missing) == {"calls": 0, "by_outcome": {}}
+    assert not missing.parent.exists()
+
+
+def test_an_unreadable_ledger_counts_unknown_not_zero(tmp_path):
+    import time
+
+    db = tmp_path / "ledger.db"
+    conn = sqlite3.connect(db)
+    conn.execute(f"PRAGMA user_version = {rl.SCHEMA_VERSION + 1}")
+    conn.close()
+    assert rl.count_runs(trigger="split_quota", since=time.time() - 60, path=db) is None
+    db.write_bytes(b"not a database at all, just bytes")
+    assert rl.count_runs(trigger="split_quota", since=time.time() - 60, path=db) is None
+
+
+def test_the_delegate_tool_records_the_split_quota_trigger(tmp_path):
+    from modelquad.mcp import server as mcp
+
+    mcp._record_review(_payload("q-9"), str(tmp_path), "exploration", "split_quota", 3.0)
+    data = rl.report(workspace=rl.workspace_id(tmp_path))
+    assert data["runs_by_trigger"] == {"split_quota": 1}
+    # An unknown word is still recorded as Claude's own call.
+    mcp._record_review(_payload("q-10"), str(tmp_path), "exploration", "made_up", 3.0)
+    assert rl.report(workspace=rl.workspace_id(tmp_path))["runs_by_trigger"] == {
+        "split_quota": 1, "claude": 1}
+    assert "split_quota" in mcp.modelquad_delegate.__doc__

@@ -15,7 +15,7 @@ permissions apply: the user's own allow rule (or "don't ask again" on the
 first prompt) lets the calls run. ModelQuad never writes that rule.
 
 Every call re-checks the grant for its own folder, and the repository's
-choices outrank it: ``modelquad settings repo <dir> off`` or a
+choices outrank it: ``modelquad settings repo off [--project DIR]`` or a
 ``.modelquad.toml`` that turns Codex off refuses the call as before. Turning
 the grant off refuses the next call in a session that started with it, with
 no other route to Codex. No MCP tool can turn a grant on.
@@ -53,9 +53,11 @@ ALLOW_RULE = "mcp__plugin_modelquad_modelquad__modelquad_delegate"
 NO_GRANT = "no_standing_grant"
 NO_GRANT_MESSAGE = (
     "This folder has no standing grant, and this Claude Code session started without "
-    "Claude Code's per-call prompt for Codex, so ModelQuad started nothing. To allow Codex "
-    "calls here without a prompt, run: modelquad settings auto on --project <folder> --yes. "
-    "Otherwise start a new Claude Code session in this folder; calls there ask you each time.")
+    "Claude Code's per-call prompt for Codex, so ModelQuad started nothing. Tell the user "
+    "plainly: the standing grant is off here, or this project is excluded from it. Only the "
+    "user changes that, with /modelquad:settings or by running modelquad settings auto on in "
+    "their own terminal. Do not run any command to turn it back on yourself. Otherwise the "
+    "user can start a new Claude Code session in this folder; calls there ask them each time.")
 
 
 def _path(path: Path | None) -> Path:
@@ -96,7 +98,6 @@ def granted(directory, *, path: Path | None = None) -> bool:
     Says nothing about whether the repository allows Codex: :func:`allows` does both.
     """
     from .adapters.server_instructions import _read_preferences
-    from .repo_settings import repo_key
 
     try:
         stored = _stored(_read_preferences(_path(path)))
@@ -104,10 +105,31 @@ def granted(directory, *, path: Path | None = None) -> bool:
         return False
     if stored["global"]:
         return True
+    return _repository_entry(stored, directory)
+
+
+def _repository_entry(stored: dict, directory) -> bool:
+    from .repo_settings import repo_key
+
     if not stored["repos"] or directory is None:
         return False
     key = repo_key(directory, _installation_key(create=False))
     return key is not None and key in stored["repos"]
+
+
+def granted_for_repository(directory, *, path: Path | None = None) -> bool:
+    """Whether this folder's repository has its own grant, whatever the global one says.
+
+    ``settings auto off --global`` leaves this one on; ``modelquad settings``
+    says so, with the command that turns it off.
+    """
+    from .adapters.server_instructions import _read_preferences
+
+    try:
+        stored = _stored(_read_preferences(_path(path)))
+    except Exception:  # noqa: BLE001 -- an unreadable file grants nothing
+        return False
+    return _repository_entry(stored, directory)
 
 
 def allows(directory, *, path: Path | None = None) -> bool:

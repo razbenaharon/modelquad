@@ -37,9 +37,14 @@ here; the tool under development is not the instrument for developing it.
   the change three files until Codex is consulted on the approach. Codex
   stays read-only; it writes no code. Codex's findings and
   Claude's verdicts go to the review ledger (`review_ledger.py`, a SQLite
-  file of its own; `modelquad review report`). Quota is
-  display-only: when Claude is near its limit, a note says so (wait for the
-  reset, or ask Codex for a review) and starts nothing.
+  file of its own; `modelquad review report`). Quota never
+  starts work: when Claude is near its limit, a note says so (wait for the
+  reset, or ask Codex for a review), and `modelquad_split` may propose a
+  medium or large read-only step for Codex when Codex's fresh readings show
+  room (reason `claude_near_limit`, trigger `split_quota`).
+- Settings: `/modelquad:settings` (skill, user-started) and `modelquad
+  settings` / `settings show` (`settings_view.py`) show on/off, automatic or
+  approve each call, and the history; there is no browser settings page.
 - Division of work: `modelquad_split` (and `/modelquad-split`) proposes who
   takes each step and starts nothing; `modelquad split summary` reports
   afterwards from history; `modelquad settings plan` and
@@ -127,10 +132,13 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
    or was not done is reported and never stops the change again; no hook
    ever approves a tool call (`tests/test_review_reminder.py`).
 7. **Codex starts only with the user's consent: Claude Code's prompt for
-   that call, or a standing grant the user turned on for that folder or
-   globally.** ModelQuad shows the grant's notice before turning it on,
+   that call, or a standing grant the user turned on (in a terminal, or by choosing
+   it in `/modelquad:settings`), for that folder or globally.** The grant removes the per-call
+   mark from `modelquad_delegate` only. ModelQuad shows the grant's notice before turning it on,
    records it, and the user can turn it off at any time; no MCP tool can turn
-   it on (`tests/test_standing_grant.py`). Without a grant,
+   it on, and when a call is refused for lack of a grant ModelQuad tells
+   Claude to tell the user and turn nothing back on
+   (`tests/test_standing_grant.py`, `tests/test_settings_show.py`). Without a grant,
    `modelquad_delegate` and `modelquad_handoff` carry
    `anthropic/requiresUserInteraction`, so Claude Code shows its approval
    prompt for each call (`tests/test_oss_export_surface.py`). Every call
@@ -153,8 +161,10 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
    installs the audit hook in `netpolicy.py` (`tests/test_netpolicy.py`).
 
 Privacy rules live in `src/modelquad/privacy.py`: free text and metadata
-are path-redacted where history is written, including folder names with
-spaces (`tests/test_privacy_paths.py`). Tool stdout and the stderr body are
+are path-redacted where history is written (`tests/test_privacy_paths.py`):
+a path under home, `AppData`, `TEMP`, OneDrive or the working folder is
+removed whole even with spaces; elsewhere the part after its first space can
+remain. Tool stdout and the stderr body are
 not persisted in any mode; the persisted worker command names only the
 executable and its flags, and persisted argv carries no absolute path
 (`tests/test_execution.py`). ModelQuad has no telemetry. See

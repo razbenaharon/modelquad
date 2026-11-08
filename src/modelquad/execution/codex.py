@@ -406,7 +406,10 @@ class CodexExecutor(Executor):
             version = _probe(resolved)
             # An empty, ephemeral folder keeps project instructions/configuration
             # out of both qualification and model entry. Auth is never copied.
-            with tempfile.TemporaryDirectory(prefix="modelquad-noshell-") as empty:
+            # A cleanup that fails (a lingering child still holds a file) must not
+            # replace the call's own result with an exception.
+            with tempfile.TemporaryDirectory(prefix="modelquad-noshell-",
+                                             ignore_cleanup_errors=True) as empty:
                 qualification = noshell.qualify(
                     resolved, version, cwd=empty, env=child_env, runner=inventory,
                 )

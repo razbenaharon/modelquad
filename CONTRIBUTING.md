@@ -67,7 +67,8 @@ development is not the tool for developing it.
 starts another worker, unknown values stay unknown, ModelQuad does not
 extract or proxy provider credentials, installed hooks never approve a tool call and only the two review gates may
 stop one, and
-every call that starts Codex asks the user. A change must not weaken them. If
+every call that starts Codex asks the user unless the user turned on a
+standing grant themselves (no MCP tool can, and Claude is told never to). A change must not weaken them. If
 you think one is wrong, open an issue.
 
 Privacy rules live in `src/modelquad/privacy.py`. Do not add tool output

@@ -1,3 +1,4 @@
 # A synthetic 32-hex installation id in a test, before it carried an inline
-# gitleaks:allow marker. Not a secret; the public launch history will not contain it.
+# gitleaks:allow marker. Not a secret. The commit (fd39d81) is on main and in
+# the public history, so this entry stays.
 fd39d817e49c75788a647a4d3500f862ae826ed0:tests/test_repo_settings.py:generic-api-key:39

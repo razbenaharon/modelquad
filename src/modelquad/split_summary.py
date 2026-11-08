@@ -10,7 +10,10 @@ read ModelQuad's own history and nothing else:
   withheld because the event stream showed a tool call (invariant 8),
   refused (ModelQuad's own rules, the repository's ``.modelquad.toml``, the
   user's per-repo setting, or Codex's own limit), or not answered. The
-  median time to an answer is over the answered ones.
+  median time to an answer is over the answered ones. When the caller
+  names the review ledger, also the calls made for a step ``modelquad_split``
+  proposed for Codex because Claude was near its limit (trigger
+  ``split_quota``), by outcome: a count, not a claim about what they spared.
 * Claude: one sentence. ModelQuad sees only what goes to Codex, so it does
   not measure Claude's own work, and a decline in Claude Code's own approval
   prompt never reaches it. A decline in the handoff form is not stored
@@ -45,7 +48,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import assistance
+from . import assistance, review_ledger
 from .models import Freshness, ProviderStatus
 
 PERIODS = ("1d", "7d", "session")
@@ -93,6 +96,8 @@ QUOTA_NOTE = ("Each provider and window is shown on its own, in percentage point
 _USER_OFF = "user_repo_codex_off"
 _REPO_FILE_PREFIX = "repo_policy_"
 _SCAN_LIMIT = 5000
+#: The review ledger trigger of a call for a step quota moved (``split.QUOTA_TRIGGER``).
+QUOTA_TRIGGER = "split_quota"
 
 
 def _utc(moment: datetime) -> datetime:
@@ -362,10 +367,35 @@ def quota_block(db_path: str | Path, *, since: datetime, until: datetime,
 
 # --- The whole summary ------------------------------------------------------
 
+def quota_calls(ledger_path: str | Path | None, *, workspace_key: str | None,
+                ledger_workspace: str | None, since: datetime, until: datetime) -> dict[str, Any]:
+    """The ``split_quota`` calls in the review ledger: read, and their count or unknown.
+
+    Not read without a ledger path, nor for one project without its ledger id
+    (the ledger keys projects by its own digest, not the history's key).
+    """
+    if ledger_path is None or (workspace_key is not None and ledger_workspace is None):
+        return {"read": False, "calls": None, "answered": None}
+    counted = review_ledger.count_runs(trigger=QUOTA_TRIGGER, since=_utc(since).timestamp(),
+                                       until=_utc(until).timestamp(),
+                                       workspace=ledger_workspace if workspace_key is not None else None,
+                                       path=Path(ledger_path))
+    if counted is None:
+        return {"read": True, "calls": None, "answered": None}
+    return {"read": True, "calls": counted["calls"],
+            "answered": counted["by_outcome"].get("answered", 0)}
+
+
 def summarize(db_path: str | Path, *, workspace_key: str | None, period: str, now: datetime,
               current: Iterable[ProviderStatus], thresholds,
-              session_started_at: datetime | None = None) -> dict[str, Any]:
-    """The structured summary and its human lines (``lines``)."""
+              session_started_at: datetime | None = None,
+              ledger_path: str | Path | None = None,
+              ledger_workspace: str | None = None) -> dict[str, Any]:
+    """The structured summary and its human lines (``lines``).
+
+    ``ledger_path`` and ``ledger_workspace`` (``review_ledger.workspace_id``)
+    let it count the ``split_quota`` calls; without them that count is not read.
+    """
     now = _utc(now)
     since = period_start(period, now, session_started_at=session_started_at)
     scope = "this_project" if workspace_key is not None else "all_projects"
@@ -376,6 +406,8 @@ def summarize(db_path: str | Path, *, workspace_key: str | None, period: str, no
                            "(modelquad_activity). Use --since 1d or --since 7d here."]
         return result
     codex = codex_block(codex_requests(db_path, workspace_key=workspace_key, since=since, until=now))
+    codex["split_quota_calls"] = quota_calls(ledger_path, workspace_key=workspace_key,
+                                             ledger_workspace=ledger_workspace, since=since, until=now)
     quota = quota_block(db_path, since=since, until=now, current=current, thresholds=thresholds)
     result = {
         "period": period, "scope": scope, "known": True,
@@ -435,6 +467,12 @@ def render(summary: Mapping[str, Any]) -> list[str]:
                  f"repository file {refused[REFUSED_REPO_FILE]}, your repo setting "
                  f"{refused[REFUSED_USER_SETTING]}, Codex's own limit {refused[REFUSED_CODEX_LIMIT]}.")
     lines.append(f"  Median time to an answer: {_seconds_text(codex['median_answer_seconds'])}.")
+    moved = codex.get("split_quota_calls") or {}
+    if moved.get("read"):
+        count = ("unknown (the review ledger could not be read)" if moved["calls"] is None
+                 else f"{moved['calls']} (answered {moved['answered']})")
+        lines.append(f"  For steps proposed for Codex because Claude was near its limit "
+                     f"(trigger {QUOTA_TRIGGER}): {count}.")
     lines.append(f"  {HANDOFF_DECLINES_LINE}")
     lines.append(f"  {PROMPT_DECLINES_LINE}")
     lines.append(CLAUDE_LINE)

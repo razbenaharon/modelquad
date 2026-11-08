@@ -22,9 +22,16 @@ def _event(tool="Edit", path="C:/proj/a.py", session=SESSION, **extra):
     return io.BytesIO(json.dumps(event).encode("utf-8"))
 
 
+def _still():
+    """A clock that does not move: these tests check what the hook decides, not how
+    fast a loaded CI runner is. The 1.5 s budget would otherwise silence the hook
+    when the runner is slow (seen on a hosted 3.11 runner)."""
+    return 0.0
+
+
 def _run(tmp_path, stdin, *, mode="decide", environ=None):
     out = io.StringIO()
-    assert rr.run_hook("claude", stdin, out, environ=environ or {}, state=tmp_path,
+    assert rr.run_hook("claude", stdin, out, environ=environ or {}, state=tmp_path, clock=_still,
                        mode=lambda cwd: mode) == 0
     return out.getvalue()
 
@@ -178,7 +185,7 @@ def _stop(tmp_path, *, granted=True, active=False, session=SESSION):
     event = {"hook_event_name": "Stop", "session_id": session, "cwd": "C:/proj",
              "transcript_path": "C:/never/opened.jsonl", "stop_hook_active": active}
     out = io.StringIO()
-    assert rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={},
+    assert rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={}, clock=_still,
                        state=tmp_path, mode=lambda cwd: "decide",
                        standing=lambda cwd: granted) == 0
     return out.getvalue()
@@ -259,7 +266,7 @@ def _pre(tmp_path, path, *, mode="decide", granted=False):
     event = {"hook_event_name": "PreToolUse", "tool_name": "Edit", "session_id": SESSION,
              "cwd": "C:/proj", "tool_input": {"file_path": path}}
     out = io.StringIO()
-    rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={}, state=tmp_path,
+    rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={}, state=tmp_path, clock=_still,
                 mode=lambda cwd: mode, standing=lambda cwd: granted)
     return out.getvalue()
 
@@ -360,3 +367,29 @@ def test_the_gate_never_allows_a_tool_call(tmp_path):
     _edits(tmp_path, "a.py", "b.py")
     for path in ("C:/proj/c.py", "C:/proj/install.ps1", "C:/proj/readme.md"):
         assert '"allow"' not in _pre(tmp_path, path, granted=True)
+
+
+def test_an_answer_quoting_a_refusal_marker_is_not_a_failed_review():
+    answer = "Codex answered\nFINDINGS: the code prints 'Codex was not started' and \"refused\": true."
+    assert rr._review_failed([{"type": "text", "text": answer}]) is False
+    assert rr._review_failed({"content": [{"type": "text", "text": answer}]}) is False
+    assert rr._review_failed({"content": [{"type": "text", "text": answer}],
+                              "structuredContent": {"refused": False, "output": answer}}) is False
+    # Real refusals still are failed: by the data, or by the outcome line.
+    assert rr._review_failed({"structuredContent": {"refused": True}}) is True
+    assert rr._review_failed({"structured_content": {"reason": "no_standing_grant"}}) is True
+    assert rr._review_failed([{"type": "text", "text": "Codex was not started.\nwhy"},
+                              {"type": "text", "text": '{"refused": true}'}]) is True
+    assert rr._review_failed([{"type": "text", "text": "Codex answer withheld"}]) is True
+    assert rr._review_failed([{"type": "text", "text": '{"refused": true, "started": false}'}]) is True
+
+
+def test_the_per_session_file_name_is_keyed_to_the_installation(tmp_path):
+    import hashlib
+
+    _run(tmp_path, _event(path="C:/proj/a.py"))
+    (record,) = (tmp_path / rr.FOLDER_NAME).iterdir()
+    assert record.stem != hashlib.sha256(SESSION.encode("utf-8")).hexdigest()[:32]
+    from modelquad.review_ledger import session_pseudonym
+
+    assert record.stem == session_pseudonym(SESSION, tmp_path, length=32)
