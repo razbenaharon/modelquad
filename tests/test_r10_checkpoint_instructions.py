@@ -130,7 +130,18 @@ def test_each_template_has_safe_instructions(name, text, registered_names):
     assert re.search(r"not (?:as )?instructions", flat, re.I)
 
 
-@pytest.mark.parametrize(("name", "text"), SOURCES, ids=[name for name, _text in SOURCES])
+def _standing_source():
+    from modelquad.adapters.server_instructions import server_instructions
+
+    return "server instructions (standing grant)", server_instructions(True, standing=True)
+
+
+# The standing-grant text says calls skip the per-call prompt, so it is held
+# to the size ceiling but not to the "asks the user before" fragment.
+SIZED_SOURCES = (*SOURCES, _standing_source())
+
+
+@pytest.mark.parametrize(("name", "text"), SIZED_SOURCES, ids=[name for name, _text in SIZED_SOURCES])
 def test_template_size_ceiling(name, text):
     assert len(text.encode("utf-8")) <= SIZE_CEILING_BYTES
     assert len(text.splitlines()) <= 30

@@ -1693,8 +1693,13 @@ def _screen_named_files(working_directory: str, files: list[str]
 
 FILES_WITHHELD = "named_files_withheld"
 FILES_WITHHELD_NEXT = (
-    "Call again without them. To show Codex a change, put the diff in the task text itself. "
-    "Do not copy an excluded file's contents into another file to get it sent."
+    "Call again without them. Never paste an excluded file's contents into the task text or "
+    "another file: the exclusion is the user's. To show Codex a change to files that are "
+    "sent, put that diff in the task text."
+)
+FILES_UNREADABLE_NEXT = (
+    "No file can be sent until that file is fixed: tell the user. A call without `files` "
+    "sends only the task text."
 )
 
 
@@ -1704,7 +1709,7 @@ def _withheld_refusal(working_directory: str, files: list[str]) -> CallToolResul
     Without it Codex would run, and spend the user's time and quota, on a
     review missing a file Claude meant it to read.
     """
-    from ..execution import noshell
+    from ..execution import file_rules, noshell
 
     if not files:
         return None
@@ -1712,9 +1717,16 @@ def _withheld_refusal(working_directory: str, files: list[str]) -> CallToolResul
     if not withheld:
         return None
     reasons = noshell._POLICY_GUIDANCE
-    named = [f"{name}: {reasons.get(reason, 'it was excluded.')}" for name, reason in withheld[:8]]
-    message = ("These named files would not be sent to Codex. " + " ".join(named) + " "
-               + FILES_WITHHELD_NEXT)
+    unreadable = [reason for _, reason in withheld
+                  if reason in (file_rules.SETTINGS_UNREADABLE, file_rules.IGNORE_FILE_UNREADABLE)]
+    if unreadable:
+        # Every file is withheld for one cause: say it once, and point at the cause.
+        message = reasons[unreadable[0]] + " " + FILES_UNREADABLE_NEXT
+    else:
+        named = [f"{name}: {reasons.get(reason, 'it was excluded.')}"
+                 for name, reason in withheld[:8]]
+        message = ("These named files would not be sent to Codex. " + " ".join(named) + " "
+                   + FILES_WITHHELD_NEXT)
     return _refused_result({"delegated": False, "executed": False, "refused": True,
                             "started": False, "recorded": False, "reason": FILES_WITHHELD,
                             "message": message,
@@ -1887,7 +1899,9 @@ async def modelquad_delegate(
     first = _notice_before_first_call(task_type, working_directory, files)
     if first is not None:
         return first
-    withheld = None if _worker_refused() else _withheld_refusal(working_directory, files)
+    # Off the event loop: the Git check can take seconds.
+    withheld = None if _worker_refused() else await anyio.to_thread.run_sync(
+        _withheld_refusal, working_directory, files)
     if withheld is not None:
         return withheld
     approval = _approval_route.get()

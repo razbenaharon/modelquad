@@ -277,7 +277,28 @@ def test_delegate_stops_before_codex_when_a_named_file_is_withheld(project, monk
     assert payload["skipped_files"] == ["config/secrets.txt (denied_by_claude_settings)"]
     text = "\n".join(item.text for item in result.content)
     assert "Codex was not started." in text and "config/secrets.txt" in text
-    assert "diff in the task text" in text and SECRET not in text
+    # Never invite Claude to paste what the user excluded.
+    assert "Never paste an excluded file's contents into the task text" in text
+    assert SECRET not in text
+
+
+def test_a_folder_without_a_grant_is_refused_for_that_before_the_files(project, monkeypatch):
+    settings(project / ".claude" / "settings.json", "Read(./config/**)")
+    monkeypatch.setattr(mcp, "_STANDING_GRANT", True)
+    monkeypatch.setattr(mcp._grant, "allows", lambda folder: False)
+    monkeypatch.setattr(mcp, "_withheld_refusal", lambda *args: pytest.fail("screened"))
+    result = asyncio.run(mcp.modelquad_delegate(
+        "review", "task", str(project), files=["config/secrets.txt"]))
+    assert result.structured_content["reason"] == mcp._grant.NO_GRANT
+
+
+def test_unreadable_settings_name_the_cause_once(project):
+    (project / ".claude").mkdir()
+    (project / ".claude" / "settings.json").write_text("{", encoding="utf-8")
+    refusal = mcp._withheld_refusal(str(project), ["src/app.py", "config/secrets.txt"])
+    message = refusal.structured_content["message"]
+    assert message.count("could not be read") == 1
+    assert "tell the user" in message and "Call again without them" not in message
 
 
 def test_delegate_goes_on_when_every_named_file_is_sendable(project):
