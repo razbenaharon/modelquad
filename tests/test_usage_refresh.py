@@ -25,6 +25,7 @@ from modelquad.usage.refresh import (
     RefreshResult,
     refresh_all,
     refresh_provider,
+    window_reset_since_check,
 )
 
 
@@ -262,6 +263,64 @@ def test_minimum_interval_debounces_a_second_probe(tmp_path):
 
     assert len(calls) == 1
     assert second.debounced is True
+
+
+def _resetting_refresher(calls: list[int], resets_at: float):
+    def counting(_directory, *, now=None):
+        calls.append(1)
+        return {
+            "provider": "p", "available": True, "refresh_kind": ACTIVE,
+            "observed_at": f"2026-08-20T09:00:0{len(calls)}+00:00",
+            "collected_at": "x", "effective_remaining_percentage": 90.0,
+            "five_hour_used_percentage": 10.0, "five_hour_resets_at": resets_at,
+        }
+
+    return counting
+
+
+def test_a_window_that_reset_since_the_reading_is_due_at_once(tmp_path):
+    # Live, 2026-11-09: Codex was read 51 s before its 5-hour window reset, and
+    # the band showed that window as unknown until the next cycle. A reading
+    # whose window has since reset is due again, whatever the debounce says.
+    calls = []
+    reset = (NOW + timedelta(seconds=50)).timestamp()
+    probe = _resetting_refresher(calls, reset)
+    refresh_provider("p", tmp_path, refreshers={"p": probe}, force=True, now=lambda: NOW)
+    after_reset = NOW + timedelta(seconds=60)
+    second = refresh_provider(
+        "p", tmp_path, refreshers={"p": probe}, min_interval=3600, now=lambda: after_reset
+    )
+
+    assert len(calls) == 2
+    assert second.debounced is False
+
+
+def test_a_window_still_open_keeps_the_debounce(tmp_path):
+    calls = []
+    probe = _resetting_refresher(calls, (NOW + timedelta(hours=2)).timestamp())
+    refresh_provider("p", tmp_path, refreshers={"p": probe}, force=True, now=lambda: NOW)
+    second = refresh_provider(
+        "p", tmp_path, refreshers={"p": probe}, min_interval=3600,
+        now=lambda: NOW + timedelta(seconds=60),
+    )
+
+    assert len(calls) == 1
+    assert second.debounced is True
+
+
+def test_window_reset_since_check_reads_only_resets_after_the_reading():
+    stamp = NOW.isoformat()
+    at = NOW.timestamp()
+    reading = {"collected_at": stamp, "five_hour_resets_at": at + 30,
+               "seven_day_resets_at": at + 86400}
+    assert window_reset_since_check(reading, wall=at + 10) is False
+    assert window_reset_since_check(reading, wall=at + 31) is True
+    # A reset already past when the reading was taken says nothing new.
+    assert window_reset_since_check({**reading, "five_hour_resets_at": at - 5}, wall=at + 31) is False
+    # No date on the reading, or junk in the reset field: no claim.
+    assert window_reset_since_check({"five_hour_resets_at": at}, wall=at + 31) is False
+    assert window_reset_since_check({"collected_at": stamp, "five_hour_resets_at": True},
+                                    wall=at + 31) is False
 
 
 def _counting_refresher(calls: list[int]):

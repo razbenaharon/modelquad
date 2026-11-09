@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import functools
+import json
 from pathlib import Path
 import threading
 import time
@@ -207,3 +208,32 @@ def test_a_failing_start_never_stops_the_server(monkeypatch):
     monkeypatch.setattr(server, "is_worker", lambda db_path: False)
     monkeypatch.setattr(background, "start_codex_refresh", explode)
     server._start_background_quota_refresh()  # logs, does not raise
+
+
+def _write_codex_reading(directory, **fields):
+    (Path(directory) / "usage-codex.json").write_text(json.dumps(fields), encoding="utf-8")
+
+
+def test_the_loop_wakes_just_after_a_window_resets(tmp_path):
+    # A reading taken 51 s before its 5-hour window reset (live, 2026-11-09)
+    # left that window unknown for a whole cycle; the loop now wakes after it.
+    wall = 1_000_000.0
+    _write_codex_reading(tmp_path, five_hour_resets_at=wall + 51, seven_day_resets_at=wall + 86400)
+    wait = background.next_wait(tmp_path, 240.0, wall=wall)
+    assert wait == pytest.approx(51 + background.RESET_GRACE_SECONDS)
+
+
+def test_the_loop_keeps_its_interval_when_no_reset_is_near(tmp_path):
+    wall = 1_000_000.0
+    _write_codex_reading(tmp_path, five_hour_resets_at=wall + 3600, seven_day_resets_at=wall + 86400)
+    assert background.next_wait(tmp_path, 240.0, wall=wall) == 240.0
+    # A reset already past never makes the loop spin.
+    _write_codex_reading(tmp_path, five_hour_resets_at=wall - 10)
+    assert background.next_wait(tmp_path, 240.0, wall=wall) == 240.0
+
+
+@pytest.mark.parametrize("content", [None, "not json", "[1, 2]"])
+def test_no_readable_reading_keeps_the_interval(tmp_path, content):
+    if content is not None:
+        (tmp_path / "usage-codex.json").write_text(content, encoding="utf-8")
+    assert background.next_wait(tmp_path, 240.0, wall=1_000_000.0) == 240.0
