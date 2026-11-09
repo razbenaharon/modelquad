@@ -1671,12 +1671,12 @@ def _checked_files(files: Any) -> list[str]:
     return list(files)
 
 
-def _files_to_send(working_directory: str, files: list[str]) -> tuple[list[dict], list[str]]:
-    """The files a handoff would send, as {path, bytes} (bytes None when not
-    found), and the names it would not send with why.
+def _screen_named_files(working_directory: str, files: list[str]
+                        ) -> tuple[list[str], list[tuple[str, str]], list[str]]:
+    """(allowed, withheld with a closed reason, invalid) for the named files.
 
-    Applies the same read rules as the worker (Claude Code Read deny rules,
-    Git, ``.modelquadignore``) and reads only file sizes, never contents.
+    The same read rules as the worker (Claude Code Read deny rules, Git,
+    ``.modelquadignore``); reads no file's contents.
     """
     from ..execution import file_rules, noshell
 
@@ -1688,6 +1688,47 @@ def _files_to_send(working_directory: str, files: list[str]) -> tuple[list[dict]
         except noshell.TargetError:
             invalid.append(name)
     allowed, withheld = file_rules.screen(working_directory, valid)
+    return allowed, withheld, invalid
+
+
+FILES_WITHHELD = "named_files_withheld"
+FILES_WITHHELD_NEXT = (
+    "Call again without them. To show Codex a change, put the diff in the task text itself. "
+    "Do not copy an excluded file's contents into another file to get it sent."
+)
+
+
+def _withheld_refusal(working_directory: str, files: list[str]) -> CallToolResult | None:
+    """A refusal, before Codex starts, when a named file would not be sent; None to go on.
+
+    Without it Codex would run, and spend the user's time and quota, on a
+    review missing a file Claude meant it to read.
+    """
+    from ..execution import noshell
+
+    if not files:
+        return None
+    _, withheld, _ = _screen_named_files(working_directory, files)
+    if not withheld:
+        return None
+    reasons = noshell._POLICY_GUIDANCE
+    named = [f"{name}: {reasons.get(reason, 'it was excluded.')}" for name, reason in withheld[:8]]
+    message = ("These named files would not be sent to Codex. " + " ".join(named) + " "
+               + FILES_WITHHELD_NEXT)
+    return _refused_result({"delegated": False, "executed": False, "refused": True,
+                            "started": False, "recorded": False, "reason": FILES_WITHHELD,
+                            "message": message,
+                            "skipped_files": [f"{name} ({reason})" for name, reason in withheld]})
+
+
+def _files_to_send(working_directory: str, files: list[str]) -> tuple[list[dict], list[str]]:
+    """The files a handoff would send, as {path, bytes} (bytes None when not
+    found), and the names it would not send with why.
+
+    Applies the same read rules as the worker (Claude Code Read deny rules,
+    Git, ``.modelquadignore``) and reads only file sizes, never contents.
+    """
+    allowed, withheld, invalid = _screen_named_files(working_directory, files)
     root = Path(working_directory)
     entries = []
     for name in allowed:
@@ -1846,6 +1887,9 @@ async def modelquad_delegate(
     first = _notice_before_first_call(task_type, working_directory, files)
     if first is not None:
         return first
+    withheld = None if _worker_refused() else _withheld_refusal(working_directory, files)
+    if withheld is not None:
+        return withheld
     approval = _approval_route.get()
     # Everything that reads the request context is read BEFORE the await:
     # once the caller has gone, the context it came in on has gone with it,
