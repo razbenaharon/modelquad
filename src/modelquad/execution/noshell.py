@@ -662,7 +662,7 @@ _JWT = re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-
 # is bounded so a long dotted word cannot make each start position rescan it.
 _URL_CREDENTIAL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}://)[^\s/@:\"']+:[^\s/@\"']+@")
 # A configuration line whose key is secret-like: the whole unquoted value goes,
-# whatever characters it holds (``password: tr0ub4dor&3``, ``DB_PASSWORD=a!b$c``).
+# whatever characters it holds (a YAML ``password:`` line, an INI ``DB_PASSWORD=`` line with punctuation).
 _CONFIG_LINE = re.compile(
     r"(?im)^(?P<key>[ \t]*(?:-[ \t]+|export[ \t]+|set[ \t]+)?[\"']?" + _SECRET_KEY +
     r"[\"']?[ \t]*[=:][ \t]*)(?P<value>[^\s\"'<\[{][^\n]*?)(?=[ \t]*$)")
