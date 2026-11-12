@@ -68,7 +68,24 @@ class Truncation:
 
 
 class StoreCorrupted(ValueError):
-    """Pending-output journal or content is corrupt; delete_all still works."""
+    """The pending-output journal is corrupt; delete_all still works.
+
+    A single unreadable answer file is :class:`PendingOutputDamaged` instead,
+    raised only by operations on that job.
+    """
+
+
+class PendingOutputDamaged(StoreCorrupted):
+    """One job's answer file is unreadable; every other job is unaffected.
+
+    The file is left in place (so ``delete`` and ``delete_all`` still remove
+    it) and never opened as an answer. Carries no content and no job id.
+    """
+
+    label = "pending_output_damaged"
+
+    def __init__(self):
+        super().__init__("damaged pending-output content")
 
 
 class PendingOutputCapacityUnavailable(OSError):
@@ -580,6 +597,7 @@ class FileOutputStore:
         self._completed = {}
         self._removed = {}
         self._references = {}
+        self._damaged = set()
         self._latest = None
         self._journal_lines = 0
         self._snapshot_only = False
@@ -685,7 +703,10 @@ class FileOutputStore:
             except PermissionError:
                 raise PendingOutputTemporarilyUnavailable() from None
             except (ValueError, KeyError, TypeError, AttributeError):
-                raise StoreCorrupted("invalid pending-output content") from None
+                # One unreadable answer is that job's loss alone: set it aside
+                # for this operation and keep serving every other job.
+                self._set_aside(path)
+                continue
             job_id = raw["output"]["job"]["job_id"]
             if job_id in self._completed or self._job_hash(job_id) in self._removed:
                 # Removal intent wins even if stale content was left behind.
@@ -697,6 +718,26 @@ class FileOutputStore:
         self._new_outcomes = []
         self._new_removed = {}
         self._new_references = {}
+
+    def _set_aside(self, path):
+        """Mark one unreadable answer file as damaged, by its name only.
+
+        The name is the hash of the job id, so the job is known without the
+        content. A journaled removal still wins over leftover bytes. The file
+        stays where it is: ``delete`` and ``delete_all`` remove it, and moving
+        it would leave answer text where neither of them looks.
+        """
+        reference = self._references.get(path.stem)
+        if reference is not None and reference['job_id'] in self._completed:
+            if self._safe_recovery_file(path):
+                retry_sharing(path.unlink)
+            return
+        self._damaged.add(path.stem)
+        _logger.warning("Pending-output file is damaged and was set aside: %s", path.name)
+
+    def _refuse_damaged(self, job_id):
+        if self._job_hash(job_id) in self._damaged:
+            raise PendingOutputDamaged()
 
     def _read_record(self, record, active):
         """Validate before using a complete journal line; never echo its bytes."""
@@ -976,10 +1017,16 @@ class FileOutputStore:
         _utc(now, "now")
         if now < output.ended_at:
             raise ValueError("now must not precede output.ended_at")
-        with self._transaction(now):
+        # The stamp is the store's own clock (the caller's, or the served-time
+        # watermark when that is later), the same one expiry is judged by. A
+        # system clock that once ran ahead therefore cannot make a new answer
+        # expire early: it is retained for the full period from the watermark,
+        # and ordinary time resumes when the real clock passes it.
+        with self._transaction(now) as effective_now:
             job_id = output.job.job_id
             if job_id in self._completed or self._job_hash(job_id) in self._removed:
                 return False
+            self._refuse_damaged(job_id)
             incoming = _json_value(output)
             encoded = output.output_text.encode("utf-8", errors="surrogatepass")
             fingerprint = hashlib.sha256(encoded).hexdigest()
@@ -998,7 +1045,7 @@ class FileOutputStore:
                 except UnicodeDecodeError:
                     bounded = bounded[:-1]
             self._write(job_id, {"output": incoming, "receipt": secrets.token_urlsafe(32),
-                                "retained_at": now.isoformat(), "extended_until": None,
+                                "retained_at": effective_now.isoformat(), "extended_until": None,
                                 "original_sha256": fingerprint,
                                 "truncation": {"truncated": len(encoded) > MAX_OUTPUT_BYTES,
                                                "original_bytes": len(encoded)}})
@@ -1006,17 +1053,20 @@ class FileOutputStore:
 
     def collect(self, job_id: str, now: datetime) -> CollectResult | None:
         with self._transaction(now, read_only=True) as effective_now:
+            self._refuse_damaged(job_id)
             return self._collect(job_id, effective_now)
 
     def truncation(self, job_id: str, now: datetime) -> Truncation | None:
         # Legacy standalone probe has no read-only fallback. Host collection
         # uses the loss facts in CollectResult's single locked snapshot.
         with self._transaction(now) as effective_now:
+            self._refuse_damaged(job_id)
             result = self._collect(job_id, effective_now)
             return Truncation(result.output_truncated, result.original_bytes) if result else None
 
     def acknowledge(self, job_id: str, receipt: str, now: datetime) -> bool:
         with self._transaction(now, removal=True) as effective_now:
+            self._refuse_damaged(job_id)
             raw = self._entries.get(job_id)
             if raw is None:
                 outcome = self._completed.get(job_id)
@@ -1029,6 +1079,7 @@ class FileOutputStore:
 
     def extend(self, job_id: str, until: datetime, now: datetime) -> CollectResult | None:
         with self._transaction(now) as effective_now:
+            self._refuse_damaged(job_id)
             result = self._collect(job_id, effective_now)
             if result is None:
                 return None
@@ -1044,7 +1095,17 @@ class FileOutputStore:
     def delete(self, job_id: str, now: datetime) -> bool:
         with self._transaction(now, removal=True) as effective_now:
             if job_id not in self._entries:
-                return False
+                digest = self._job_hash(job_id)
+                if digest not in self._damaged:
+                    return False
+                # A damaged answer is removed by name; the journal's own
+                # reference, when there is one, names the job in the outcome.
+                job = self._references.get(digest)
+                outcome = ({'job': job, 'state': 'deleted', 'ended_at': effective_now.isoformat()}
+                           if job is not None else None)
+                self._removal_transaction(
+                    [{'file': digest + '.json', 'outcome': outcome}], effective_now)
+                return True
             self._removal_transaction([
                 self._removal_entry(self._entries[job_id], 'deleted', effective_now)
             ], effective_now)
@@ -1217,6 +1278,8 @@ class FileOutputStore:
             if job_id in self._entries:
                 return "pending"
             outcome = self._completed.get(job_id)
+            if outcome is None:
+                self._refuse_damaged(job_id)
             return outcome["state"] if outcome else None
 
     def outcomes(self, now: datetime, *, since: datetime) -> tuple[JobOutcome, ...]:

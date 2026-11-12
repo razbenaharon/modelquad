@@ -296,3 +296,152 @@ def test_the_comparison_happens_before_the_adapter_deletes_the_key(
     entry, command = seen[0]
     assert command == installed.new_command, "read before removal, not after"
     assert entry is not None
+
+
+# ---------------------------------------------------------------------------
+# F. the switch to the plugin removes ModelQuad's entry itself; uninstall
+#    still owes the user the entry that install replaced
+# ---------------------------------------------------------------------------
+
+
+def _switch_to_plugin(home: Path) -> None:
+    from modelquad.adapters.registration import install_with_registration
+
+    install_with_registration(HOST_ID, home, ClaudeAdapter(via_plugin=True))
+    assert _read_registration(home) is None
+
+
+def test_uninstall_after_the_plugin_switch_restores_the_replaced_entry(
+    state_root, claude_home, capsys
+):
+    original = {"command": "modelquad-mcp", "env": {"MY_KEY": ENV_VALUE_SENTINEL}}
+    _write_registration(claude_home, original)
+    _install(claude_home)
+    _switch_to_plugin(claude_home)
+
+    rc = _uninstall(claude_home)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert _read_registration(claude_home) == original
+    assert "Restored" in out
+    assert ENV_VALUE_SENTINEL not in out
+    assert recorded_replacement(HOST_ID) is None, "the env copy is not kept once restored"
+
+
+def test_a_registration_the_user_removed_after_reinstalling_is_not_put_back(
+    state_root, claude_home, capsys
+):
+    """The plugin switch's mark must not outlive a later regular install."""
+
+    from modelquad.adapters.registration import install_with_registration
+
+    _write_registration(claude_home, {"command": "modelquad-mcp", "env": {"A": "b"}})
+    _install(claude_home)
+    _switch_to_plugin(claude_home)
+    install_with_registration(HOST_ID, claude_home, ClaudeAdapter(via_plugin=False))
+    assert _read_registration(claude_home) is not None
+    _remove_registration(claude_home)
+
+    assert _uninstall(claude_home) == 0
+    assert _read_registration(claude_home) is None
+    assert "not put back" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# G. no record in this state folder: only what is recognisably ModelQuad's goes
+# ---------------------------------------------------------------------------
+
+
+def test_uninstall_without_a_record_leaves_a_foreign_entry_and_says_so(
+    state_root, claude_home, capsys
+):
+    foreign = {"command": "my-own-mq", "env": {"MY_KEY": ENV_VALUE_SENTINEL}}
+    _write_registration(claude_home, foreign)
+
+    rc = _uninstall(claude_home)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert _read_registration(claude_home) == foreign
+    assert "left in place" in out
+    assert ENV_VALUE_SENTINEL not in out
+
+
+def test_plugin_install_then_uninstall_leaves_a_foreign_entry(state_root, claude_home, capsys):
+    foreign = {"command": "my-own-mq"}
+    _write_registration(claude_home, foreign)
+    from modelquad.adapters.registration import install_with_registration
+
+    install_with_registration(HOST_ID, claude_home, ClaudeAdapter(via_plugin=True))
+    assert _read_registration(claude_home) == foreign
+
+    assert _uninstall(claude_home) == 0
+    assert _read_registration(claude_home) == foreign
+
+
+@pytest.mark.parametrize("entry", [
+    {"command": "modelquad-mcp", "args": [], "timeout": 900000},
+    {"command": "modelquad", "args": ["mcp"]},
+    {"command": "C:/tools/Scripts/modelquad-mcp.exe"},
+])
+def test_uninstall_without_a_record_removes_what_is_plainly_modelquads(
+    state_root, claude_home, capsys, entry
+):
+    """A state folder that moved (an editable install swapped for a plain one)
+    leaves no record; ModelQuad's own commands still identify themselves."""
+
+    from modelquad.adapters.codex_hooks import pending_entry
+
+    _write_registration(claude_home, entry)
+    reminder = pending_entry(HOST_ID)
+    users_hook = {"matcher": "", "hooks": [{"type": "command", "command": "echo mine"}]}
+    (claude_home / "settings.json").write_text(json.dumps({
+        "statusLine": {"type": "command", "command": "modelquad usage-hook claude"},
+        "hooks": {"SessionStart": [users_hook, reminder]},
+    }), encoding="utf-8")
+
+    rc = _uninstall(claude_home)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert _read_registration(claude_home) is None
+    settings = json.loads((claude_home / "settings.json").read_text(encoding="utf-8"))
+    assert "statusLine" not in settings
+    assert settings["hooks"]["SessionStart"] == [users_hook]
+    assert "no ownership record" not in out
+
+
+def test_a_reminder_the_user_extended_is_kept_without_a_record(state_root, claude_home):
+    from modelquad.adapters.codex_hooks import pending_entry
+
+    reminder = pending_entry(HOST_ID)
+    reminder["hooks"][0]["env"] = {"MINE": "1"}
+    (claude_home / "settings.json").write_text(
+        json.dumps({"hooks": {"SessionStart": [reminder]}}), encoding="utf-8"
+    )
+
+    assert _uninstall(claude_home) == 0
+    settings = json.loads((claude_home / "settings.json").read_text(encoding="utf-8"))
+    assert settings["hooks"]["SessionStart"] == [reminder]
+
+
+# ---------------------------------------------------------------------------
+# H. uninstall leaves no folder behind for a skill file it wrote itself
+# ---------------------------------------------------------------------------
+
+
+def test_uninstall_leaves_no_skill_folders_and_keeps_a_copy_of_an_edited_skill(
+    state_root, claude_home, capsys
+):
+    _install(claude_home)
+    skills = claude_home / "skills"
+    edited = skills / "modelquad-quota" / "SKILL.md"
+    edited.write_bytes(edited.read_bytes() + b"my own note\n")
+
+    assert _uninstall(claude_home) == 0
+
+    left = sorted(p.name for p in skills.iterdir()) if skills.exists() else []
+    assert left == ["modelquad-quota"], left
+    copies = list((skills / "modelquad-quota").iterdir())
+    assert len(copies) == 1 and b"my own note" in copies[0].read_bytes()

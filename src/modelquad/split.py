@@ -13,9 +13,11 @@ closed reason code:
   Claude's: Codex through ModelQuad is read-only and tool-less (invariant 8).
   The user's ``modelquad settings repo off``, the repository's
   ``.modelquad.toml`` and a missing Codex also land here.
-* ``codex``: proposed for Codex, read-only, and ``asks_user`` is True: each
-  such step is its own ``modelquad_delegate`` call with its own approval
-  prompt. Nothing here approves or starts any of them.
+* ``codex``: proposed for Codex, read-only. Each such step is its own
+  ``modelquad_delegate`` call. Without the user's standing grant
+  ``asks_user`` is True and the call shows its own approval prompt; in a
+  session that runs under the grant ``asks_user`` is False and the call runs
+  without one (``standing``). Nothing here approves or starts any of them.
 * ``claude``: Codex could take it, and the task fit says Claude.
 * ``codex`` with ``claude_near_limit``: a step the task fit gave Claude,
   proposed for Codex because of the two quota readings (below).
@@ -40,9 +42,10 @@ when all of these readings hold at once:
 
 A missing, old or unknown reading on either side moves nothing: unknown is
 not room (invariant 4). A step that edits files or runs commands never
-moves; Claude stays the writer. A moved step is still its own
-``modelquad_delegate`` call with its own approval (or the user's standing
-grant), and the reply asks Claude to pass the trigger ``split_quota``, so the
+moves; Claude stays the writer. Quota alone starts no task: a move only
+changes who takes a read-only step of a task the user asked for. A moved
+step is still its own ``modelquad_delegate`` call, with its own approval
+prompt or, under the user's standing grant, without one, and the reply asks Claude to pass the trigger ``split_quota``, so the
 review ledger records why that call was made and ``modelquad review report``
 and the split summary count those calls. Nothing here claims that a move
 used less of anything; the summary reports only what was measured.
@@ -107,6 +110,9 @@ LEAN_SIZES = frozenset({"medium", "large"})
 QUOTA_TRIGGER = "split_quota"
 
 APPROVAL = "Each Codex step shows its own approval prompt when it runs."
+#: The same line in a session that runs under the user's standing grant.
+APPROVAL_STANDING = ("Under your standing grant, each Codex step runs as its own read-only "
+                     "call, without a prompt.")
 
 _WORDS = {
     EDITS_OR_COMMANDS: "edits or commands",
@@ -307,11 +313,13 @@ def _reasons(rows: list[dict]) -> str:
 
 
 def content_lines(rows: list[dict], fact_block: dict, *, quota_line: str, account_line: str | None,
-                  lean_line: str | None = None) -> list[str]:
+                  lean_line: str | None = None, standing: bool = False) -> list[str]:
     """The 3 to 8 lines the person reads.
 
     The line about a step quota moved and the caution never appear together:
     a move needs Codex to report no limit reached, and the caution says one is.
+    ``standing``: the session runs under the user's standing grant, so the
+    lines say that no prompt will show, and not that Claude waits to be asked.
     """
     claude = [row for row in rows if row["owner"] != CODEX]
     codex = [row for row in rows if row["owner"] == CODEX]
@@ -321,14 +329,14 @@ def content_lines(rows: list[dict], fact_block: dict, *, quota_line: str, accoun
         lines.append(f"Claude: {_numbers([row['step'] for row in claude])} ({_reasons(claude)}).")
     if codex:
         lines.append(f"Codex (read-only): {_numbers([row['step'] for row in codex])} "
-                     f"({_reasons(codex)}). {APPROVAL}")
+                     f"({_reasons(codex)}). {APPROVAL_STANDING if standing else APPROVAL}")
         moved = [row["step"] for row in codex if row["reason"] == CLAUDE_NEAR_LIMIT]
         if moved and lean_line:
             lines.append(f"{lean_line} Proposed for Codex (read-only): {_numbers(moved)}. "
                          f"Claude passes trigger {QUOTA_TRIGGER} when it asks Codex, so the "
                          "review report counts these calls.")
         repository = fact_block["repository"]
-        if repository["offer_mode"] == ON_REQUEST:
+        if repository["offer_mode"] == ON_REQUEST and not standing:
             lines.append("In this repository, Claude calls Codex only when you ask.")
         if repository["codex_account_rule"] == "workspace":
             lines.append(f"This repository's {repo_policy.FILE_NAME} allows Codex only on a work "
@@ -345,8 +353,11 @@ def content_lines(rows: list[dict], fact_block: dict, *, quota_line: str, accoun
 
 def propose(steps: Iterable[Step], *, router, statuses, thresholds, now: datetime,
             plan_views, policy, user_mode: str | None, global_proactive: bool,
-            codex_paused: bool = False) -> dict:
+            codex_paused: bool = False, standing: bool = False) -> dict:
     """The whole reply: owners, facts, ``launches`` False and the human lines.
+
+    ``standing``: this session runs under the user's standing grant for this
+    folder, so a Codex step will run without a prompt; the reply says so.
 
     ``policy`` is the repository file's ``RepoPolicy`` or None; ``user_mode``
     the user's per-repo word. ``codex_paused``: ModelQuad's own launch policy
@@ -373,7 +384,7 @@ def propose(steps: Iterable[Step], *, router, statuses, thresholds, now: datetim
         owner, reason = leaned(step, owner, reason, lean)
         rows.append({"step": index, "title": step.title, "task_type": step.task_type,
                      "needs": step.needs, "independent": step.independent, "size": step.size,
-                     "owner": owner, "reason": reason, "asks_user": owner == CODEX,
+                     "owner": owner, "reason": reason, "asks_user": owner == CODEX and not standing,
                      "trigger": QUOTA_TRIGGER if reason == CLAUDE_NEAR_LIMIT else None})
     moved = any(row["reason"] == CLAUDE_NEAR_LIMIT for row in rows)
     fact_block = facts(statuses, thresholds, now, plan_views, policy, applied.offer,
@@ -384,11 +395,12 @@ def propose(steps: Iterable[Step], *, router, statuses, thresholds, now: datetim
         quota_line = "unknown."
     account = plans.account_line(plan_views) if plans.accounts_differ(plan_views) else None
     lines = content_lines(rows, fact_block, quota_line=quota_line, account_line=account,
-                          lean_line=lean["line"] if moved and lean is not None else None)
+                          lean_line=lean["line"] if moved and lean is not None else None,
+                          standing=standing)
     return {
         "steps": rows,
         "launches": False,
-        "approval": APPROVAL,
+        "approval": APPROVAL_STANDING if standing else APPROVAL,
         "facts": fact_block,
         "content": "\n".join(lines),
     }

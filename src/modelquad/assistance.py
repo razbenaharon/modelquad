@@ -7,7 +7,7 @@ copied individually from the existing normalized snapshots. Missing data never
 becomes zero, and an original observation time is never replaced by collection
 time.
 
-Quota never orders, admits or refuses a worker and never starts anything.
+Quota never orders, admits or refuses a worker, and alone it starts nothing.
 It may produce :func:`handoff_suggestion`, a note that Claude is near its
 limit, with the facts, and that the user may wait for the reset or ask Codex
 for a read-only review; and the same thresholds let ``split.quota_lean``
@@ -20,7 +20,9 @@ starts only when Claude makes a Codex call and Claude Code's approval prompt
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import math
 
 from .models import Freshness
 from .providers.base import (
@@ -63,7 +65,11 @@ def quota_windows(status, thresholds, *, now: datetime):
     metadata = status.metadata if isinstance(status.metadata, Mapping) else {}
     observed = _moment(status.observed_at)
     source = _source(metadata.get("source"))
-    stale = freshness_for(observed, thresholds, now) in (Freshness.STALE, Freshness.VERY_STALE)
+    freshness = freshness_for(observed, thresholds, now)
+    stale = freshness in (Freshness.STALE, Freshness.VERY_STALE)
+    # No time, or a time ahead of the clock: the reading's age is unknown, so
+    # its figures are not presented as current anywhere.
+    undated = observed is None or freshness is Freshness.UNKNOWN
     retained = metadata.get("stale") is True
     windows = []
 
@@ -84,7 +90,7 @@ def quota_windows(status, thresholds, *, now: datetime):
                         "remaining_percent": remaining,
                         "resets_at": resets.isoformat() if resets else None,
                         "stale": stale or retained,
-                        "unknown": observed is None or (used is None and remaining is None)})
+                        "unknown": undated or (used is None and remaining is None)})
 
     native = metadata.get("windows")
     if isinstance(native, (list, tuple)):
@@ -151,9 +157,25 @@ def _in(seconds):
     return f"{hours // 24}d {hours % 24}h"
 
 
+def _used_whole(used):
+    """Used percent as a whole number for display, rounded down.
+
+    Rounding to nearest would say "90%" for 89.99 while the rule that acts at
+    90 has not acted; rounded down, the shown number crosses a threshold only
+    when the reading did.
+    """
+    return max(0, min(100, math.floor(round(used, 6))))
+
+
+def _left_whole(used):
+    """Percent left as a whole number: 0 only when nothing is left, 100 only when nothing is used."""
+    left = 100 - _used_whole(used)
+    return 99 if left == 100 and used > 0 else left
+
+
 def _window_phrase(window, now):
     name = WINDOW_NAMES.get(window["window"], "window")
-    text = f"{_used(window):.0f}% of its {name}"
+    text = f"{_used_whole(_used(window))}% of its {name}"
     resets = _moment(window.get("resets_at"))
     if resets is not None and resets > now:
         text += f" (resets in {_in((resets - now).total_seconds())})"
@@ -182,7 +204,7 @@ def _window_view(window):
 #: What the model reads beside the note: it informs, it never starts anything.
 NOTE_STARTS_NOTHING = (
     "Nothing starts from this note. Show it to the user in one line. Call Codex for a "
-    "read-only review only if the user asks for one; Claude Code asks them before the call.")
+    "read-only review because of this note only if the user asks for one.")
 
 
 def handoff_suggestion(statuses, thresholds, *, now):
@@ -211,13 +233,19 @@ def handoff_suggestion(statuses, thresholds, *, now):
     if not over:
         return None
     claude_window = max(over, key=lambda w: (_used(w), w["window"] == "five_hour"))
+    codex = by_name.get("codex")
+    codex_windows = [w for w in (quota_windows(codex, thresholds, now=now) if codex else [])
+                     if w["window"] in WINDOW_MINUTES and _readable(w, now)]
+    codex_window = max(codex_windows, key=lambda w: (_used(w), w["window"] == "five_hour"), default=None)
+    if codex_window is not None and _used(codex_window) >= HANDOFF_CODEX_EXHAUSTED_USED:
+        return None
     if all(w["window"] == "five_hour" for w in over):
         resets = _moment(claude_window.get("resets_at"))
         if resets is not None and resets - now <= timedelta(minutes=HANDOFF_WAIT_MINUTES):
             return {
                 "suggest": True,
                 "to": "wait",
-                "message": (f"Claude is at {_used(claude_window):.0f}% of its 5-hour window, "
+                "message": (f"Claude is at {_used_whole(_used(claude_window))}% of its 5-hour window, "
                             f"which resets at {local_clock(resets, now)}. Waiting for the "
                             "reset may be simpler. You decide."),
                 "claude_window": _window_view(claude_window),
@@ -226,12 +254,6 @@ def handoff_suggestion(statuses, thresholds, *, now):
                 "approval": NOTE_STARTS_NOTHING,
                 "launches": False,
             }
-    codex = by_name.get("codex")
-    codex_windows = [w for w in (quota_windows(codex, thresholds, now=now) if codex else [])
-                     if w["window"] in WINDOW_MINUTES and _readable(w, now)]
-    codex_window = max(codex_windows, key=lambda w: (_used(w), w["window"] == "five_hour"), default=None)
-    if codex_window is not None and _used(codex_window) >= HANDOFF_CODEX_EXHAUSTED_USED:
-        return None
     codex_text = (f"Codex is at {_window_phrase(codex_window, now)}." if codex_window is not None
                   else "Codex quota is unknown.")
     message = (f"Claude is at {_window_phrase(claude_window, now)}. {codex_text} "
@@ -282,14 +304,19 @@ def _codex_state(status):
 
 
 def _has_no_five_hour_window(status):
-    """Codex answered with windows, and none of them is a 5-hour window."""
+    """Codex answered with windows, and none of them can be a 5-hour window.
+
+    A window whose length Codex did not state in a form ModelQuad recognises
+    might be the 5-hour one, so with such a window the plan is not known.
+    """
     metadata = status.metadata if isinstance(status.metadata, Mapping) else {}
     native = metadata.get("windows")
     if not isinstance(native, (list, tuple)):
         return False
     observed = [w for w in native if isinstance(w, Mapping)
                 and parse_percentage(w.get("used_percentage")) is not None]
-    return bool(observed) and not any(w.get("slot") == "five_hour" for w in observed)
+    return bool(observed) and all(
+        w.get("slot") in WINDOW_MINUTES and w.get("slot") != "five_hour" for w in observed)
 
 
 def _plan_without_five_hour(name, status, windows):
@@ -341,8 +368,13 @@ def next_pace_readings(stored, statuses, thresholds, *, now):
     now = _moment(now)
     kept = {}
     for key, first in (stored or {}).items():
-        resets = _moment(first.get("resets_at")) if isinstance(first, Mapping) else None
-        if isinstance(key, str) and resets is not None and resets > now:
+        if not isinstance(key, str) or not isinstance(first, Mapping):
+            continue
+        resets = _moment(first.get("resets_at"))
+        # An entry that cannot be read (a hand edit, a torn write) is dropped
+        # here, so the current reading takes its place below.
+        if (resets is not None and resets > now and parse_percentage(first.get("used")) is not None
+                and _moment(first.get("observed_at")) is not None):
             kept[key] = dict(first)
     for status in statuses:
         for window in quota_windows(status, thresholds, now=now):
@@ -354,7 +386,7 @@ def next_pace_readings(stored, statuses, thresholds, *, now):
             same_window = (
                 first is not None and resets is not None
                 and abs((_moment(first.get("resets_at")) - resets).total_seconds()) <= 120
-                and (parse_percentage(first.get("used")) or 0.0) <= _used(window)
+                and parse_percentage(first.get("used")) <= _used(window)
             )
             if not same_window and resets is not None:
                 kept[key] = {"used": _used(window), "observed_at": window["observed_at"],
@@ -371,12 +403,104 @@ def _provider_view(status, thresholds, now, pace):
     return windows, full
 
 
+#: What a window shows: its figure, nothing, or nothing because it has reset.
+VALUE, UNKNOWN, RESET_PASSED = "value", "unknown", "reset_passed"
+RESET_PASSED_REASON = "A quota window has reset since this reading; the current figure is not known yet."
+UNTRUSTED_TIME_REASON = "The reading's time is ahead of this computer's clock, so its figures are not shown."
+
+
+def window_state(window, now):
+    """The one decision every surface shares about a window.
+
+    ``VALUE``: the figure is shown (an old reading is still shown, marked as
+    old). ``UNKNOWN``: there is no figure, or its time cannot be trusted.
+    ``RESET_PASSED``: the figure describes a window that has since reset.
+    """
+    if window is None or window.get("unknown") or _used(window) is None:
+        return UNKNOWN
+    resets = _moment(window.get("resets_at"))
+    return VALUE if resets is None or resets > now else RESET_PASSED
+
+
 def _shows_number(window, now):
     """The window's figure is shown: known, and its window has not reset."""
-    if window is None or window.get("unknown") or _used(window) is None:
-        return False
-    resets = _moment(window.get("resets_at"))
-    return resets is None or resets > now
+    return window_state(window, now) == VALUE
+
+
+def _one_decimal(value):
+    return None if value is None else round(value, 1)
+
+
+def shown_status(status, thresholds, *, now):
+    """One provider as ``modelquad status`` and the status tool show it.
+
+    Built from the same windows and the same :func:`window_state` as the
+    status line, so the surfaces cannot disagree: ``remaining_percentage`` is
+    the tightest shown window, and it is None when any window has reset since
+    the reading, when the reading's time cannot be trusted, or when there is
+    no reading. Figures are rounded to one decimal; ``used_percentage`` is
+    always ``100 - remaining_percentage``. Carries no path and no plan name.
+    """
+    now = _moment(now)
+    observed = _moment(status.observed_at)
+    freshness = freshness_for(observed, thresholds, now) if observed is not None else status.freshness
+    windows, shown, passed = [], [], False
+    for window in quota_windows(status, thresholds, now=now):
+        state = window_state(window, now)
+        remaining = round(100.0 - _used(window), 1) if state == VALUE else None
+        if remaining is not None:
+            shown.append(remaining)
+        passed = passed or state == RESET_PASSED
+        windows.append({
+            "window": window["window"], "state": state,
+            "remaining_percentage": remaining,
+            "used_percentage": None if remaining is None else round(100.0 - remaining, 1),
+            "reset_at": window["resets_at"],
+            "freshness": freshness.value if state == VALUE else Freshness.UNKNOWN.value})
+    reason = status.reason
+    if not status.available:
+        remaining = None
+    elif passed:
+        remaining, freshness, reason = None, Freshness.UNKNOWN, RESET_PASSED_REASON
+    elif observed is not None and freshness is Freshness.UNKNOWN:
+        remaining, reason = None, UNTRUSTED_TIME_REASON
+    elif windows:
+        remaining = min(shown) if shown else None
+    else:
+        # A status that carries only a headline figure and no window.
+        remaining = _one_decimal(status.remaining_percentage)
+    if remaining is None and reason is None:
+        reason = "No current quota reading."
+    return {"name": status.name, "available": status.available,
+            "remaining_percentage": remaining,
+            "observed_at": observed.isoformat() if observed else None,
+            "freshness": freshness.value, "reason": reason, "windows": windows}
+
+
+def shown_status_json(status, thresholds, *, now):
+    """``status --json`` for one provider: the full record, with the shown figures.
+
+    The provider's own facts stay under ``metadata`` and each pool's ``raw``;
+    every headline figure (the status, its capacity, its pools) is the one
+    :func:`shown_status` shows, so none of them presents a figure the status
+    line would not.
+    """
+    view = shown_status(status, thresholds, now=now)
+    remaining = view["remaining_percentage"]
+    freshness = Freshness(view["freshness"])
+    capacity = status.capacity
+    if capacity is not None:
+        capacity = None if remaining is None else replace(
+            capacity, freshness=freshness,
+            remaining_percentage=_one_decimal(capacity.remaining_percentage),
+            used_percentage=_one_decimal(capacity.used_percentage))
+    pools = tuple(replace(pool, freshness=freshness, reason=view["reason"],
+                          remaining_percentage=(None if remaining is None
+                                                else _one_decimal(pool.remaining_percentage)))
+                  for pool in status.pools)
+    shown = replace(status, remaining_percentage=remaining, freshness=freshness,
+                    reason=view["reason"], capacity=capacity, pools=pools)
+    return shown.to_dict() | {"windows": view["windows"]}
 
 
 def _window_text(window, now, *, name):
@@ -385,12 +509,13 @@ def _window_text(window, now, *, name):
     The line says what is left, not what is used: "0% used" on a fresh
     window read to the owner as nothing left (live test, 2026-10-25). An old
     reading is said once per tool, by :func:`_as_of`."""
-    if window is None or window.get("unknown") or _used(window) is None:
-        return "unknown"
-    if not _shows_number(window, now):
+    state = window_state(window, now)
+    if state == RESET_PASSED:
         # The reading describes a window that has reset.
         return NEXT_MESSAGE if name == "claude" else "unknown"
-    return f"{min(100.0, max(0.0, 100.0 - _used(window))):.0f}% left"
+    if state != VALUE:
+        return "unknown"
+    return f"{_left_whole(_used(window))}% left"
 
 
 def _as_of(windows, now):

@@ -1,0 +1,145 @@
+name: Release
+
+# Publishes a tagged release to PyPI with Trusted Publishing (OIDC). No API
+# token is stored anywhere. The GitHub release itself is made by hand.
+#
+# One-time setup by the owner, before the first tag:
+#   1. On PyPI, project "modelquad" > Publishing > add a trusted publisher:
+#      owner razbenaharon, repository modelquad, workflow release.yml,
+#      environment pypi.
+#   2. On GitHub, Settings > Environments > create "pypi" with the maintainer
+#      as required reviewer, deployment tags limited to v*.*.*, and no secrets.
+#   3. Optionally, a tag ruleset for v* so only maintainers create release tags.
+#
+# To release: set __version__ in src/modelquad/__init__.py, merge to main, wait
+# for Windows CI to pass on that commit, and push the tag v<that version>.
+# Pushing the tag publishes nothing. Then, on GitHub: Actions > Release >
+# Run workflow, choose the tag under "Use workflow from", and type publish.
+#
+# The run refuses before building anything unless all of these hold: the word
+# publish was typed, the run is on a vX.Y.Z tag, the tagged commit is part of
+# main, Windows CI passed on that commit, and the tag equals __version__.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "publish" to build this tag and upload it to PyPI'
+        required: true
+        type: string
+
+# Nothing by default; each job asks for only what it needs.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build sdist and wheel
+    # The wheel is pure Python, so it builds the same on Linux. The Windows
+    # suite runs in windows-ci.yml.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read  # to read whether Windows CI passed on the tagged commit
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The whole history, so the tagged commit can be compared with main.
+          fetch-depth: 0
+
+      - name: A confirmed release of a version tag on main
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "publish" ]; then
+            echo "::error::not confirmed: type publish in the confirm box to release"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" != "tag" ] || ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::run this workflow from a vX.Y.Z tag, not from $GITHUB_REF_TYPE $GITHUB_REF_NAME"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "::error::the tagged commit $GITHUB_SHA is not part of main"
+            exit 1
+          fi
+
+      - name: Windows CI passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          passed=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/windows-ci.yml/runs?head_sha=${GITHUB_SHA}&status=success&per_page=1" --jq '.total_count')
+          if [ "$passed" -lt 1 ]; then
+            echo "::error::no successful Windows CI run for $GITHUB_SHA; run it on main first"
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+          # No cache: a release build restores nothing a pull request run wrote.
+
+      - name: The tag matches the package version
+        id: version
+        # pyproject.toml reads the version from modelquad.__version__.
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(python -c "import re, pathlib; print(re.search(r'^__version__ = \"([^\"]+)\"', pathlib.Path('src/modelquad/__init__.py').read_text(encoding='utf-8'), re.M).group(1))")
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::tag v$tag does not match __version__ $ver"
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Releasing $ver"
+
+      - name: Build and check the distributions
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          python -m pip install "build==1.6.1" "twine==6.2.0"
+          python -m build --sdist --wheel --outdir dist .
+          python -m twine check --strict dist/*
+          sha256sum dist/*
+
+      - name: Upload the distributions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    # The build job already refused anything else; said again where the upload is.
+    if: ${{ inputs.confirm == 'publish' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/modelquad/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write  # OIDC for Trusted Publishing; nothing else
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        # Trusted Publishing also uploads PEP 740 attestations by default.
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3

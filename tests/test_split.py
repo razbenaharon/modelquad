@@ -67,14 +67,15 @@ def test_the_read_only_kinds_are_the_executors_and_the_repo_files():
 
 
 def _propose(steps, *, statuses=None, config=None, policy=None, user_mode=None,
-             views=None, global_proactive=False, now=None):
+             views=None, global_proactive=False, now=None, standing=False):
     now = now or datetime.now(timezone.utc)
     statuses = statuses if statuses is not None else [
         ProviderStatus(name="claude"), ProviderStatus(name="codex")]
     return split.propose(steps, router=Router(config or Config()), statuses=statuses,
                          thresholds=THRESHOLDS, now=now,
                          plan_views=views or plans.merged(None, {}), policy=policy,
-                         user_mode=user_mode, global_proactive=global_proactive)
+                         user_mode=user_mode, global_proactive=global_proactive,
+                         standing=standing)
 
 
 #: Codex as the better fit for everything: the hard gate must still hold.
@@ -629,3 +630,63 @@ def test_the_split_tool_reads_modelquads_own_pause(tmp_path, monkeypatch):
 
     reply = mcp._split_reply(str(tmp_path), [SplitStep(title="Review", task_type="review", needs="none")])
     assert reply["steps"][0]["reason"] == split.CODEX_PAUSED
+
+
+# ------------------------------------------- under the user's standing grant
+
+
+def test_under_the_standing_grant_the_reply_says_no_prompt_will_show():
+    """Owner decision 2026-11-12: a quota-moved step is an ordinary call under the grant."""
+    reply = _lean_reply(standing=True)
+    row = reply["steps"][0]
+    assert _first(reply) == (split.CODEX, split.CLAUDE_NEAR_LIMIT)
+    assert row["asks_user"] is False and row["trigger"] == split.QUOTA_TRIGGER
+    assert reply["approval"] == split.APPROVAL_STANDING
+    assert split.APPROVAL_STANDING in reply["content"]
+    assert split.APPROVAL not in reply["content"]
+    assert reply["launches"] is False, "the proposal itself still starts nothing"
+
+
+def test_the_grant_changes_no_owner():
+    steps = [split.Step("Add it", "implementation", "edit"),
+             split.Step("Run it", "testing", "run"),
+             split.Step("Review it", "review", "none", True),
+             split.Step("Map it", "exploration", "none", size="large")]
+    plain, granted = _lean_reply(steps), _lean_reply(steps, standing=True)
+    owners = lambda reply: [(row["owner"], row["reason"]) for row in reply["steps"]]  # noqa: E731
+    assert owners(plain) == owners(granted)
+    assert [row["asks_user"] for row in granted["steps"]] == [False] * 4
+    assert [row["asks_user"] for row in plain["steps"]] == [False, False, True, True]
+
+
+def test_under_the_grant_on_request_is_not_reported_as_waiting_for_the_user():
+    policy = rp.parse(b'schema = 1\n[offers]\ncodex = "on_request"\n')
+    assert "only when you ask" in _lean_reply(policy=policy)["content"]
+    assert "only when you ask" not in _lean_reply(policy=policy, standing=True)["content"]
+
+
+def test_the_tool_reports_the_grant_only_for_a_folder_it_covers(tool, tmp_path, monkeypatch):
+    from modelquad import grant
+    from modelquad.mcp import server as mcp
+
+    repo = git_repo(tmp_path / "repo")
+    other = git_repo(tmp_path / "other")
+    payload, text = tool(repo, STEP_ARGS)
+    assert payload["approval"] == split.APPROVAL and split.APPROVAL in text
+
+    monkeypatch.setattr(mcp, "_STANDING_GRANT", True)
+    monkeypatch.setattr(mcp, "_SESSION_PROJECT", str(repo))
+    monkeypatch.setattr(grant, "allows", lambda directory, **_: True)
+    payload, text = tool(repo, STEP_ARGS)
+    assert payload["approval"] == split.APPROVAL_STANDING and split.APPROVAL_STANDING in text
+    assert not any(row["asks_user"] for row in payload["steps"])
+    assert payload["launches"] is False and tool.started == []
+
+    # A folder outside the one the session started in gets no unprompted call.
+    payload, _ = tool(other, STEP_ARGS)
+    assert payload["approval"] == split.APPROVAL
+
+    # A grant turned off since the session started: the plain line again.
+    monkeypatch.setattr(grant, "allows", lambda directory, **_: False)
+    payload, _ = tool(repo, STEP_ARGS)
+    assert payload["approval"] == split.APPROVAL

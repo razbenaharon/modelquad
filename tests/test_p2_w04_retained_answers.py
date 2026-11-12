@@ -762,3 +762,165 @@ def test_expiry_read_fallback_never_persists_outcome_without_removed_hash(tmp_pa
     assert reopened.purge_expired(NOW + RETENTION) == (item.job,)
     # Replay remains blocked after the 30-day outcome retention has elapsed.
     assert not reopened.put(item, NOW + RETENTION + timedelta(days=31))
+
+
+# ---------------------------------------------------------------------------
+# A collected background answer is recorded in the review ledger like a direct
+# one, so its findings can take a verdict and the call is in the report.
+# ---------------------------------------------------------------------------
+
+REVIEW_TEXT = ("Two problems.\n"
+               "FINDING F1 | high | invoicing/tax.py:7 | bug | VAT is computed before the discount\n"
+               "FINDING F2 | low | invoicing/tax.py:30 | style | a name shadows a builtin\n")
+
+
+@pytest.fixture
+def ledger(tmp_path, monkeypatch):
+    from modelquad import review_ledger
+
+    monkeypatch.setenv('MODELQUAD_STATE_ROOT', str(tmp_path / 'ledger-state'))
+    return review_ledger
+
+
+def _reviewed(item, decision_id='decision-from-a-job'):
+    return replace(item, job=JobRef(item.job.job_id, item.job.attempt_id, decision_id),
+                   output_text=REVIEW_TEXT)
+
+
+@pytest.mark.parametrize('surface', ['collect', 'wait'])
+def test_a_collected_background_answer_is_recorded_in_the_review_ledger(
+        terminal_job, ledger, surface, tmp_path, monkeypatch):
+    database, store, item = terminal_job
+    item = _reviewed(item)
+    store.put(item, NOW)
+
+    response = terminal_response(surface, database, item, tmp_path, monkeypatch)
+
+    assert response['decision_id'] == 'decision-from-a-job'
+    assert [finding['finding'] for finding in response['findings']] == ['F1', 'F2']
+    assert 'modelquad_review_verdict' in response['findings_note']
+    assert ledger.delivered_answers(['decision-from-a-job']) == {'decision-from-a-job': True}
+    report = ledger.report(workspace=ledger.workspace_id(project(database)))
+    assert report['runs'] == 1 and report['findings']['findings'] == 2
+    # A verdict on a finding of a background answer is accepted.
+    assert ledger.record_verdicts('decision-from-a-job', [{
+        'finding': 'F1', 'verdict': 'confirmed', 'evidence': 'code_reading',
+        'action': 'to_fix'}], source='claude') == 1
+
+
+def test_collecting_again_does_not_record_the_call_twice(terminal_job, ledger):
+    database, store, item = terminal_job
+    item = _reviewed(item)
+    store.put(item, NOW)
+    first = jobs_tools.modelquad_job_collect(item.job.job_id, project(database))
+    recorded = []
+    real = ledger.record_run
+    ledger_calls = lambda *a, **k: recorded.append(1) or real(*a, **k)  # noqa: E731
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ledger, 'record_run', ledger_calls)
+        assert jobs_tools.modelquad_job_collect(item.job.job_id, project(database)) == first
+    assert not recorded
+    assert ledger.report(workspace=ledger.workspace_id(project(database)))['runs'] == 1
+
+
+def test_a_ledger_that_cannot_be_written_never_blocks_collection(terminal_job, ledger, monkeypatch):
+    database, store, item = terminal_job
+    item = _reviewed(item)
+    store.put(item, NOW)
+
+    def broken(*args, **kwargs):
+        raise OSError('synthetic ledger failure')
+
+    monkeypatch.setattr(ledger, 'record_run', broken)
+    response = jobs_tools.modelquad_job_collect(item.job.job_id, project(database))
+    assert response['output'] == REVIEW_TEXT and response['receipt']
+    assert response['findings_note'] == 'ModelQuad could not record this call in its review ledger.'
+    assert 'findings' not in response
+
+
+def test_an_answer_without_a_decision_is_collected_as_before(terminal_job, ledger):
+    database, store, item = terminal_job
+    store.put(replace(item, output_text=REVIEW_TEXT), NOW)
+    response = jobs_tools.modelquad_job_collect(item.job.job_id, project(database))
+    assert not {'decision_id', 'findings', 'findings_note'} & response.keys()
+    assert not ledger.ledger_path().exists()
+
+
+# ---------------------------------------------------------------------------
+# A damaged answer is reported for its own job, in words, and nothing raises.
+# ---------------------------------------------------------------------------
+
+
+def _damage(store, job_id):
+    path = Path(store.root) / store._filename(job_id)
+    path.write_bytes(b'{broken')
+
+
+def test_a_damaged_answer_is_a_clear_message_for_that_job_only(terminal_job, monkeypatch):
+    database, store, item = terminal_job
+    store.put(item, NOW)
+    attempt = history.record_delegation_attempt(database, task_type='review',
+                                                working_directory=Path(project(database)))
+    row = history.reserve_job(database, 'healthy', attempt)
+    history.update_job(database, row['job_id'], status='finished', ended_at=NOW.isoformat())
+    healthy = answer('healthy', attempt_id=attempt, text='a readable answer')
+    store.put(healthy, NOW)
+    _damage(store, item.job.job_id)
+
+    for surface in (jobs_tools.modelquad_job_collect, jobs_tools.modelquad_job_wait):
+        response = surface(item.job.job_id, project(database))
+        assert response['error'] == 'pending_output_damaged' and response['job_id'] == item.job.job_id
+        assert 'modelquad jobs clear --yes' in response['message']
+        assert 'broken' not in json.dumps(response)
+    acknowledged = jobs_tools.modelquad_job_acknowledge(item.job.job_id, 'any', project(database))
+    assert acknowledged['error'] == 'pending_output_damaged'
+
+    assert jobs_tools.modelquad_job_collect('healthy', project(database))['output'] == 'a readable answer'
+    monkeypatch.setattr(jobs_tools, 'read_pending_summary', None, raising=False)
+    from modelquad.jobs import service_client
+    monkeypatch.setattr(service_client, 'read_pending_summary',
+                        lambda *a, **k: (_ for _ in ()).throw(OSError('no service')))
+    listed = jobs_tools.modelquad_job_list_pending(project(database))
+    assert [job['job_id'] for job in listed['jobs']] == ['healthy']
+
+
+def test_a_damaged_index_is_a_clear_message_not_an_exception(terminal_job):
+    database, store, item = terminal_job
+    store.put(item, NOW)
+    (Path(store.root) / 'outcomes.jsonl').write_bytes(b'not a journal\n')
+
+    response = jobs_tools.modelquad_job_collect(item.job.job_id, project(database))
+    assert response['error'] == 'pending_output_store_damaged'
+    assert 'modelquad jobs clear --yes' in response['message']
+    assert jobs_tools.modelquad_job_acknowledge(
+        item.job.job_id, 'any', project(database))['error'] == 'pending_output_store_damaged'
+
+
+def test_clearing_removes_every_saved_answer_and_the_store_works_again(terminal_job):
+    database, store, item = terminal_job
+    store.put(item, NOW)
+    store.put(answer('second', attempt_id=item.job.attempt_id), NOW)
+    _damage(store, item.job.job_id)
+    (Path(store.root) / 'outcomes.jsonl').write_bytes(b'not a journal\n')
+
+    assert jobs_tools.clear_retained_answers() == 2
+
+    assert not list(Path(store.root).glob('*.json'))
+    assert store.pending(NOW) == ()
+    assert store.put(answer('after-clearing', attempt_id=item.job.attempt_id), NOW)
+
+
+def test_the_jobs_clear_command_needs_yes_and_then_clears(terminal_job, capsys):
+    from modelquad import cli
+
+    database, store, item = terminal_job
+    store.put(item, NOW)
+    _damage(store, item.job.job_id)
+
+    assert cli.main(['jobs', 'clear']) == 2
+    assert '--yes' in capsys.readouterr().err
+    assert list(Path(store.root).glob('*.json')), 'nothing is removed without --yes'
+
+    assert cli.main(['jobs', 'clear', '--yes']) == 0
+    assert 'Removed 1 saved answer' in capsys.readouterr().out
+    assert not list(Path(store.root).glob('*.json'))

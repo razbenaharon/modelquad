@@ -209,6 +209,25 @@ def test_a_kind_that_is_not_read_only_is_not_blamed_on_a_repository_file(tmp_pat
     assert "modelquad.toml" not in json.dumps(payload)
 
 
+@pytest.mark.parametrize("kind", ["mutation", "write", "shell", ""])
+def test_an_unknown_kind_is_a_closed_refusal_before_an_attempt_is_reserved(
+        tmp_path, monkeypatch, no_start, kind):
+    started, _ = no_start
+    reserved = []
+    monkeypatch.setattr(mcp, "_reserve_launch", lambda *a, **k: reserved.append(1))
+    monkeypatch.setattr(disclosure, "notice_shown", lambda: True)
+    repo = git_repo(tmp_path / "repo")
+    payload = mcp._delegate_payload(kind, "Change it.", str(repo), "codex")
+    assert payload["refused"] is True and payload["reason"] == "task_type_not_read_only"
+    assert started == [] and reserved == []
+    # The tool itself answers with the same refusal, not a raw ValueError.
+    result = asyncio.run(mcp.modelquad_delegate(task_type=kind, prompt="Change it.",
+                                                working_directory=str(repo)))
+    assert result.structured_content["reason"] == "task_type_not_read_only"
+    assert result.structured_content["refused"] is True
+    assert started == [] and reserved == []
+
+
 EMPTY_KINDS = b"schema = 1\n[codex]\ntask_kinds = []\n"
 
 

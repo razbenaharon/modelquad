@@ -28,6 +28,18 @@ NOW = contract.NOW
 output = contract.output
 
 
+# Two reviewed scenarios model a put that keeps the caller's own (older) time
+# after the store has served a later one. The disk store stamps a new answer
+# with its served-time watermark instead, so that a clock which once ran ahead
+# cannot expire it early; the equivalent disk assertions are
+# test_an_answer_stored_after_a_clock_jump_keeps_its_full_retention and
+# test_purge_orders_by_expiry_before_job_id_on_disk below.
+_STAMPED_BY_THE_STORE = {
+    ("test_older_mutation_time_after_query_is_visible_and_inclusive", "purge_expired"),
+    ("test_purge_orders_by_expiry_before_job_id", None),
+}
+
+
 def _scenarios():
     names = [
         "test_extend_is_bounded_from_acceptance_and_preserves_receipt",
@@ -51,6 +63,8 @@ def _scenarios():
                 cases = [dict(case, **dict(zip(keys, value if len(keys) > 1 else (value,))))
                          for case, value in itertools.product(cases, values)]
         for case in cases:
+            if (name, case.get("operation")) in _STAMPED_BY_THE_STORE:
+                continue
             yield pytest.param(fn, case, id=name + str(case))
 
 
@@ -564,8 +578,11 @@ def test_corrupt_content_reports_typed_error_and_delete_all_recovers(tmp_path, d
     if journal_missing:
         (tmp_path / "outcomes.jsonl").unlink()
     reopened = FileOutputStore(tmp_path)
-    with pytest.raises(StoreCorrupted, match="invalid pending-output content"):
-        reopened.pending(NOW)
+    # The damaged answer is set aside: the store keeps working, and only that
+    # job reports the typed error (its name is the hash of the job id).
+    assert reopened.pending(NOW) == ()
+    with pytest.raises(StoreCorrupted, match="damaged pending-output content"):
+        reopened.collect(output().job.job_id, NOW)
     assert reopened.delete_all(NOW) == 1
     assert reopened.pending(NOW) == ()
     assert not list(tmp_path.glob("*.corrupt-*"))
@@ -846,3 +863,139 @@ def test_multi_job_delete_all_recovers_after_first_unlink(tmp_path):
     assert len(reopened.outcomes(NOW, since=NOW)) == 3
     assert all(reopened.state(item.job.job_id, NOW) == "deleted" for item in jobs)
     assert not list(tmp_path.glob("*.json"))
+
+
+# ---------------------------------------------------------------------------
+# A clock that ran ahead once: the served-time watermark never goes back, so a
+# new answer is stamped with it and keeps its whole retention period.
+# ---------------------------------------------------------------------------
+
+
+def test_an_answer_stored_after_a_clock_jump_keeps_its_full_retention(tmp_path):
+    store = FileOutputStore(tmp_path)
+    old = replace(output(), job=JobRef("stored-before-the-jump", 1, None))
+    assert store.put(old, NOW)
+    jump = NOW + RETENTION + timedelta(days=33)  # further ahead than any retention
+    assert store.pending(jump) == ()
+
+    back = NOW + timedelta(hours=1)  # the clock is right again
+    new = replace(output(), job=JobRef("stored-after-the-jump", 2, None))
+    assert store.put(new, back)
+
+    collected = store.collect(new.job.job_id, back + timedelta(seconds=1))
+    assert collected is not None and collected.output == new
+    assert store.state(new.job.job_id, back + timedelta(seconds=1)) == "pending"
+    # Retention is measured on the store's own clock, from when it was stored.
+    assert collected.retained_at == jump
+    assert collected.expires_at == jump + RETENTION
+    assert [entry.job for entry in store.pending(back + RETENTION)] == [new.job]
+    # Once the real clock passes the watermark, time moves again as usual.
+    assert store.collect(new.job.job_id, jump + RETENTION - timedelta(microseconds=1)) is not None
+    assert store.collect(new.job.job_id, jump + RETENTION) is None
+    assert store.state(new.job.job_id, jump + RETENTION) == "expired"
+
+
+def test_a_small_clock_jump_never_shortens_a_new_answers_retention(tmp_path):
+    store = FileOutputStore(tmp_path)
+    store.pending(NOW + timedelta(days=2))
+    assert store.put(output(), NOW)
+    job_id = output().job.job_id
+    assert store.collect(job_id, NOW + RETENTION - timedelta(microseconds=1)) is not None
+    assert store.collect(job_id, NOW + timedelta(days=2) + RETENTION) is None
+
+
+# ---------------------------------------------------------------------------
+# One damaged answer file is that job's problem only.
+# ---------------------------------------------------------------------------
+
+
+def _damage(tmp_path, store, job_id, data=b"{broken"):
+    path = tmp_path / store._filename(job_id)
+    assert path.is_file()
+    path.write_bytes(data)
+    return path
+
+
+def test_a_damaged_answer_affects_only_its_own_job(tmp_path, caplog):
+    from modelquad.jobs.store import PendingOutputDamaged
+
+    store = FileOutputStore(tmp_path)
+    damaged = replace(output(), job=JobRef("damaged-job", 1, None), output_text="secret answer text")
+    healthy = replace(output(), job=JobRef("healthy-job", 2, None))
+    assert store.put(damaged, NOW) and store.put(healthy, NOW)
+    _damage(tmp_path, store, damaged.job.job_id)
+
+    reopened = FileOutputStore(tmp_path)
+    assert reopened.collect(healthy.job.job_id, NOW).output == healthy
+    other = replace(output(), job=JobRef("stored-later", 3, None))
+    assert reopened.put(other, NOW)
+    assert [entry.job for entry in reopened.pending(NOW)] == sorted(
+        [healthy.job, other.job], key=lambda job: job.job_id)
+    receipt = reopened.collect(healthy.job.job_id, NOW).receipt
+    assert reopened.acknowledge(healthy.job.job_id, receipt, NOW)
+
+    for call in (
+        lambda: reopened.collect(damaged.job.job_id, NOW),
+        lambda: reopened.state(damaged.job.job_id, NOW),
+        lambda: reopened.acknowledge(damaged.job.job_id, "any", NOW),
+        lambda: reopened.extend(damaged.job.job_id, NOW + RETENTION, NOW),
+        lambda: reopened.put(damaged, NOW),
+    ):
+        with pytest.raises(PendingOutputDamaged):
+            call()
+    # Still a StoreCorrupted for callers that already handle that.
+    assert issubclass(PendingOutputDamaged, StoreCorrupted)
+    # The file stays where delete and delete_all look for it; nothing of it is logged.
+    assert (tmp_path / store._filename(damaged.job.job_id)).is_file()
+    assert not list(tmp_path.glob("*.corrupt-*"))
+    assert "secret" not in caplog.text and "damaged-job" not in caplog.text
+    journal = (tmp_path / "outcomes.jsonl").read_bytes()
+    assert b"secret" not in journal and b"broken" not in journal
+
+
+def test_a_damaged_answer_can_be_deleted_on_its_own(tmp_path):
+    store = FileOutputStore(tmp_path)
+    damaged = replace(output(), job=JobRef("damaged-job", 1, None))
+    healthy = replace(output(), job=JobRef("healthy-job", 2, None))
+    assert store.put(damaged, NOW) and store.put(healthy, NOW)
+    path = _damage(tmp_path, store, damaged.job.job_id)
+
+    assert store.delete(damaged.job.job_id, NOW)
+
+    assert not path.exists()
+    assert store.state(damaged.job.job_id, NOW) == "deleted"
+    assert not store.put(damaged, NOW), "a removed job is not accepted again"
+    assert store.collect(healthy.job.job_id, NOW).output == healthy
+    assert not store.delete(damaged.job.job_id, NOW)
+
+
+def test_delete_all_still_clears_a_store_with_a_damaged_answer(tmp_path):
+    store = FileOutputStore(tmp_path)
+    damaged = replace(output(), job=JobRef("damaged-job", 1, None))
+    assert store.put(damaged, NOW) and store.put(output(), NOW)
+    _damage(tmp_path, store, damaged.job.job_id, b"\xff")
+
+    assert store.delete_all(NOW) == 2
+    assert store.pending(NOW) == () and not list(tmp_path.glob("*.json"))
+
+
+def test_purge_orders_by_expiry_before_job_id_on_disk(tmp_path):
+    store = FileOutputStore(tmp_path)
+    jobs = [replace(output(), job=JobRef(name, i, None))
+            for i, name in enumerate(["a-later", "z-earlier", "b-earlier"], 1)]
+    for item in jobs[1:]:
+        store.put(item, NOW)
+    store.put(jobs[0], NOW + timedelta(hours=1))
+    assert store.purge_expired(NOW + RETENTION + timedelta(hours=1)) == (
+        jobs[2].job, jobs[1].job, jobs[0].job,
+    )
+
+
+def test_a_purge_with_an_older_time_than_the_store_served_expires_nothing_new(tmp_path):
+    store = FileOutputStore(tmp_path)
+    served = NOW + RETENTION + timedelta(seconds=1)
+    store.outcomes(served, since=NOW)
+    late = replace(output(), job=JobRef("late-job", 2, None))
+    assert store.put(late, NOW)
+    assert store.purge_expired(NOW + RETENTION) == ()
+    assert store.collect(late.job.job_id, NOW).retained_at == served

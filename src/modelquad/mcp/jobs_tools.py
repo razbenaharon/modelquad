@@ -11,7 +11,8 @@ from modelquad.execution.base import DESCENDANTS_RECORDED, worker_confirmed_dead
 from modelquad.jobs.handle import job_status, stop_job
 from modelquad.jobs.recovery import schedule_recovery
 from modelquad.jobs.store import (
-    PendingOutputCapacityUnavailable, PendingOutputTemporarilyUnavailable, default_store,
+    PendingOutputCapacityUnavailable, PendingOutputDamaged, PendingOutputTemporarilyUnavailable,
+    StoreCorrupted, default_store,
 )
 from modelquad.service import db, history
 from .worker_guard import WORKER_REFUSAL, is_worker
@@ -42,6 +43,96 @@ def _scoped_job(job_id: str, project_directory: str):
     if attempt is None or attempt.get("workspace_key") != key:
         return None, {"job_id": job_id, "status": "not_found"}
     return row, None
+
+
+#: The terminal command that removes every saved answer (``delete_all``).
+CLEAR_COMMAND = "modelquad jobs clear --yes"
+
+
+def _damaged(job_id, error):
+    """A store that cannot serve this answer, said in words; never raised.
+
+    One unreadable answer file is that job's alone; an unreadable index stops
+    every saved answer until the user clears them. Neither message carries
+    any of the file's content.
+    """
+    if isinstance(error, PendingOutputDamaged):
+        return {"job_id": job_id, "error": error.label, "message": (
+            "The saved answer for this job is damaged and cannot be read; other jobs' "
+            "answers are not affected. Tell the user, and ask Codex again if the answer "
+            f"is still needed. `{CLEAR_COMMAND}` in a terminal removes every saved "
+            "answer, this one included.")}
+    return {"job_id": job_id, "error": "pending_output_store_damaged", "message": (
+        "ModelQuad's saved answers cannot be read because their index is damaged. Tell "
+        f"the user: `{CLEAR_COMMAND}` in a terminal removes the saved answers, after "
+        "which new answers are saved normally.")}
+
+
+def clear_retained_answers(now=None) -> int:
+    """Remove every saved answer, damaged ones included; returns how many files went.
+
+    The user's own recovery command (``modelquad jobs clear --yes``); no tool
+    the model can call reaches it.
+    """
+    return default_store().delete_all(now or datetime.now(timezone.utc))
+
+
+#: Said when the ledger could not be written; the same words a direct reply uses.
+LEDGER_UNAVAILABLE_NOTE = "ModelQuad could not record this call in its review ledger."
+
+
+def record_collected_review(payload, working_directory, *, task_type=None, trigger="claude"):
+    """Record a collected background answer in the review ledger, once.
+
+    The same record a direct reply gets (``review_ledger.record_run``), so the
+    answer's findings can take a verdict and the call is in the report. The
+    findings are listed in the reply every time; the call is recorded only
+    the first time it is collected. A ledger that cannot be written never
+    blocks the answer; the reply then says so. An answer with no decision id
+    (nothing a verdict could name) is left as it is.
+    """
+    decision_id = payload.get('decision_id')
+    if 'receipt' not in payload or not decision_id:
+        return payload
+    from modelquad import review_ledger
+
+    try:
+        if decision_id in (review_ledger.delivered_answers([decision_id]) or {}):
+            findings = review_ledger.parse_findings(
+                payload.get('output'), roots=(working_directory,) if working_directory else ())
+        else:
+            # A retained answer exists only because Codex was started.
+            findings = review_ledger.record_run(
+                {'decision_id': decision_id, 'output': payload.get('output'), 'started': True},
+                working_directory=working_directory, task_type=task_type or 'unknown',
+                trigger=trigger)
+    except Exception:  # noqa: BLE001 -- the answer matters more than its record
+        payload['findings_note'] = LEDGER_UNAVAILABLE_NOTE
+        return payload
+    if findings:
+        payload['findings'] = [{'finding': item.ref, 'severity': item.severity, 'file': item.file,
+                                'line': item.line, 'line_end': item.line_end,
+                                'category': item.category, 'confidence': item.confidence}
+                               for item in findings]
+        payload['findings_note'] = _findings_note()
+    return payload
+
+
+def _findings_note():
+    """The direct reply's own instruction for findings, so the two cannot drift."""
+    from .server import FINDINGS_NOTE
+
+    return FINDINGS_NOTE
+
+
+def _task_type(job_id):
+    """What the job was asked to do, from its attempt; None when that is unreadable."""
+    try:
+        row = history.read_job(db.DEFAULT_DB_PATH, job_id)
+        attempt = history.read_job_attempt(db.DEFAULT_DB_PATH, row['attempt_id']) if row else None
+    except (OSError, sqlite3.Error, history.LaunchStateUnavailable):
+        return None
+    return attempt.get('task_type') if attempt else None
 
 
 def _job_refused(record, *, result_available=False, output_state=None, db_path=None):
@@ -116,9 +207,12 @@ def collect_job_response(job_id, *, record=None):
 
 
 def _with_needed_files(response, project_directory):
-    """Add the files a collected answer says Codex needed, as for a direct reply."""
+    """Add what a direct reply carries: the ledger record and the files Codex needed."""
     from modelquad.execution import noshell
 
+    if response.get('decision_id') and 'receipt' in response:
+        record_collected_review(response, project_directory,
+                                task_type=_task_type(response.get('job_id')))
     needed = noshell.needed_files(response.get('output'), project_directory)
     if needed:
         response['files_needed'] = needed
@@ -148,6 +242,8 @@ def collect_job_from_store(job_id, *, db_path, store, now, record=None,
         collected = store.collect(job_id, now)
     except PendingOutputTemporarilyUnavailable as error:
         return {"error": error.label}
+    except StoreCorrupted as error:
+        return _damaged(job_id, error)
     # A shortcut's earlier status row can predate a recovery downgrade. Read
     # the current guard facts after collecting, even when a row was supplied.
     history_readable = True
@@ -166,6 +262,8 @@ def collect_job_from_store(job_id, *, db_path, store, now, record=None,
             state = store.state(job_id, now)
         except PendingOutputTemporarilyUnavailable as error:
             return {"error": error.label}
+        except StoreCorrupted as error:
+            return _damaged(job_id, error)
         return {"job_id": job_id, "job_status": record['status'] if record else 'not_found',
                 "output_state": state, **overlays(output_state=state),
                 **_worker_fate(None, fate_record)}
@@ -173,6 +271,8 @@ def collect_job_from_store(job_id, *, db_path, store, now, record=None,
     return {
         **overlays(result_available=True, output_state='pending'),
         "job_id": job_id, "receipt": collected.receipt,
+        # What a verdict on this answer's findings is recorded against.
+        **({"decision_id": output.job.decision_id} if output.job.decision_id else {}),
         "job_status": record['status'] if record else output.job_status.value,
         "worker_claim": output.worker_claim.value, "output": output.output_text,
         "changed_files": None,
@@ -278,6 +378,8 @@ def modelquad_job_acknowledge(job_id: str, receipt: str, project_directory: str)
             job_id, receipt, datetime.now(timezone.utc))}
     except (PendingOutputCapacityUnavailable, PendingOutputTemporarilyUnavailable) as error:
         return {"error": error.label}
+    except StoreCorrupted as error:
+        return _damaged(job_id, error)
 
 
 def modelquad_job_stop(job_id: str, project_directory: str) -> dict:
@@ -322,6 +424,8 @@ def modelquad_job_list_pending(project_directory: str) -> dict:
         pending = default_store().pending(datetime.now(timezone.utc))
     except PendingOutputTemporarilyUnavailable as error:
         return {"error": error.label}
+    except StoreCorrupted as error:
+        return {key: value for key, value in _damaged(None, error).items() if key != "job_id"}
     return {"jobs": [
         {"job_id": entry.job.job_id, "job_status": entry.job_status.value,
          "expires_at": entry.expires_at.isoformat(), "expiring_soon": entry.expiring_soon}

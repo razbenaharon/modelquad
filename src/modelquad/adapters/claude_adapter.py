@@ -26,9 +26,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
-from ..branding import MANAGED_BLOCK_TAG, MCP_SERVER_NAME, PRODUCT_SLUG
+from ..branding import CLI_COMMAND, MANAGED_BLOCK_TAG, MCP_COMMAND, MCP_SERVER_NAME, PRODUCT_SLUG
 from .backup import backup_if_exists
 from .cliintegration import (
     owns_cli_command,
@@ -97,6 +97,10 @@ _REMINDER_TO_PLUGIN = "Removed ModelQuad's SessionStart reminder; the ModelQuad 
 _FOREIGN_SERVER = (
     "A modelquad server entry that ModelQuad's install did not write was left in place. "
     "Claude Code starts it next to the plugin's server; remove it yourself to keep one."
+)
+_FOREIGN_SERVER_KEPT = (
+    "A modelquad server entry that ModelQuad did not write was left in place: this "
+    "installation has no record of it and it does not start ModelQuad's own server."
 )
 
 
@@ -193,7 +197,9 @@ def _plan_command_skill(staged: _OwnedFile, content: bytes) -> Change:
     return _plan_owned_copy(staged, content)
 
 
-def _remove_command_skill(destination: Path, *, dry_run: bool) -> FileAction:
+def _remove_command_skill(
+    destination: Path, *, dry_run: bool, installed: bytes | None = None,
+) -> FileAction:
     """Remove a command skill only when the file carries ModelQuad's mark."""
 
     if not is_link(destination) and destination.is_file():
@@ -203,11 +209,18 @@ def _remove_command_skill(destination: Path, *, dry_run: bool) -> FileAction:
             data = None
         if data is not None and _COMMAND_SKILL_MARK not in data:
             return FileAction(destination, ActionKind.SKIPPED, detail=_NOT_OURS.format(destination))
-    return _remove_owned_file(destination, dry_run=dry_run)
+    return _remove_owned_file(destination, dry_run=dry_run, installed=installed)
 
 
-def _remove_owned_file(destination: Path, *, dry_run: bool) -> FileAction:
-    """Remove a fully-owned file after taking a sibling backup."""
+def _remove_owned_file(
+    destination: Path, *, dry_run: bool, installed: bytes | None = None,
+) -> FileAction:
+    """Remove a fully-owned file after taking a sibling backup.
+
+    A file that still holds exactly what ModelQuad installed (``installed``)
+    has nothing of the user's in it, so no copy is kept: the copy would sit in
+    the skill's own folder and keep that folder alive after the uninstall.
+    """
 
     if is_link(destination):
         return FileAction(destination, ActionKind.SKIPPED, detail=link_refusal(destination))
@@ -220,7 +233,9 @@ def _remove_owned_file(destination: Path, *, dry_run: bool) -> FileAction:
             detail="Destination exists but is not a regular file.",
         )
     try:
-        backup_path = backup_if_exists(destination, dry_run=dry_run)
+        backup_path = None
+        if installed is None or destination.read_bytes() != installed:
+            backup_path = backup_if_exists(destination, dry_run=dry_run)
         if dry_run:
             return FileAction(destination, ActionKind.WOULD_REMOVE, backup_path=backup_path)
         destination.unlink()
@@ -234,6 +249,28 @@ def _remove_owned_file(destination: Path, *, dry_run: bool) -> FileAction:
     except OSError:
         pass
     return FileAction(destination, ActionKind.REMOVED, backup_path=backup_path)
+
+
+def _skill_templates(templates: Path) -> dict[str, bytes]:
+    """What install writes for each skill, byte for byte."""
+
+    return {name: (templates / "skills" / name / "SKILL.md").read_bytes() for name in _SKILL_DIRS}
+
+
+def _remove_skills(
+    destination: Path, installed: dict[str, bytes], *, dry_run: bool,
+) -> dict[str, FileAction]:
+    skills = {_SKILL_DIR: _remove_owned_file(
+        destination / "skills" / _SKILL_DIR / "SKILL.md", dry_run=dry_run,
+        installed=installed.get(_SKILL_DIR),
+    )}
+    skills.update({
+        name: _remove_command_skill(
+            destination / "skills" / name / "SKILL.md", dry_run=dry_run, installed=installed.get(name),
+        )
+        for name in _COMMAND_SKILL_DIRS
+    })
+    return skills
 
 
 def _has_home_policy_block(path: Path) -> bool:
@@ -388,6 +425,52 @@ def _plan_leave_server_to_plugin(staged: StagedJson, template_value: dict) -> Ch
     return Change(change.kind, _LEFT_TO_PLUGIN) if change.changes_file else change
 
 
+def own_server_entry(entry: object) -> bool:
+    """Whether an entry starts ModelQuad's own server, judged by its command.
+
+    ``modelquad-mcp`` (bare or by path) with no arguments, or ``modelquad mcp``:
+    the only two spellings ModelQuad has registered. Anything else under the
+    name ``modelquad`` is someone's own server.
+    """
+
+    from .. import hostruntime
+
+    command = entry.get("command") if isinstance(entry, dict) else None
+    extra = entry.get("args", []) if isinstance(entry, dict) else None
+    if not isinstance(command, str) or not command.strip() or not isinstance(extra, list):
+        return False
+    executable, arguments = hostruntime.split_command(command)
+    name = PureWindowsPath(executable).name.lower()
+    if name.endswith((".cmd", ".exe", ".bat")):
+        name = name[:-4]
+    arguments = (*arguments, *extra)
+    return (name == MCP_COMMAND and not arguments) or (name == CLI_COMMAND and arguments == ("mcp",))
+
+
+def _plan_remove_own_server(staged: StagedJson) -> Change:
+    """Uninstall's removal of the server entry: only one that is ModelQuad's.
+
+    Proof is this installation's record of having written the value, or a
+    command that starts ModelQuad's own server (which is all there is to go on
+    when the state folder moved and the record with it). A different entry
+    under the same name is the user's; it stays, and the report says so.
+    """
+
+    from .registration import recorded_replacement, registration_owned
+
+    if staged.refusal is not None:
+        return UNCHANGED
+    servers = staged.payload.get("mcpServers")
+    entry = servers.get(MCP_SERVER_NAME) if isinstance(servers, dict) else None
+    if entry is None:
+        return UNCHANGED
+    record = recorded_replacement("claude")
+    recorded = record is not None and isinstance(entry, dict) and registration_owned(record, entry, None)
+    if not (recorded or own_server_entry(entry)):
+        return Change("skipped", _FOREIGN_SERVER_KEPT)
+    return delete_key(staged.payload, _MCP_KEY_PATH)
+
+
 def plugin_recorded(target_dir: Path) -> bool | None:
     """Whether Claude Code's plugin record lists the ModelQuad plugin.
 
@@ -443,8 +526,7 @@ class ClaudeAdapter:
         # Resolve the shell command before the first filesystem write.
         status_line_command = _status_line_command()
         with adapters_template_dir(self.name) as templates:
-            skill_contents = {name: (templates / "skills" / name / "SKILL.md").read_bytes()
-                              for name in _SKILL_DIRS}
+            skill_contents = _skill_templates(templates)
             mcp_value = _mcp_template_value(templates)
 
         # Preflight: every target is read, and refused if unsafe, before any write.
@@ -518,12 +600,8 @@ class ClaudeAdapter:
             if pending_change.changes_file:
                 pending_change = Change(pending_change.kind, _REMINDER_TO_PLUGIN)
 
-        skills = {_SKILL_DIR: _remove_owned_file(destination / "skills" / _SKILL_DIR / "SKILL.md",
-                                                 dry_run=dry_run)}
-        skills.update({
-            name: _remove_command_skill(destination / "skills" / name / "SKILL.md", dry_run=dry_run)
-            for name in _COMMAND_SKILL_DIRS
-        })
+        # The switch keeps a copy of every file it removes, as it always has.
+        skills = _remove_skills(destination, {}, dry_run=dry_run)
         for staged in (mcp, policy, settings):
             staged.commit(dry_run=dry_run)
         actions = [
@@ -540,13 +618,15 @@ class ClaudeAdapter:
 
     def uninstall(self, target_dir: Path, *, dry_run: bool = False) -> InstallReport:
         destination = Path(target_dir)
+        with adapters_template_dir(self.name) as templates:
+            installed = _skill_templates(templates)
 
         # Preflight: read every file before the first removal.
         mcp = StagedJson.load(mcp_config_path(destination))
         policy = StagedText.load(destination / "CLAUDE.md")
         settings = StagedJson.load(destination / "settings.json")
 
-        mcp_change = delete_key(mcp.payload, _MCP_KEY_PATH) if mcp.refusal is None else UNCHANGED
+        mcp_change = _plan_remove_own_server(mcp)
         policy_change = _plan_remove_policy_block(policy)
         status_change = timeout_change = pending_change = UNCHANGED
         gates: list[Change] = []
@@ -558,12 +638,7 @@ class ClaudeAdapter:
             timeout_change, retire = _plan_remove_tool_timeout(settings)
             pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run, remove=True)
 
-        skills = {_SKILL_DIR: _remove_owned_file(destination / "skills" / _SKILL_DIR / "SKILL.md",
-                                                 dry_run=dry_run)}
-        skills.update({
-            name: _remove_command_skill(destination / "skills" / name / "SKILL.md", dry_run=dry_run)
-            for name in _COMMAND_SKILL_DIRS
-        })
+        skills = _remove_skills(destination, installed, dry_run=dry_run)
         for staged in (mcp, policy, settings):
             staged.commit(dry_run=dry_run)
         actions = [

@@ -1,5 +1,7 @@
-# Keeps the SHA-pinned GitHub Actions in .github/workflows current. Dependabot
-# rewrites both the commit SHA and the "# vX.Y.Z" comment next to it.
+# Keeps the SHA-pinned GitHub Actions in .github/workflows current: Dependabot
+# rewrites both the commit SHA and the "# vX.Y.Z" comment next to it. The pip
+# entry proposes raising a ceiling in pyproject.toml when a dependency
+# releases past it, security fixes included; CI tests each proposal.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -9,3 +11,13 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: ci
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps

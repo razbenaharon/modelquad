@@ -334,6 +334,7 @@ def _run_delegation(spec, ref, started, state, *, inline=False):
                 spec.db_path, ref.attempt_id, status=resolution.status,
                 failure_kind=resolution.failure_kind, outcome=result.task_status.value,
                 detail=result.task_status_reason, only_if_open=True,
+                roots=(prepared.working_directory,) if prepared.working_directory else (),
             )
             _finish_job(spec, ref, written, result, published[-1].ended_at, resolution)
         except Exception:

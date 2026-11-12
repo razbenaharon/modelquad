@@ -144,6 +144,18 @@ def test_the_cli_needs_a_typed_yes(tmp_path, capsys, monkeypatch):
     assert not grant.granted(repo)
 
 
+def test_only_the_global_grant_warns_about_folders_opened_later(tmp_path, capsys):
+    from modelquad import cli
+
+    repo = _repo(tmp_path / "r")
+    assert cli.main(["settings", "auto", "on", "--project", str(repo), "--yes"]) == 0
+    assert "every folder you open later" not in capsys.readouterr().out
+    assert cli.main(["settings", "auto", "on", "--global", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "every folder you open later" in out and "a client's code" in out
+    assert "modelquad settings repo off" in out
+
+
 def test_a_worker_cannot_turn_the_grant_on(tmp_path, capsys, monkeypatch):
     from modelquad import cli
 
@@ -192,3 +204,166 @@ def test_the_users_own_settings_inside_claude_code_are_not_refused(tmp_path, mon
     assert grant.granted(repo)
     assert cli.main(["settings", "auto", "off", "--project", str(repo)]) == 0
     assert not grant.granted(repo)
+
+
+# ------------------------------------- exclusions the grant must not outlive
+
+
+def test_off_on_a_plain_folder_covers_the_folders_below_it(tmp_path):
+    from modelquad import repo_policy
+
+    plain = tmp_path / "plain"
+    (plain / "src" / "deep").mkdir(parents=True)
+    grant.write(True, everywhere=True)
+    repo_settings.write_mode(plain, "off")
+    for folder in (plain, plain / "src", plain / "src" / "deep"):
+        refusal, _ = repo_policy.gate(str(folder), "review")
+        assert refusal and refusal["reason"] == repo_settings.USER_CODEX_OFF, folder
+        assert not grant.allows(folder), folder
+    # The parent is not covered.
+    assert grant.allows(tmp_path)
+    # The user's own word for a folder below still wins there.
+    repo_settings.write_mode(plain / "src", "on")
+    assert grant.allows(plain / "src")
+    assert not grant.allows(plain)
+
+
+def test_on_for_a_plain_folder_does_not_travel_down(tmp_path):
+    plain = tmp_path / "plain"
+    (plain / "src").mkdir(parents=True)
+    repo_settings.write_mode(plain, "on")
+    assert repo_settings.read_mode(plain) == "on"
+    assert repo_settings.read_mode(plain / "src") is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are a Windows link type")
+def test_a_junction_into_a_repository_is_that_repository(tmp_path):
+    from modelquad import repo_policy
+
+    repo = _repo(tmp_path / "repo")
+    (repo / "sub").mkdir()
+    link = tmp_path / "link"
+    made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(repo / "sub")],
+                          capture_output=True, **no_window_kwargs())
+    if made.returncode != 0:
+        pytest.skip("this machine does not allow creating a junction")
+    grant.write(True, everywhere=True)
+    repo_settings.write_mode(repo, "off")
+    refusal, _ = repo_policy.gate(str(link), "review")
+    assert refusal and refusal["reason"] == repo_settings.USER_CODEX_OFF
+    assert not grant.allows(link)
+    repo_settings.write_mode(repo, "inherit")
+    (repo / ".modelquad.toml").write_text("schema = 1\n[codex]\nallowed = false\n", encoding="utf-8")
+    assert repo_policy.gate(str(link), "review")[0] is not None
+    assert not grant.allows(link)
+
+
+def test_resetting_the_installation_id_leaves_no_grant_over_a_lost_exclusion(tmp_path, capsys):
+    from modelquad.cli import main
+
+    repo = _repo(tmp_path / "r")
+    other = _repo(tmp_path / "other")
+    grant.write(True, everywhere=True)
+    grant.write(True, directory=other)
+    repo_settings.write_mode(repo, "off")
+    assert not grant.allows(repo)
+    assert main(["privacy", "--reset-identity"]) == 0
+    out = capsys.readouterr().out
+    assert "were removed" in out and "turned off" in out
+    assert "1 removed" in out
+    assert not grant.granted(repo) and not grant.allows(repo)
+    assert not grant.granted(other)
+    assert repo_settings.read_modes() == {}
+
+
+def test_a_global_grant_does_not_survive_a_changed_installation_id(tmp_path):
+    from modelquad.identity import reset_installation_id
+
+    repo = _repo(tmp_path / "r")
+    grant.write(True, everywhere=True)
+    repo_settings.write_mode(repo, "off")
+    # The id changes without the command (a damaged or replaced identity file).
+    reset_installation_id()
+    assert repo_settings.read_mode(repo) is None  # the exclusion no longer matches
+    assert not grant.granted(repo) and not grant.allows(repo)
+    # Turning the grant on again is the user's act, and holds under the new id.
+    grant.write(True, everywhere=True)
+    assert grant.granted(repo)
+
+
+def test_a_global_grant_given_before_bindings_still_counts(tmp_path):
+    from modelquad.adapters.server_instructions import preferences_path
+
+    preferences_path().parent.mkdir(parents=True, exist_ok=True)
+    preferences_path().write_text(json.dumps({grant._KEY: {"global": True, "repos": {}}}),
+                                  encoding="utf-8")
+    assert grant.granted(tmp_path)
+
+
+# ------------------------------------------------ what the grant is said to do
+
+
+def test_turning_one_repository_off_under_the_global_grant_says_it_still_applies(tmp_path, capsys):
+    from modelquad.cli import main
+
+    repo = _repo(tmp_path / "r")
+    grant.write(True, everywhere=True)
+    assert main(["settings", "auto", "off", "--project", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert "still on" in out and "settings repo off" in out and "--global" in out
+    assert "Standing grant: off" not in out
+    assert grant.granted(repo)
+    grant.write(False, everywhere=True)
+    assert main(["settings", "auto", "off", "--project", str(repo)]) == 0
+    assert "Standing grant: off" in capsys.readouterr().out
+
+
+def test_under_the_grant_the_startup_line_does_not_contradict_the_guidance(tmp_path, capsys):
+    from modelquad.cli import main
+
+    repo = _repo(tmp_path / "r")
+    repo_settings.write_mode(repo, "offer-only")
+    assert repo_settings.advice_line(repo) == repo_settings.ADVICE[repo_settings.OFFER]
+    grant.write(True, directory=repo)
+    assert repo_settings.advice_line(repo) is None
+    assert main(["settings", "repo", "--project", str(repo)]) == 0
+    assert "standing grant covers this folder" in capsys.readouterr().out
+    repo_settings.write_mode(repo, "inherit")
+    (repo / ".modelquad.toml").write_text('schema = 1\n[offers]\ncodex = "on_request"\n',
+                                          encoding="utf-8")
+    assert repo_settings.advice_line(repo) is None
+    grant.write(False, directory=repo)
+    assert repo_settings.advice_line(repo) == repo_settings.ADVICE[repo_settings.ON_REQUEST]
+    # Off still reaches Claude, grant or not.
+    grant.write(True, directory=repo)
+    repo_settings.write_mode(repo, "off")
+    assert repo_settings.advice_line(repo) == repo_settings.ADVICE[repo_settings.OFF]
+
+
+def test_without_the_prompt_a_call_stays_inside_the_sessions_folder(tmp_path, monkeypatch):
+    from modelquad.mcp import server
+
+    project, other = tmp_path / "project", tmp_path / "other"
+    (project / "sub").mkdir(parents=True)
+    other.mkdir()
+    monkeypatch.setattr(server, "_STANDING_GRANT", True)
+    monkeypatch.setattr(server, "_SESSION_PROJECT", str(project))
+    monkeypatch.setattr(server._grant, "allows", lambda directory: True)
+    reached = []
+    monkeypatch.setattr(server, "_notice_before_first_call",
+                        lambda *args: reached.append(args[1]) or server._refused_result({"stop": True}))
+    result = asyncio.run(server.modelquad_delegate(
+        task_type="review", prompt="look", working_directory=str(other), timeout=10))
+    payload = result.structured_content
+    assert payload["refused"] is True and payload["started"] is False
+    assert payload["reason"] == grant.OTHER_FOLDER
+    assert reached == []
+    for inside in (project, project / "sub"):
+        asyncio.run(server.modelquad_delegate(
+            task_type="review", prompt="look", working_directory=str(inside), timeout=10))
+    assert reached == [str(project), str(project / "sub")]
+    # With the per-call prompt (no grant at start) any folder may be named: the user sees it.
+    monkeypatch.setattr(server, "_STANDING_GRANT", False)
+    asyncio.run(server.modelquad_delegate(
+        task_type="review", prompt="look", working_directory=str(other), timeout=10))
+    assert reached[-1] == str(other)

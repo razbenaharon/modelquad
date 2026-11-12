@@ -72,6 +72,9 @@ def run_bound_delegation(
         if on_worker_spawn is not None:
             on_worker_spawn(pid)
 
+    # This may run in the job runner, whose own folder is not the task's: the
+    # working folder is named so history removes it whole.
+    redaction_roots = (working_directory,) if working_directory else ()
     if required_capabilities is None and parsed_capsule is not None:
         required_capabilities = parsed_capsule.capability_requirements
     if action_authority is None and parsed_capsule is not None:
@@ -170,6 +173,7 @@ def run_bound_delegation(
             decision_source="user_override",
             decision_id=decision_id,
             evidence_json=evidence_for_target(provider or agent_runtime),
+            roots=redaction_roots,
         )
     else:
         service_history.record_routing_decision(
@@ -203,6 +207,7 @@ def run_bound_delegation(
             decision_id=decision_id,
             evidence_json=evidence_for_target(auto_result.recommendation),
             plan_decision_id=None,
+            roots=redaction_roots,
         )
     # Record what the decision recommended vs what actually executed. Both
     # are preserved: a fallback or a caller override is a fact about the
@@ -246,6 +251,7 @@ def run_bound_delegation(
         invocation_mode_source=mode_source,
         host=host,
         decision_id=decision_id,
+        roots=redaction_roots,
     )
 
     # The delegation returned: close the attempt with the objective outcome.
@@ -273,6 +279,7 @@ def run_bound_delegation(
         # What the worker left running when it exited, for the workspace
         # question to read later.
         worker_descendants=execution_result.metadata.get("worker_descendants"),
+        roots=redaction_roots,
         **({"only_if_open": True} if publish is not None else {}),
     )
     if on_resolution is not None:

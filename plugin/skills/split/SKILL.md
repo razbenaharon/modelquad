@@ -24,8 +24,12 @@ $ARGUMENTS
    `working_directory` and the steps. It starts nothing.
 3. Show the user its lines as written: who takes each step, then the quota
    and account facts.
-4. Do the Claude steps as usual. When you reach a Codex step, ask the user;
-   call `modelquad_delegate` for that one step only if they agree. Claude Code
-   shows its approval prompt before each call. The proposal approves nothing.
+4. Do the Claude steps as usual. When you reach a Codex step, follow the
+   reply's `approval` line. If it says each step shows its own approval
+   prompt, ask the user and call `modelquad_delegate` for that one step only
+   if they agree; Claude Code then shows its prompt. If it says the steps run
+   under the user's standing grant, call `modelquad_delegate` for that step
+   yourself and tell the user in one line that you did.
+   The proposal approves nothing.
    If the reply gives a step `trigger: split_quota`, pass that trigger to
    `modelquad_delegate` for that step.

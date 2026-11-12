@@ -386,6 +386,20 @@ def load(working_directory) -> RepoPolicy:
         root = find_root(working_directory)
     except Exception:  # noqa: BLE001 -- nothing about the path or the error escapes
         return _broken(UNREADABLE, "unreadable")
+    # A junction or link into a repository is that repository: when the path
+    # as written finds nothing that refuses, the folder it resolves to is
+    # asked too, and its file is the one that applies.
+    try:
+        from .repo_settings import real_directory
+
+        real = real_directory(working_directory)
+        if os.path.normcase(str(real)) != os.path.normcase(os.path.abspath(working_directory)):
+            written = load_from_root(root)
+            if written.refusal is not None:
+                return written
+            root = find_root(real)
+    except Exception:  # noqa: BLE001 -- nothing about the path or the error escapes
+        return _broken(UNREADABLE, "unreadable")
     return load_from_root(root)
 
 

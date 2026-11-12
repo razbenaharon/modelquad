@@ -213,6 +213,44 @@ def test_the_gate_blocks_once_then_tells_the_user(tmp_path):
     assert _stop(tmp_path) == ""
 
 
+def test_a_further_edit_to_a_reported_change_does_not_block_again(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+    assert "systemMessage" in json.loads(_stop(tmp_path, active=True))
+    # Follow-up tweaks to files of the reported change: no second block, no second message.
+    _edits(tmp_path, "a.py")
+    assert _stop(tmp_path) == ""
+    _edits(tmp_path, "b.py", "c.py")
+    assert _stop(tmp_path) == ""
+    assert _pre(tmp_path, "C:/proj/a.py", granted=True) == ""
+
+
+def test_a_new_file_after_a_reported_change_starts_a_new_change_set(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _stop(tmp_path)
+    _stop(tmp_path, active=True)
+    _edits(tmp_path, "d.py")
+    assert _stop(tmp_path) == ""  # one file of a new change set
+    _edits(tmp_path, "e.py", "f.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+    assert "(3 file(s))" in json.loads(_stop(tmp_path, active=True))["systemMessage"]
+    _edits(tmp_path, "d.py")
+    assert _stop(tmp_path) == ""
+
+
+def test_a_new_change_after_a_reported_one_gets_its_own_consultation(tmp_path):
+    _edits(tmp_path, "a.py")
+    _denied(_pre(tmp_path, "C:/proj/src/auth.py", granted=True))
+    _edits(tmp_path, "src/auth.py")
+    _stop(tmp_path)
+    _stop(tmp_path, active=True)
+    # A sensitive file of the reported change: not stopped again.
+    assert _pre(tmp_path, "C:/proj/src/auth.py", granted=True) == ""
+    # A sensitive file outside it starts a new change, stopped once.
+    _denied(_pre(tmp_path, "C:/proj/src/token_store.py", granted=True))
+    assert _pre(tmp_path, "C:/proj/src/token_store.py", granted=True) == ""
+
+
 def test_the_gate_never_blocks_while_claude_continues_for_a_stop_hook(tmp_path):
     _edits(tmp_path, "a.py", "b.py", "c.py")
     out = json.loads(_stop(tmp_path, active=True))
@@ -393,3 +431,195 @@ def test_the_per_session_file_name_is_keyed_to_the_installation(tmp_path):
     from modelquad.review_ledger import session_pseudonym
 
     assert record.stem == session_pseudonym(SESSION, tmp_path, length=32)
+
+
+# ------------------------------------------ only a delivered answer is a review done
+
+JOB = {"job_id": "j-1", "status": "running", "poll_with": "modelquad_job_wait"}
+JOB_REPLY = {"content": [{"type": "text", "text": "Codex is working on this in the background. "
+                                                  "Claude collects the answer when it is ready."},
+                         {"type": "text", "text": json.dumps(JOB)}], "structuredContent": JOB}
+NOTICE = {"status": "notice_first", "codex_started": False, "notice": ["what goes where"]}
+NOTICE_REPLY = {"content": [{"type": "text", "text": "Codex was not started. Before the first "
+                                                     "Codex call, ModelQuad shows what it sends where:"},
+                            {"type": "text", "text": json.dumps(NOTICE)}], "structuredContent": NOTICE}
+ANSWER_DATA = {"task_type": "review", "output": "FINDINGS: none", "decision_id": "d-1"}
+
+
+def _state(tmp_path, session=SESSION):
+    from modelquad.review_ledger import session_pseudonym
+
+    record = tmp_path / rr.FOLDER_NAME / f"{session_pseudonym(session, tmp_path, length=32)}.json"
+    return json.loads(record.read_text(encoding="utf-8"))
+
+
+def _gate_counts():
+    from modelquad import review_ledger
+
+    return review_ledger.report()["gate"]
+
+
+@pytest.mark.parametrize("response, state", [
+    (JOB_REPLY, rr.PENDING_REPLY),
+    ([{"type": "text", "text": JOB_REPLY["content"][0]["text"]}], rr.PENDING_REPLY),
+    (JOB_REPLY["content"], rr.PENDING_REPLY),
+    (NOTICE_REPLY, rr.NOT_ANSWERED),
+    (NOTICE_REPLY["content"], rr.NOT_ANSWERED),
+    # A run that delivered nothing: failed, by the data.
+    ({"structuredContent": {"output": "", "task_status": "failed"}}, rr.NOT_ANSWERED),
+    ([{"type": "text", "text": "ModelQuad: Codex did not finish this task."},
+      {"type": "text", "text": json.dumps({"task_type": "review", "output": ""})}], rr.NOT_ANSWERED),
+    ([{"type": "text", "text": "ModelQuad: Codex was not started.\nwhy"}], rr.NOT_ANSWERED),
+    ([{"type": "text", "text": "ModelQuad: Codex did not return in time."}], rr.NOT_ANSWERED),
+    # Codex's answer was delivered.
+    ({"structuredContent": ANSWER_DATA}, rr.ANSWERED),
+    ([{"type": "text", "text": "ModelQuad: Codex finished this task."},
+      {"type": "text", "text": json.dumps(ANSWER_DATA)}], rr.ANSWERED),
+])
+def test_what_a_delegate_reply_delivered(response, state):
+    assert rr._reply_state(response) == state
+
+
+def test_a_background_job_handle_is_not_a_review_done(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+    _delegate(tmp_path, JOB_REPLY)
+    assert _state(tmp_path)["review"] == "pending"
+    # The gate asked once; it does not ask again for the pending job, and it does
+    # not say a review was done: the user is told the change is not reviewed yet.
+    out = json.loads(_stop(tmp_path))
+    assert "decision" not in out
+    assert "still running in the background" in out["systemMessage"]
+    assert "has not been reviewed by Codex yet" in out["systemMessage"]
+    assert _stop(tmp_path) == "" and _stop(tmp_path, active=True) == ""
+    counts = _gate_counts()
+    assert counts.get("review_done", 0) == 0 and counts["review_pending"] == 1
+
+
+def test_a_job_started_before_the_gate_is_not_asked_for_again(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _delegate(tmp_path, JOB_REPLY)
+    out = json.loads(_stop(tmp_path))
+    assert "decision" not in out and "still running in the background" in out["systemMessage"]
+    assert _stop(tmp_path) == ""
+    # The files are still counted: nothing was reviewed.
+    assert len(_state(tmp_path)["files"]) == 3
+
+
+def test_an_answer_after_the_pending_job_clears_the_gate(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _delegate(tmp_path, JOB_REPLY)
+    _delegate(tmp_path, {"structuredContent": ANSWER_DATA})
+    assert _state(tmp_path)["review"] == "done"
+    assert _stop(tmp_path) == ""
+
+
+def test_the_first_use_notice_is_not_a_review_done(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+    _delegate(tmp_path, NOTICE_REPLY)
+    out = json.loads(_stop(tmp_path, active=True))
+    assert "decision" not in out and "did not complete" in out["systemMessage"]
+    assert _stop(tmp_path) == ""  # reported once, never stopped again
+
+
+def test_a_run_without_an_answer_is_not_a_review_done(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _delegate(tmp_path, {"structuredContent": {"output": "", "task_status": "failed"}})
+    out = json.loads(_stop(tmp_path))
+    assert "decision" not in out and "did not complete" in out["systemMessage"]
+
+
+def test_a_pending_consultation_is_not_asked_for_again_and_not_called_done(tmp_path):
+    _run(tmp_path, _event(tool="mcp__plugin_modelquad_modelquad__modelquad_delegate",
+                          tool_input={"task_type": "architecture", "trigger": "pre_change"},
+                          tool_response=JOB_REPLY))
+    state = _state(tmp_path)
+    assert state["consult_pending"] is True and state["consulted"] is False
+    assert _pre(tmp_path, "C:/proj/src/auth.py", granted=True) == ""
+    assert _gate_counts().get("consult_done", 0) == 0
+
+
+# ------------------------------------------------- the gate says only what happened
+
+
+def test_a_stop_first_seen_while_continuing_does_not_claim_the_gate_asked(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    out = json.loads(_stop(tmp_path, active=True))
+    assert "decision" not in out
+    assert out["systemMessage"] == "ModelQuad: Codex did not review this change (3 file(s))."
+    assert "asked" not in out["systemMessage"]
+    assert _stop(tmp_path) == ""
+    assert _gate_counts().get("blocked", 0) == 0
+
+
+def test_after_the_gate_asked_the_message_says_so(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+    out = json.loads(_stop(tmp_path, active=True))
+    assert "The review gate asked for one and none was done." in out["systemMessage"]
+
+
+# ----------------------------------- a gate is used only once its message was written
+
+
+def _late():
+    """A clock that is inside the budget while the event is read and past it at the write."""
+    ticks = iter([0.0, 0.0])
+    return lambda: next(ticks, 10.0)
+
+
+def _hook(tmp_path, event, clock):
+    out = io.StringIO()
+    assert rr.run_hook("claude", io.BytesIO(json.dumps(event).encode()), out, environ={}, clock=clock,
+                       state=tmp_path, mode=lambda cwd: "decide", standing=lambda cwd: True) == 0
+    return out.getvalue()
+
+
+STOP = {"hook_event_name": "Stop", "session_id": SESSION, "cwd": "C:/proj", "stop_hook_active": False}
+
+
+def test_a_review_gate_that_ran_out_of_time_is_not_used_up(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert _hook(tmp_path, STOP, _late()) == ""
+    assert _state(tmp_path)["gate"] == "none"
+    assert _gate_counts().get("blocked", 0) == 0
+    # The next Stop asks, as the first one meant to: no false "asked for one" line.
+    out = json.loads(_stop(tmp_path))
+    assert out["decision"] == "block"
+    assert _gate_counts()["blocked"] == 1
+    # And still only once.
+    assert "decision" not in json.loads(_stop(tmp_path, active=True))
+    assert _stop(tmp_path) == ""
+
+
+def test_a_report_that_ran_out_of_time_is_made_at_the_next_stop(tmp_path):
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert json.loads(_stop(tmp_path))["decision"] == "block"
+    assert _hook(tmp_path, dict(STOP, stop_hook_active=True), _late()) == ""
+    assert _state(tmp_path)["gate"] == "blocked"
+    assert "none was done" in json.loads(_stop(tmp_path, active=True))["systemMessage"]
+
+
+def test_a_consultation_gate_that_ran_out_of_time_is_not_used_up(tmp_path):
+    event = {"hook_event_name": "PreToolUse", "tool_name": "Edit", "session_id": SESSION,
+             "cwd": "C:/proj", "tool_input": {"file_path": "C:/proj/src/auth.py"}}
+    assert _hook(tmp_path, event, _late()) == ""
+    assert _state(tmp_path)["consult_gate"] is False
+    assert _gate_counts().get("consult_blocked", 0) == 0
+    _denied(_pre(tmp_path, "C:/proj/src/auth.py", granted=True))
+    assert _gate_counts()["consult_blocked"] == 1
+    # At most once: the same edit again passes.
+    assert _pre(tmp_path, "C:/proj/src/auth.py", granted=True) == ""
+
+
+def test_a_gate_whose_message_could_not_be_written_is_not_used_up(tmp_path):
+    class Closed(io.StringIO):
+        def write(self, text):
+            raise OSError("closed")
+
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    assert rr.run_hook("claude", io.BytesIO(json.dumps(STOP).encode()), Closed(), environ={},
+                       clock=_still, state=tmp_path, standing=lambda cwd: True) == 0
+    assert _state(tmp_path)["gate"] == "none"
+    assert json.loads(_stop(tmp_path))["decision"] == "block"

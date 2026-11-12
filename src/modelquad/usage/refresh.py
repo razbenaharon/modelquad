@@ -36,6 +36,7 @@ from .base import (
     claim_usage_refresh, release_usage_refresh,
     publish_usage_snapshot, valid_timestamp_epoch,
 )
+from ..providers.base import finite_float
 from .claude import CLAUDE_STATUSLINE_SOURCE
 
 
@@ -281,6 +282,37 @@ def _seconds_since_last_check(
         return None
 
 
+#: The quota windows a snapshot names a reset time for.
+_RESET_KEYS = ("five_hour_resets_at", "seven_day_resets_at")
+
+
+def window_resets(snapshot: Mapping[str, Any]) -> list[float]:
+    """The reset times (UTC epoch seconds) of the windows this snapshot read."""
+
+    resets = []
+    for key in _RESET_KEYS:
+        value = snapshot.get(key)
+        if isinstance(value, bool):
+            continue
+        epoch = float(value) if isinstance(value, (int, float)) else _epoch_of(value)
+        if epoch is not None and epoch > 0:
+            resets.append(epoch)
+    return resets
+
+
+def window_reset_since_check(snapshot: Mapping[str, Any], *, wall: float) -> bool:
+    """A window this snapshot read has reset since it was taken.
+
+    Its figure then describes a window that is over, so the reading is due
+    again whatever its age: the debounce must not keep the old one up.
+    """
+
+    checked = _epoch_of(snapshot.get("collected_at"))
+    if checked is None:
+        return False
+    return any(checked < reset <= wall for reset in window_resets(snapshot))
+
+
 # --------------------------------------------------------------------------
 # Per-provider refreshers
 # --------------------------------------------------------------------------
@@ -371,9 +403,7 @@ SNAPSHOT_FILENAMES = {
 
 
 def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    return float(value) if isinstance(value, (int, float)) else None
+    return finite_float(value) if isinstance(value, (int, float)) else None
 
 
 def _remaining_of(snapshot: Mapping[str, Any]) -> float | None:
@@ -444,9 +474,12 @@ def refresh_provider(
         )
 
     age = _seconds_since_last_check(previous, target, wall=wall)
-    if not force and age is not None and 0 <= age < min_interval:
+    if (not force and age is not None and 0 <= age < min_interval
+            and not window_reset_since_check(previous, wall=wall)):
         # Recently refreshed by someone -- possibly another process. Report
-        # what is already on disk instead of probing again.
+        # what is already on disk instead of probing again. A reading taken
+        # before one of its windows reset is due at once: the first process
+        # to probe after the reset writes a newer one, which debounces the rest.
         return RefreshResult(
             provider=provider,
             refresh_kind=PASSIVE,

@@ -108,6 +108,18 @@ jobs:
       - name: Run the timing tests (serial)
         run: pytest -q --tb=short -p no:cacheprovider -n 0 -m serial_timing
 
+      - name: Report a failed advisory leg
+        # continue-on-error keeps the run green when 3.13 or 3.14 fails, so
+        # the failure goes on the run's summary page instead. The versions
+        # here match continue-on-error above.
+        if: ${{ failure() && (matrix.python-version == '3.13' || matrix.python-version == '3.14') }}
+        env:
+          LEG: ${{ matrix.python-version }}
+        run: |
+          $message = "Python $env:LEG (advisory) failed. The run stays green; read this job's log."
+          Write-Host "::warning title=Advisory leg failed::$message"
+          "### Advisory leg failed`n`n$message" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
   dco:
     name: DCO sign-off
     # Automatic runs only once the repository is public (Actions minutes are
@@ -132,10 +144,17 @@ jobs:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         # The e-mail is compared as a fixed string, never as a pattern: GitHub
         # noreply addresses contain "+", which a regex reads as a quantifier.
         # Only real trailers count, so a "Signed-off-by:" quoted in the body
         # does not.
+        # Dependabot (.github/dependabot.yml) cannot sign off; a human reviews
+        # and merges its bumps. Anyone can set an author e-mail, so its commits
+        # are skipped only when the author is Dependabot, the committer is
+        # GitHub, and GitHub reports the signature verified: only GitHub's own
+        # key can sign as that committer.
         run: |
           set -euo pipefail
           if [ -n "$PR_BASE" ]; then
@@ -155,10 +174,14 @@ jobs:
           missing=0
           for sha in $shas; do
             email=$(git show -s --format='%ae' "$sha")
-            # Dependabot (.github/dependabot.yml) cannot sign off; a human
-            # reviews and merges its action-pin bumps.
-            if [ "$email" = "49699333+dependabot[bot]@users.noreply.github.com" ]; then
-              continue
+            committer=$(git show -s --format='%ce' "$sha")
+            if [ "$email" = "49699333+dependabot[bot]@users.noreply.github.com" ] \
+                && [ "$committer" = "noreply@github.com" ]; then
+              # A failed lookup reads as unverified, so the sign-off is required.
+              verified=$(gh api "repos/$REPO/commits/$sha" --jq '.commit.verification.verified' || echo false)
+              if [ "$verified" = "true" ]; then
+                continue
+              fi
             fi
             trailers=$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha")
             if ! grep -Fqi -- "<$email>" <<< "$trailers"; then

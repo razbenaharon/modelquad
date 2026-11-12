@@ -1157,9 +1157,10 @@ def build_delegation_presentation(
 
     facts: list[dict[str, str]] = []
     evidence = result.get("evidence")
-    if isinstance(evidence, dict):
+    if isinstance(evidence, dict) and state != "refused":
         # "Verified" is a claim only the modelquad's own re-run can make;
-        # a worker's self-report is recorded as exactly that.
+        # a worker's self-report is recorded as exactly that. A call that
+        # never started Codex has no report from it to label.
         facts.append(
             {
                 "key": "evidence",
@@ -1306,6 +1307,21 @@ _REFUSAL_LINES: dict[str, str] = {
                             "modelquad settings repo inherit"),
 }
 REFUSAL_FALLBACK = "ModelQuad's rules did not allow this Codex call."
+#: A request that could not be used at all: one sentence that names the
+#: problem. These are not rules that refused the call; nothing was started.
+_INPUT_LINES: dict[str, str] = {
+    "working_directory_missing": ("That working folder does not exist, so nothing was started. "
+                                  "Pass the absolute path of an existing project folder."),
+    "working_directory_not_a_folder": ("That working_directory is a file, not a folder, so nothing "
+                                       "was started. Pass the project folder and name the file in files."),
+    "model_not_valid": ("That model name is not a valid Codex model id, so nothing was started. "
+                        "Leave model out to use Codex's default, or pass a model id Codex lists."),
+    "reasoning_effort_not_valid": ("That reasoning_effort is not a value ModelQuad passes to Codex, so "
+                                   "nothing was started. Leave it out to use Codex's default."),
+    "prompt_empty": "The task text (prompt) is empty, so nothing was started. Say what Codex should do.",
+    "invalid_request": ("The request could not be used (the working folder, the model or another "
+                        "argument is not valid), so nothing was started."),
+}
 
 
 def refusal_line(payload: Any) -> str:
@@ -1319,13 +1335,22 @@ def refusal_line(payload: Any) -> str:
     message = payload.get("message")
     if isinstance(message, str) and message.strip() and payload.get("reason") != message:
         return message
-    reason = payload.get("reason")
-    if isinstance(reason, str):
+    for reason in (payload.get("reason"), payload.get("task_status_reason")):
+        if not isinstance(reason, str):
+            continue
         if reason in _REFUSAL_LINES:
             return _REFUSAL_LINES[reason]
         for start, line in _REFUSAL_LINES.items():
             if reason.startswith(start):
                 return line
+        if reason in _INPUT_LINES:
+            return _INPUT_LINES[reason]
+        # What stopped the files or the task text from being sent, or the
+        # Codex CLI from being used: the packer's own sentence for that cause.
+        from ..execution import noshell
+
+        if reason in noshell.REFUSAL_MESSAGES:
+            return noshell.REFUSAL_MESSAGES[reason]
     return REFUSAL_FALLBACK
 
 

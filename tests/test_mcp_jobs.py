@@ -194,7 +194,9 @@ def test_quick_collect_ack_and_restart(synthetic, tmp_path, monkeypatch):
     assert {'job_id', 'receipt', 'job_status', 'worker_claim', 'output', 'changed_files',
             'partial', 'expires_at', 'expiring_soon', 'tree_confirmed_dead',
             'descendant_uncertainty', 'output_truncated', 'original_bytes',
-            'host_diagnostics_status'} == set(response)
+            'host_diagnostics_status',
+            # What a verdict on this answer's findings is recorded against.
+            'decision_id'} == set(response)
     # This fixture simulates launch without an authenticated diagnostic service.
     assert response['host_diagnostics_status'] == 'unavailable'
     assert not {'host_diagnostics', 'host_diagnostics_stage'} & response.keys()

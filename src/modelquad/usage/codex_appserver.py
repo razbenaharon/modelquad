@@ -23,6 +23,7 @@ import threading
 import time
 from typing import Any
 
+from ..providers.base import finite_float
 from .base import UsageSnapshot, no_window_kwargs
 
 
@@ -43,9 +44,17 @@ _SLOT_FOR_MINUTES = {
 
 
 def _number(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
+    # NaN and the infinities are not readings; ``finite_float`` is the one
+    # test every quota parser shares.
+    return finite_float(value) if isinstance(value, (int, float)) else None
+
+
+def _whole_minutes(value: Any) -> int | None:
+    """A window length in minutes: an int, or a float that is a whole number (300.0)."""
+    number = _number(value)
+    if number is None or number <= 0 or not number.is_integer():
         return None
-    return float(value) if isinstance(value, (int, float)) else None
+    return int(number)
 
 
 def _window_snapshot(window: Any) -> dict[str, Any] | None:
@@ -58,7 +67,7 @@ def _window_snapshot(window: Any) -> dict[str, Any] | None:
     return {
         "used_percentage": used,
         "remaining_percentage": None if used is None else round(100.0 - used, 2),
-        "window_minutes": minutes if isinstance(minutes, int) else None,
+        "window_minutes": _whole_minutes(minutes),
         "resets_at": window.get("resetsAt"),
     }
 

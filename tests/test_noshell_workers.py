@@ -1165,3 +1165,213 @@ def test_a_failed_cleanup_of_the_empty_folder_keeps_the_answer(worker, monkeypat
     assert result.output == "Diagnosis supplied."
     monkeypatch.undo()
     shutil.rmtree(run.call_args.kwargs["cwd"], ignore_errors=True)
+
+
+# ------------------------------------------------ secrets that used to be sent
+#
+# The sample values are invented for these tests and are put together when the
+# tests run, so a secret scanner reading this file finds nothing to report.
+
+_SAMPLE = "Sup3r" + "S3cret" + "99"
+_SAMPLE_YAML = "tr0ub" + "4dor" + "&3"
+_SAMPLE_INI = "Hunt3r" + "!!horse$"
+_SAMPLE_CONN = "Str0ng" + "!Pass99"
+_SAMPLE_ENV = "hunter2" + "horse"
+
+
+@pytest.mark.parametrize("name", [
+    "prod.env", "secrets.env", "env.local", "app.env.production", "my.env.bak",
+    "id_rsa", "id_ed25519", "private.ppk", "secrets.json", "credentials.yml",
+    "service-account.json", "client_secret_1234.json", "token.json", ".dockercfg",
+    "wp-config.php", "terraform.tfvars.json", "auth.json.bak", "key.pem.bak",
+    "local.settings.json", "keystore.jceks", ".config/gh/hosts.yml",
+])
+def test_credential_files_under_other_names_are_not_sent(tmp_path, name):
+    path = tmp_path.joinpath(*name.split("/"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"DB_PASSWORD={_SAMPLE_ENV}\n", encoding="utf-8")
+    packed = noshell.pack_files(tmp_path, [name])
+    assert packed.files == ()
+    assert [reason for _, reason in packed.skipped] == ["secret_file"]
+
+
+@pytest.mark.parametrize("name", [
+    "env.py", "env.d.ts", "vite-env.d.ts", "environment.ts", "id_rsa.pub", "tokenizer.py",
+    "secrets_manager.py", "hosts.yml", "identity.py",
+])
+def test_ordinary_files_with_similar_names_are_still_sent(tmp_path, name):
+    (tmp_path / name).write_text("x = 1\n", encoding="utf-8")
+    assert noshell.pack_files(tmp_path, [name]).files == ((name, "x = 1\n"),)
+
+
+@pytest.mark.parametrize("name, content, secret", [
+    ("deploy.yml", f"db:\n  password: {_SAMPLE_YAML}\n", _SAMPLE_YAML[:9]),
+    ("app.ini", f"DB_PASSWORD={_SAMPLE_INI}\n", _SAMPLE_INI[:6]),
+    ("app.conf", "api_key = abc def\n", "abc def"),
+    ("cfg.py", f"conn = 'Server=x;User ID=sa;Password={_SAMPLE_CONN};'\n", _SAMPLE_CONN[:6]),
+    ("a.py", f"obj['password'] = '{_SAMPLE}'\n", _SAMPLE),
+    ("b.py", f"password: str = '{_SAMPLE}'\n", _SAMPLE),
+    ("c.go", f'password := "{_SAMPLE}"\n', _SAMPLE),
+    ("d.ts", f"const apiKey: string = '{_SAMPLE}'\n", _SAMPLE),
+    ("E.java", f'String dbPassword = "{_SAMPLE}";\n', _SAMPLE),
+])
+def test_a_secret_value_in_any_common_form_is_replaced(tmp_path, name, content, secret):
+    (tmp_path / name).write_text(content, encoding="utf-8")
+    ((_, text),) = noshell.pack_files(tmp_path, [name]).files
+    assert secret not in text
+    assert noshell.CREDENTIAL_MARKER in text
+
+
+@pytest.mark.parametrize("content", [
+    "tokenizer = 'bert'\n", "token_type = 'bearer'\n", "secret_name = 'db/prod'\n",
+    "accessToken = getToken()\n", "password = input;\n", "if password == 'x': pass\n",
+    "url = f'Server={h};Password={pw};'\n", "passwords = ['a', 'b']\n",
+])
+def test_code_that_only_looks_like_a_secret_is_unchanged(tmp_path, content):
+    (tmp_path / "m.py").write_text(content, encoding="utf-8")
+    assert noshell.pack_files(tmp_path, ["m.py"]).files == (("m.py", content),)
+
+
+@pytest.mark.parametrize("shape", [
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----", "PuTTY-User-Key-File-3: ssh-ed25519",
+    "---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----", "xapp-1-A0123456789-abcdef0123",
+    "whsec_" + "a" * 32, "SG." + "a" * 22 + "." + "b" * 43, "hf_" + "a" * 34,
+    "dop_v1_" + "a" * 64,
+])
+def test_more_recognisable_key_shapes_refuse_the_file(tmp_path, shape):
+    (tmp_path / "notes.py").write_text(f"x = '{shape}'\n", encoding="utf-8")
+    packed = noshell.pack_files(tmp_path, ["notes.py"])
+    assert packed.files == ()
+    assert [reason for _, reason in packed.skipped] == ["secret_file"]
+
+
+def test_the_new_secret_screens_stay_linear_on_long_input(tmp_path):
+    import time as _time
+
+    for text in ("password" * 16000, "password=" + "x" * 131000, "password: a b\n" * 9000,
+                 'pw = "' + "a" * 131000):
+        started = _time.perf_counter()
+        try:
+            noshell._sanitize_supplied(text, data=True, config=True)
+            noshell._sanitize_supplied(text)
+        except ValueError:
+            pass
+        assert _time.perf_counter() - started < 5
+
+
+# --- The event-stream check is an allow-list ----------------------------------
+#
+# Only item types known to be inert pass. Any other item, on any event, known
+# or unknown, leaves the stream unverified and the answer withheld.
+
+def _raw(*events):
+    return "\n".join(json.dumps(event) for event in events) + "\n"
+
+
+_HEAD = ({"type": "thread.started", "thread_id": "inert"}, {"type": "turn.started"})
+_ANSWER = {"type": "item.completed", "item": {"id": "answer", "type": "agent_message", "text": "ok"}}
+_DONE = {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+_UNLISTED_ITEMS = ["function_call", "bash", "terminal", "code_interpreter", "python", "run", "edit", "read",
+                   "apply_diff", "http_request", "download", "spawn_agent", "subagent", "delegate", "navigate",
+                   "click", "web_search", "custom", "agent_message2", "Agent_Message", ""]
+
+
+@pytest.mark.parametrize("kind", ["item.started", "item.updated", "item.completed"])
+@pytest.mark.parametrize("item_type", _UNLISTED_ITEMS)
+def test_an_item_type_not_known_to_be_inert_leaves_the_stream_unverified(kind, item_type):
+    observed = noshell.verify_stream(stream({"id": "t", "type": item_type}, kind=kind))
+    assert observed.verified is False
+
+
+def test_an_unlisted_item_withholds_the_answer(worker):
+    executor, request, run, _ = worker
+    run.return_value = subprocess.CompletedProcess(
+        [], 0, stream({"id": "t", "type": "function_call"}, text="PRIVATE NORMAL ANSWER"), "")
+    result = executor.execute(request)
+    assert result.output == ""
+    assert result.success is False
+    assert result.metadata["noshell_verified_by_event_stream"] is False
+    assert "PRIVATE" not in str(result.to_dict())
+    assert "worker_has_no_command_tools" not in result.limitations
+
+
+@pytest.mark.parametrize("item_type", ["agent_message", "reasoning", "error", "todo_list"])
+@pytest.mark.parametrize("kind", ["item.started", "item.updated", "item.completed"])
+def test_the_inert_item_types_still_pass(kind, item_type):
+    observed = noshell.verify_stream(stream({"id": "t", "type": item_type, "text": "x"}, kind=kind))
+    assert (observed.verified, observed.violated) == (True, False)
+
+
+@pytest.mark.parametrize("kind", ["item.failed", "item.delta", "response.output", "thread.started", "turn.started",
+                                  "error", "note"])
+@pytest.mark.parametrize("item_type,violated", [("command_execution", True), ("mcp_tool_call", True),
+                                                ("collab_tool_call", True), ("function_call", False)])
+def test_an_item_on_any_event_is_judged_by_the_same_rule(kind, item_type, violated):
+    observed = noshell.verify_stream(_raw(*_HEAD, {"type": kind, "item": {"id": "t", "type": item_type}},
+                                          _ANSWER, _DONE))
+    assert observed.verified is False
+    assert observed.violated is violated
+
+
+@pytest.mark.parametrize("terminal", ["turn.completed", "turn.failed"])
+@pytest.mark.parametrize("item_type", ["command_execution", "function_call"])
+def test_an_item_on_the_terminal_event_is_judged(terminal, item_type):
+    observed = noshell.verify_stream(_raw(*_HEAD, _ANSWER, {"type": terminal, "item": {"type": item_type}}))
+    assert observed.verified is False
+
+
+@pytest.mark.parametrize("event", [
+    {"type": "item.failed", "item": "command_execution"},
+    {"type": "note", "item": None},
+    {"type": "note", "items": [{"type": "agent_message"}, {"type": "command_execution"}]},
+    {"type": "note", "items": {"type": "agent_message"}},
+    {"type": "note", "call": {"name": "shell"}},
+    {"type": "note", "tool": "shell"},
+    {"type": "note", "tool_call": {"name": "x"}},
+    {"type": "note", "tool_calls": []},
+    {"type": "note", "function_call": {"name": "x"}},
+    {"type": "response.output", "output": [{"type": "command_execution"}]},
+    {"type": "note", "payload": {"item": {"type": "command_execution"}}},
+    {"type": "turn.started", "output": [{"type": "command_execution"}]},
+    {"type": "turn.started", "usage": {"item": {"type": "command_execution"}}},
+    {"type": "turn.started", "error": [{"type": "command_execution"}]},
+    {"type": "exec.note"},
+    {"type": "tool_note"},
+], ids=lambda event: json.dumps(event)[:60])
+def test_an_event_carrying_a_tool_like_payload_is_not_skipped(event):
+    assert noshell.verify_stream(_raw(*_HEAD, event, _ANSWER, _DONE)).verified is False
+
+
+@pytest.mark.parametrize("event", [
+    {"type": "note"},
+    {"type": "session.configured", "model": "m", "count": 3, "ok": True, "extra": None},
+    {"type": "item.delta", "item": {"id": "a", "type": "agent_message", "text": "o"}},
+    {"type": "note", "items": [{"type": "reasoning"}, {"type": "agent_message"}]},
+    {"type": "error", "message": "reconnecting"},
+], ids=lambda event: json.dumps(event)[:60])
+def test_an_unknown_event_with_nothing_but_plain_values_is_still_skipped(event):
+    observed = noshell.verify_stream(_raw(*_HEAD, event, _ANSWER, _DONE))
+    assert (observed.verified, observed.violated) == (True, False)
+
+
+@pytest.mark.parametrize("separator", [" ", " ", "\u0085", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e"])
+def test_an_answer_holding_a_unicode_line_separator_is_one_json_line(separator):
+    answer = {"type": "item.completed", "item": {"id": "a", "type": "agent_message", "text": f"a{separator}b"}}
+    lines = [json.dumps(event, ensure_ascii=False) for event in (*_HEAD, answer, _DONE)]
+    if separator >= "\u0080":  # JSON leaves these three raw; the control characters are always escaped.
+        assert separator in lines[2]
+    for newline in ("\n", "\r\n"):
+        raw = newline.join(lines) + newline
+        assert noshell.verify_stream(raw).verified is True
+        assert noshell.stream_usage(raw) == {"input_tokens": 1, "output_tokens": 1}
+
+
+@pytest.mark.parametrize("raw", [
+    _raw(*_HEAD, _ANSWER, _DONE) + "\n",
+    _raw(*_HEAD, _ANSWER).rstrip("\n") + "\n\n" + json.dumps(_DONE) + "\n",
+    _raw(*_HEAD, _ANSWER, _DONE).replace("\n", "\r"),
+    "\n",
+], ids=["trailing-blank", "inner-blank", "bare-cr", "only-newline"])
+def test_blank_or_oddly_separated_lines_stay_unverified(raw):
+    assert noshell.verify_stream(raw).verified is False

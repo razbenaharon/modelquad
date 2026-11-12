@@ -37,11 +37,13 @@ here; the tool under development is not the instrument for developing it.
   the change three files until Codex is consulted on the approach. Codex
   stays read-only; it writes no code. Codex's findings and
   Claude's verdicts go to the review ledger (`review_ledger.py`, a SQLite
-  file of its own; `modelquad review report`). Quota never
-  starts work: when Claude is near its limit, a note says so (wait for the
+  file of its own; `modelquad review report`). Quota alone never
+  starts a task: when Claude is near its limit, a note says so (wait for the
   reset, or ask Codex for a review), and `modelquad_split` may propose a
   medium or large read-only step for Codex when Codex's fresh readings show
-  room (reason `claude_near_limit`, trigger `split_quota`).
+  room (reason `claude_near_limit`, trigger `split_quota`). Inside a task
+  the user asked for, that step is an ordinary Codex call: prompted without
+  the grant, unprompted under it (owner decision, 2026-11-12).
 - Settings: `/modelquad:settings` (skill, user-started) and `modelquad
   settings` / `settings show` (`settings_view.py`) show on/off, automatic or
   approve each call, and the history; there is no browser settings page.
@@ -145,7 +147,8 @@ GitHub-hosted Windows and runs the suite against the installed distribution.
    re-checks the grant and the repository's choices, which outrank it. A
    refusal, a grant turned off or a provider refusal is final for that
    request: ModelQuad never starts Codex by another route. ModelQuad installs
-   no permission rule for its tools, and quota never starts work.
+   no permission rule for its tools, and quota alone never starts a task: it
+   can only change who takes a read-only step of a task the user asked for.
    `modelquad_handoff` keeps its prompt either way. `modelquad_handoff_wait` starts
    Codex only after the handoff window's Approve button, whose tool
    (`modelquad_handoff_confirm`) is app-only, so a host keeps it from the

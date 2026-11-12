@@ -9,7 +9,13 @@ read ModelQuad's own history and nothing else:
   kind (review, exploration, architecture), and how each ended: answered,
   withheld because the event stream showed a tool call (invariant 8),
   refused (ModelQuad's own rules, the repository's ``.modelquad.toml``, the
-  user's per-repo setting, or Codex's own limit), or not answered. The
+  user's per-repo setting, or Codex's own limit), not started because the
+  request itself could not be used (a missing file, an unknown folder or
+  model), or not answered. The words are ``review_ledger.classify_call``'s,
+  the one definition every view shares: answered means Codex ran and a
+  non-empty answer was delivered to Claude, which the review ledger records
+  per call; a call the ledger has no row for is answered when Codex reported
+  the task done. The
   median time to an answer is over the answered ones. When the caller
   names the review ledger, also the calls made for a step ``modelquad_split``
   proposed for Codex because Claude was near its limit (trigger
@@ -71,9 +77,14 @@ REFUSED_REPO_FILE = "refused_repo_file"
 REFUSED_USER_SETTING = "refused_user_setting"
 REFUSED_CODEX_LIMIT = "refused_codex_limit"
 NOT_ANSWERED = "not_answered"
+#: Codex was never started and no rule refused the call: the request itself could
+#: not be used (``review_ledger.INPUT_REASONS``), or Codex could not be started.
+NOT_STARTED = "not_started"
 RUNNING = "running"
 OUTCOMES = (ANSWERED, WITHHELD, REFUSED_POLICY, REFUSED_REPO_FILE, REFUSED_USER_SETTING,
-            REFUSED_CODEX_LIMIT, NOT_ANSWERED, RUNNING)
+            REFUSED_CODEX_LIMIT, NOT_STARTED, NOT_ANSWERED, RUNNING)
+#: Codex was actually started in these (``review_ledger.STARTED_OUTCOMES``, and one still running).
+STARTED = (ANSWERED, WITHHELD, NOT_ANSWERED, RUNNING)
 REFUSALS = (REFUSED_POLICY, REFUSED_REPO_FILE, REFUSED_USER_SETTING, REFUSED_CODEX_LIMIT)
 
 MEASURED = "measured"
@@ -147,26 +158,49 @@ def _codex_limit(execution: Mapping[str, Any]) -> bool:
     return not execution.get("success") and execution.get("stderr_category") == "rate_limit"
 
 
-def outcome_of(attempt: Mapping[str, Any], execution: Mapping[str, Any] | None) -> str:
-    """How one recorded Codex request ended, as one closed word."""
+def _before_start(reason: Any) -> str:
+    """A call stopped before Codex started: a refusal by kind, or a request that could not be used."""
+    reason = reason if isinstance(reason, str) else None
+    shared = review_ledger.classify_call(refused=True, started=False, delivered=False, reason=reason)
+    return NOT_STARTED if shared == review_ledger.NOT_STARTED else _refusal_kind(reason)
+
+
+_SHARED_WORDS = {review_ledger.ANSWERED: ANSWERED, review_ledger.WITHHELD: WITHHELD,
+                 review_ledger.FAILED: NOT_ANSWERED, review_ledger.NOT_STARTED: NOT_STARTED,
+                 review_ledger.REFUSED: REFUSED_POLICY}
+
+
+def outcome_of(attempt: Mapping[str, Any], execution: Mapping[str, Any] | None,
+               delivered: bool | None = None) -> str:
+    """How one recorded Codex request ended, as one closed word.
+
+    The words are ``review_ledger.classify_call``'s. ``delivered``: whether
+    the review ledger recorded an answer delivered for this call; None when
+    it has no row for it, and then Codex's own report of the task as done
+    stands in.
+    """
     from .execution import noshell
 
     status = attempt.get("status")
     if status == "refused":
-        return _refusal_kind(attempt.get("detail"))
+        return _before_start(attempt.get("detail"))
     if execution is not None:
         reason = execution.get("task_status_reason")
-        if reason == noshell.VIOLATED:
-            return WITHHELD
-        if isinstance(reason, str) and reason in noshell.PRELAUNCH_REFUSALS:
-            return _refusal_kind(reason)
-        if _codex_limit(execution):
+        reason = reason if isinstance(reason, str) else None
+        if reason in noshell.PRELAUNCH_REFUSALS:
+            return _before_start(reason)
+        if reason != noshell.VIOLATED and _codex_limit(execution):
             return REFUSED_CODEX_LIMIT
-        if execution.get("task_status") == "completed":
-            return ANSWERED
-        return NOT_ANSWERED
+        started = execution.get("worker_started")
+        started = bool(started) if started in (0, 1, True, False) else None
+        if delivered is None:
+            delivered = execution.get("task_status") == "completed"
+        return _SHARED_WORDS[review_ledger.classify_call(
+            refused=False, started=started, delivered=delivered, reason=reason)]
     if status == "started" and attempt.get("resolved_at") is None:
         return RUNNING
+    if "invalid_request" in (attempt.get("failure_kind"), attempt.get("detail")):
+        return NOT_STARTED
     return NOT_ANSWERED
 
 
@@ -175,18 +209,21 @@ _EXECUTION_COLUMNS = (
     "e.duration_seconds AS execution_seconds, e.success AS success, "
     "json_extract(e.metadata_json, '$.worker_metrics.rate_limit_events') AS rate_limit_events, "
     "json_extract(e.metadata_json, '$.stderr_category') AS stderr_category, "
+    "json_extract(e.metadata_json, '$.worker_started') AS worker_started, "
     "e.id AS execution_id"
 )
 _EXECUTION_FIELDS = ("task_status", "task_status_reason", "success", "rate_limit_events",
-                     "stderr_category")
+                     "stderr_category", "worker_started")
 
 
 def codex_requests(db_path: str | Path, *, workspace_key: str | None, since: datetime,
-                   until: datetime) -> list[dict[str, Any]]:
+                   until: datetime, ledger_path: str | Path | None = None) -> list[dict[str, Any]]:
     """One row per recorded Codex request in the period: kind, outcome, seconds.
 
     One query: each attempt joined to the latest Codex execution of its
-    decision (an index on ``decision_id`` answers each lookup).
+    decision (an index on ``decision_id`` answers each lookup). With
+    ``ledger_path``, one read of the review ledger says for which of them an
+    answer was delivered.
     """
     conn = _connect(db_path)
     if conn is None:
@@ -198,6 +235,7 @@ def codex_requests(db_path: str | Path, *, workspace_key: str | None, since: dat
             params.append(workspace_key)
         found = conn.execute(
             "SELECT a.task_type AS task_type, a.status AS status, a.detail AS detail, "
+            "a.failure_kind AS failure_kind, a.decision_id AS decision_id, "
             "a.resolved_at AS resolved_at, a.duration_seconds AS attempt_seconds, "
             + _EXECUTION_COLUMNS +
             " FROM delegation_attempts a LEFT JOIN execution_history e ON e.id = ("
@@ -209,13 +247,17 @@ def codex_requests(db_path: str | Path, *, workspace_key: str | None, since: dat
             + " AND COALESCE(a.routed_provider, a.requested_provider, 'codex') = 'codex'"
             " ORDER BY a.id LIMIT ?", (*params, _SCAN_LIMIT),
         ).fetchall()
+        found = [dict(row) for row in found]
+        delivered = None
+        if ledger_path is not None:
+            delivered = review_ledger.delivered_answers(
+                [row["decision_id"] for row in found], path=Path(ledger_path))
         rows = []
         for row in found:
-            row = dict(row)
             execution = ({name: row[name] for name in _EXECUTION_FIELDS}
                          | {"duration_seconds": row["execution_seconds"]}
                          if row["execution_id"] is not None else None)
-            outcome = outcome_of(row, execution)
+            outcome = outcome_of(row, execution, (delivered or {}).get(row["decision_id"]))
             seconds = (execution or {}).get("duration_seconds")
             if seconds is None:
                 seconds = row["attempt_seconds"]
@@ -247,6 +289,8 @@ def codex_block(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         by_kind["other"] = other
     return {
         "requests": len(rows),
+        # Only these are Codex calls: the rest were stopped before Codex started.
+        "started": sum(outcomes[outcome] for outcome in STARTED),
         "by_kind": by_kind,
         "outcomes": outcomes,
         "refused": {outcome: outcomes[outcome] for outcome in REFUSALS},
@@ -405,7 +449,8 @@ def summarize(db_path: str | Path, *, workspace_key: str | None, period: str, no
         result["lines"] = ["The start of this session is known only inside Claude Code "
                            "(modelquad_activity). Use --since 1d or --since 7d here."]
         return result
-    codex = codex_block(codex_requests(db_path, workspace_key=workspace_key, since=since, until=now))
+    codex = codex_block(codex_requests(db_path, workspace_key=workspace_key, since=since, until=now,
+                                       ledger_path=ledger_path))
     codex["split_quota_calls"] = quota_calls(ledger_path, workspace_key=workspace_key,
                                              ledger_workspace=ledger_workspace, since=since, until=now)
     quota = quota_block(db_path, since=since, until=now, current=current, thresholds=thresholds)
@@ -460,12 +505,15 @@ def render(summary: Mapping[str, Any]) -> list[str]:
     kinds = ", ".join(f"{kind} {count}" for kind, count in codex["by_kind"].items())
     lines.append(f"Codex, read-only, through ModelQuad: {codex['requests']} "
                  f"request{'s' if codex['requests'] != 1 else ''} ({kinds}).")
-    lines.append(f"  Answered {outcomes[ANSWERED]}; withheld (tool call seen) {outcomes[WITHHELD]}; "
+    lines.append(f"  Codex was started for {codex['started']}: answered {outcomes[ANSWERED]}; "
+                 f"withheld (tool call seen) {outcomes[WITHHELD]}; "
                  f"not answered {outcomes[NOT_ANSWERED]}"
                  + (f"; still running {outcomes[RUNNING]}" if outcomes[RUNNING] else "") + ".")
     lines.append(f"  Refused {sum(refused.values())}: ModelQuad's rules {refused[REFUSED_POLICY]}, "
                  f"repository file {refused[REFUSED_REPO_FILE]}, your repo setting "
                  f"{refused[REFUSED_USER_SETTING]}, Codex's own limit {refused[REFUSED_CODEX_LIMIT]}.")
+    lines.append(f"  Not started for another reason (a missing file, an unknown folder or model, "
+                 f"too much to send, or Codex could not be started): {outcomes[NOT_STARTED]}.")
     lines.append(f"  Median time to an answer: {_seconds_text(codex['median_answer_seconds'])}.")
     moved = codex.get("split_quota_calls") or {}
     if moved.get("read"):

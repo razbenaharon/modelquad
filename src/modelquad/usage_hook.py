@@ -15,7 +15,7 @@ from typing import Any
 
 from .hookinput import read_hook_payload
 from .usage.base import write_usage_snapshot
-from .usage.claude import parse_claude_statusline_payload, retain_last_known_claude
+from .usage.claude import parse_claude_statusline_payload, publish_claude_push
 
 
 def record_claude_payload(payload: Any, usage_directory: Path) -> dict:
@@ -38,10 +38,14 @@ def record_claude_payload(payload: Any, usage_directory: Path) -> dict:
     # unconditionally would erase the only quota reading Claude ever gives us,
     # and nothing can re-fetch it -- there is no Claude command that reports
     # rate limits.
+    # Read, compare and write happen under the snapshot's lock: a second
+    # Claude Code session, or an idle one re-rendering figures it cached
+    # earlier, must not put a lower figure over a higher one for the same
+    # window. See ``usage.claude.merge_claude_push``.
     target = usage_directory / "usage-claude.json"
-    snapshot = retain_last_known_claude(parse_claude_statusline_payload(payload), target)
+    snapshot = parse_claude_statusline_payload(payload)
     try:
-        write_usage_snapshot(target, snapshot)
+        publish_claude_push(target, snapshot)
     except OSError:
         # Persistence failures must not break the parent client's status
         # line. Atomic replacement leaves the previous snapshot intact.

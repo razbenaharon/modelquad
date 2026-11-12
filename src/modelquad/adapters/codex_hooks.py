@@ -33,6 +33,12 @@ def _ownership_key(path: Path, host: str) -> str:
         os.path.normcase(str(path.resolve())).encode('utf-8')).hexdigest()
 
 
+def _plain_own_handler(handler: dict[str, Any]) -> bool:
+    """Our command (already matched by the caller) with only the keys we write."""
+
+    return handler.get('type') == 'command' and set(handler) <= {'type', 'command', 'timeout'}
+
+
 def plan_pending_hook(staged: StagedJson, host: str, *, dry_run: bool = False,
                       remove: bool = False) -> Change:
     """Add, refresh or remove the reminder entry in a staged settings file.
@@ -76,7 +82,10 @@ def plan_pending_hook(staged: StagedJson, host: str, *, dry_run: bool = False,
     if found:
         gi, hi, group, handler = found[0]
         expected = {'matcher': group.get('matcher', ''), 'hook': handler}
-        if recorded != expected:
+        # Without a record (the state folder moved), uninstall still takes an
+        # entry that is plainly ours: our own command and nothing a user added.
+        unrecorded_own = remove and recorded is None and _plain_own_handler(handler)
+        if recorded != expected and not unrecorded_own:
             return Change('skipped', 'The reminder entry was modified or has no ownership record; it was preserved.')
         if not remove and expected == {'matcher': desired['matcher'], 'hook': desired['hooks'][0]}:
             return UNCHANGED

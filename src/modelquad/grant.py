@@ -47,6 +47,12 @@ NOTICE = (
     "or a .modelquad.toml that turns Codex off, outranks the grant.",
 )
 
+#: Shown after NOTICE when the grant is turned on for every folder.
+GLOBAL_NOTICE = (
+    "For every folder means every folder you open later too, including an employer's or "
+    "a client's code. To keep a folder out, run in it: modelquad settings repo off",
+)
+
 #: The allow rule the user adds to Claude Code's settings (permissions.allow).
 ALLOW_RULE = "mcp__plugin_modelquad_modelquad__modelquad_delegate"
 
@@ -73,9 +79,37 @@ def _stored(payload: dict) -> dict:
     if not isinstance(value, dict):
         return {"global": False, "repos": {}}
     repos = value.get("repos")
-    return {"global": value.get("global") is True,
-            "repos": {key: entry for key, entry in (repos.items() if isinstance(repos, dict) else ())
-                      if isinstance(key, str) and isinstance(entry, dict)}}
+    stored = {"global": value.get("global") is True,
+              "repos": {key: entry for key, entry in (repos.items() if isinstance(repos, dict) else ())
+                        if isinstance(key, str) and isinstance(entry, dict)}}
+    if isinstance(value.get(_BINDING), str):
+        stored[_BINDING] = value[_BINDING]
+    return stored
+
+
+#: The global grant remembers which installation id it was given under. The
+#: user's per-folder exclusions are keyed by that id, so under another id (a
+#: reset, a damaged identity file) they no longer match, and a global grant
+#: that still counted would cover the folders the user had excluded.
+_BINDING = "global_binding"
+
+
+def _binding(installation_key: str | None) -> str | None:
+    from .repo_identity import _hash
+
+    try:
+        return _hash(bytes.fromhex(installation_key), "grant-binding")
+    except (TypeError, ValueError):
+        return None
+
+
+def _global_holds(stored: dict) -> bool:
+    if not stored["global"]:
+        return False
+    bound = stored.get(_BINDING)
+    if bound is None:
+        return True  # given before bindings were recorded
+    return bound == _binding(_installation_key(create=False))
 
 
 def _installation_key(create: bool) -> str | None:
@@ -103,7 +137,7 @@ def granted(directory, *, path: Path | None = None) -> bool:
         stored = _stored(_read_preferences(_path(path)))
     except Exception:  # noqa: BLE001 -- an unreadable file grants nothing
         return False
-    if stored["global"]:
+    if _global_holds(stored):
         return True
     return _repository_entry(stored, directory)
 
@@ -162,6 +196,12 @@ def write(on: bool, *, directory=None, everywhere: bool = False, path: Path | No
     stored = _stored(payload)
     if everywhere:
         stored["global"] = bool(on)
+        stored.pop(_BINDING, None)
+        if on:
+            bound = _binding(_installation_key(create=True))
+            if bound is None:
+                raise ValueError("ModelQuad could not read this installation's id.")
+            stored[_BINDING] = bound
         scope = "every folder"
     else:
         key = repo_key(directory, _installation_key(create=on))
@@ -177,6 +217,60 @@ def write(on: bool, *, directory=None, everywhere: bool = False, path: Path | No
     payload[_KEY] = stored
     atomic_write(target, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return scope
+
+
+OTHER_FOLDER = "outside_session_project"
+OTHER_FOLDER_MESSAGE = (
+    "This Claude Code session started with the user's standing grant, so its Codex calls "
+    "skip Claude Code's prompt, and for that reason they are limited to the folder the "
+    "session started in. The folder named here is outside it, so ModelQuad started nothing. "
+    "Tell the user plainly; to consult Codex about that folder they can start Claude Code there.")
+
+
+def session_project(environ=None) -> str:
+    """The folder this Claude Code session started in (see :func:`active_at_start`)."""
+    import os
+
+    environ = os.environ if environ is None else environ
+    return environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+
+
+def inside_session_project(directory, project) -> bool:
+    """Whether ``directory`` is the session's project folder or inside it, links resolved."""
+    import os
+
+    try:
+        inner = os.path.normcase(os.path.realpath(directory))
+        outer = os.path.normcase(os.path.realpath(project))
+        return os.path.commonpath((inner, outer)) == outer
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def forget_keyed_settings(*, path: Path | None = None) -> dict:
+    """Before the installation id changes: turn every grant off and drop the per-folder words.
+
+    Both are stored under keys made from the id, and no folder path is kept,
+    so they cannot be moved to a new id. Left in place, the exclusions would
+    stop matching while a global grant went on covering those folders.
+    Returns what was removed, for the user.
+    """
+    from .adapters.atomicwrite import atomic_write
+    from .adapters.server_instructions import preferences_for_write
+    from . import repo_settings
+
+    target = _path(path)
+    payload = preferences_for_write(target)
+    stored = _stored(payload)
+    modes = repo_settings._stored(payload)
+    removed = {"global_grant": stored["global"], "repo_grants": len(stored["repos"]),
+               "repo_settings": len(modes)}
+    if not any(removed.values()):
+        return removed
+    payload.pop(_KEY, None)
+    payload.pop(repo_settings._REPOS_KEY, None)
+    atomic_write(target, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return removed
 
 
 def active_at_start(environ=None) -> bool:

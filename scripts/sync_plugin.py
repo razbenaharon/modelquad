@@ -7,7 +7,8 @@ the single source. A plugin namespaces its skills (``/modelquad:review``),
 so each copy only drops the ``modelquad-`` prefix from its ``name:`` line, and
 the guidance skill ``modelquad`` becomes ``guide``. The MCP entry is copied
 as it is: it already launches the bare ``modelquad-mcp`` that pip puts on
-PATH. Run after editing a template; ``tests/test_plugin_prototype.py`` fails
+PATH. ``LICENSE`` and ``NOTICE`` are copied from the repository root, so a
+copy of the plugin folder carries its licence and notice. Run after editing a template, ``LICENSE`` or ``NOTICE``; ``tests/test_plugin_prototype.py`` fails
 while the copies differ.
 
     python scripts/sync_plugin.py
@@ -22,6 +23,8 @@ TEMPLATES = ROOT / "src" / "modelquad" / "adapters" / "templates" / "claude" / "
 MCP_TEMPLATE = TEMPLATES.parent / "mcp" / "mcp-servers.json"
 PLUGIN_SKILLS = ROOT / "plugin" / "skills"
 PLUGIN_MCP = ROOT / "plugin" / ".mcp.json"
+#: Files copied unchanged from the repository root into the plugin folder.
+LEGAL_FILES = ("LICENSE", "NOTICE")
 #: Template folder -> skill name inside the plugin.
 SKILLS = {
     "modelquad": "guide",
@@ -50,6 +53,10 @@ def main() -> int:
         print(f"wrote {target.relative_to(ROOT).as_posix()}")
     PLUGIN_MCP.write_bytes(MCP_TEMPLATE.read_bytes())
     print(f"wrote {PLUGIN_MCP.relative_to(ROOT).as_posix()}")
+    for name in LEGAL_FILES:
+        target = ROOT / "plugin" / name
+        target.write_bytes((ROOT / name).read_bytes())
+        print(f"wrote {target.relative_to(ROOT).as_posix()}")
     return 0
 
 

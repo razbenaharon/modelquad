@@ -33,7 +33,7 @@ tell the original project from a copy.
 
 ModelQuad is an independent project. It is not affiliated with, endorsed by
 or sponsored by Anthropic or OpenAI. "Claude" and "Claude Code" are
-trademarks of Anthropic. "OpenAI" and "Codex" are trademarks of OpenAI.
+trademarks of Anthropic. "OpenAI", "ChatGPT" and "Codex" are trademarks of OpenAI.
 ModelQuad uses those names only to say which tools it works with.
 
 ## Questions

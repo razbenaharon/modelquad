@@ -262,6 +262,63 @@ def test_handoff_form_applies_project_rules_from_a_subfolder(project, monkeypatc
     assert SECRET not in ctx.asked[0]
 
 
+
+# --- Delegate refuses before Codex starts when a named file is withheld --------
+
+def test_delegate_stops_before_codex_when_a_named_file_is_withheld(project, monkeypatch):
+    settings(project / ".claude" / "settings.json", "Read(./config/**)")
+    monkeypatch.setattr(mcp, "_STANDING_GRANT", False)
+    monkeypatch.setattr(mcp, "_notice_before_first_call", lambda *args: None)
+    monkeypatch.setattr(mcp, "_delegate_payload", lambda *args, **kwargs: pytest.fail("started"))
+    result = asyncio.run(mcp.modelquad_delegate(
+        "review", "task", str(project), files=["config/secrets.txt", "src/app.py"]))
+    payload = result.structured_content
+    assert payload["started"] is False and payload["reason"] == mcp.FILES_WITHHELD
+    assert payload["skipped_files"] == ["config/secrets.txt (denied_by_claude_settings)"]
+    text = "\n".join(item.text for item in result.content)
+    assert "Codex was not started." in text and "config/secrets.txt" in text
+    # Never invite Claude to paste what the user excluded.
+    assert "Never paste an excluded file's contents into the task text" in text
+    assert SECRET not in text
+
+
+def test_a_folder_without_a_grant_is_refused_for_that_before_the_files(project, monkeypatch):
+    settings(project / ".claude" / "settings.json", "Read(./config/**)")
+    monkeypatch.setattr(mcp, "_STANDING_GRANT", True)
+    monkeypatch.setattr(mcp._grant, "allows", lambda folder: False)
+    monkeypatch.setattr(mcp, "_withheld_refusal", lambda *args: pytest.fail("screened"))
+    result = asyncio.run(mcp.modelquad_delegate(
+        "review", "task", str(project), files=["config/secrets.txt"]))
+    assert result.structured_content["reason"] == mcp._grant.NO_GRANT
+
+
+def test_unreadable_settings_name_the_cause_once(project):
+    (project / ".claude").mkdir()
+    (project / ".claude" / "settings.json").write_text("{", encoding="utf-8")
+    refusal = mcp._withheld_refusal(str(project), ["src/app.py", "config/secrets.txt"])
+    message = refusal.structured_content["message"]
+    assert message.count("could not be read") == 1
+    assert "tell the user" in message and "Call again without them" not in message
+
+
+def test_delegate_goes_on_when_every_named_file_is_sendable(project):
+    assert mcp._withheld_refusal(str(project), ["src/app.py"]) is None
+    assert mcp._withheld_refusal(str(project), []) is None
+
+
+def test_a_git_ignored_named_file_stops_the_call_before_codex(project):
+    git = _git()
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    subprocess.run([git, "init", "-q"], cwd=project, check=True, env=env, **no_window_kwargs())
+    (project / ".gitignore").write_text("private/\n", encoding="utf-8")
+    (project / "private").mkdir()
+    (project / "private" / "change.diff").write_text("x", encoding="utf-8")
+    refusal = mcp._withheld_refusal(str(project), ["private/change.diff", "src/app.py"])
+    assert refusal is not None
+    assert refusal.structured_content["skipped_files"] == ["private/change.diff (git_ignored)"]
+    assert "Git ignores it" in refusal.structured_content["message"]
+
+
 # --- Git ignores -------------------------------------------------------------
 
 def _git():

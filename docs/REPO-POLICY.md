@@ -62,7 +62,10 @@ codex = "default"
 - `[offers] codex = "on_request"` tells Claude, through a one-line reminder
   when a Claude Code session starts in the repository, not to offer Codex on
   its own and to call it only when you ask. It applies even when you turned
-  proactive use on, globally or for this repository.
+  proactive use on, globally or for this repository. It does not apply in a
+  folder your standing grant covers: there you chose that Claude consults
+  Codex on its own, and the file's other limits (Codex off, task kinds, file
+  limits, account) still hold.
 
 ## What it can never do
 
@@ -163,7 +166,7 @@ choice it shows what applies there.
 | Choice | Meaning |
 |---|---|
 | `off` | No Codex in this repository. Every Codex call is refused with `user_repo_codex_off`, before any process starts. |
-| `offer-only` | Claude offers Codex when it would help and calls it when you agree or ask, even if proactive use is on globally. |
+| `offer-only` | Claude offers Codex when it would help and calls it when you agree or ask, even if proactive use is on globally. A standing grant that covers the folder outranks this: Claude then consults Codex on its own. |
 | `on` | Claude may decide on its own to consult Codex in this repository. |
 | `inherit` | Remove the entry; the global `modelquad settings proactive` applies. |
 
@@ -176,8 +179,14 @@ The setting is stored in `preferences.json` in ModelQuad's state folder under
 `repos`, keyed by a hash of the repository (HMAC keyed by this installation's
 pseudonymous id, over the Git common folder, so every worktree of a repository
 shares it). No path or folder name is stored. `modelquad privacy --reset-identity`
-mints a new id, after which the stored entries no longer match any
-repository.
+mints a new id, under which the stored entries would no longer match any
+repository; the reset therefore removes them, turns every standing grant off
+and tells you, so no grant goes on covering a folder you had turned off.
+
+In a folder that is not a Git repository, `off` and `offer-only` also cover
+the folders below it, unless you set one of those folders yourself; `on`
+applies to that one folder only. A junction or link into a repository counts
+as that repository, for this setting and for its `.modelquad.toml`.
 
 ### How the layers combine
 
@@ -188,6 +197,8 @@ repository.
    restrictive of the layers: your `off` and the file each refuse on their own.
 3. Who decides to consult Codex: your choice for the repository beats your
    global setting; then the file's `codex = "on_request"` can only lower it.
+   Your standing grant, where it covers the folder, comes first: Claude
+   consults Codex on its own there. Only `off` (yours or the file's) stops it.
 
 ### What Claude is told
 

@@ -95,7 +95,35 @@ _COMPLETION_ENVELOPE_INSTRUCTION = (
     "task and it did not succeed."
 )
 
-_ENVELOPE_PATTERN = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
+# The envelope is what r"```json\s*(\{.*?\})\s*```" (DOTALL) matches, read in
+# one forward pass. That lazy pattern re-read the rest of the text from every
+# unclosed opener: quadratic on megabytes of worker-authored text, outside
+# the worker timeout. Neither piece below can backtrack.
+_ENVELOPE_OPENER = "```json"
+_ENVELOPE_SPACE = re.compile(r"\s*")
+_ENVELOPE_CLOSER = re.compile(r"\}\s*```")
+
+
+def _envelope_candidates(text: str) -> list[tuple[int, int]]:
+    """Spans of every fenced ``{...}`` block, in order, in linear time."""
+
+    spans: list[tuple[int, int]] = []
+    position = 0
+    while True:
+        opener = text.find(_ENVELOPE_OPENER, position)
+        if opener < 0:
+            break
+        brace = _ENVELOPE_SPACE.match(text, opener + len(_ENVELOPE_OPENER)).end()
+        if not text.startswith("{", brace):
+            position = brace
+            continue
+        closer = _ENVELOPE_CLOSER.search(text, brace + 1)
+        if closer is None:
+            # No closing fence after this opener, so none after a later one.
+            break
+        spans.append((brace, closer.start() + 1))
+        position = closer.end()
+    return spans
 
 _VALID_ENVELOPE_STATUSES = {status.value for status in WorkerTaskStatus} - {
     WorkerTaskStatus.UNKNOWN.value
@@ -239,11 +267,11 @@ def parse_completion_envelope(text: str) -> dict[str, Any] | None:
     ``completed`` over an independently detected failure signature.
     """
 
-    matches = _ENVELOPE_PATTERN.findall(text or "")
-    for candidate in reversed(matches):
+    text = text or ""
+    for start, end in reversed(_envelope_candidates(text)):
         try:
-            parsed = json.loads(candidate)
-        except (ValueError, TypeError):
+            parsed = json.loads(text[start:end])
+        except (ValueError, TypeError, RecursionError):
             continue
         if not isinstance(parsed, dict):
             continue

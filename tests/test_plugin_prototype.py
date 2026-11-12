@@ -52,6 +52,23 @@ def test_plugin_server_is_the_packaged_entry():
     assert "env" not in servers["modelquad"]
 
 
+def test_plugin_carries_the_licence_and_notice():
+    # Claude Code copies ./plugin on its own, so the folder must carry the
+    # Apache-2.0 licence and the NOTICE itself (LICENSE section 4(a), 4(d)).
+    sync = _sync_module()
+    for name in sync.LEGAL_FILES:
+        assert (PLUGIN / name).read_bytes() == (ROOT / name).read_bytes(), (
+            f"plugin/{name} is stale: run python scripts/sync_plugin.py")
+
+
+def test_plugin_listings_say_they_are_not_affiliated():
+    manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    marketplace = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    for description in (manifest["description"], marketplace["description"],
+                        *(entry["description"] for entry in marketplace["plugins"])):
+        assert description.endswith("Not affiliated with Anthropic or OpenAI."), description
+
+
 def test_plugin_ships_no_permissions_and_only_the_reminder_hooks():
     # A plugin's server tools are approved like any other: every Codex call
     # keeps Claude Code's approval prompt, and nothing here pre-approves one.

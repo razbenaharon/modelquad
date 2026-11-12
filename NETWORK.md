@@ -6,8 +6,10 @@ programs it starts make, and how to check.
 ## The short version
 
 - ModelQuad's own processes connect only to loopback addresses. An audit hook
-  refuses any other connection from them. There is no ModelQuad server, no
-  update check and no telemetry.
+  refuses a `socket.connect` or `socket.sendto` made through Python's socket
+  module to any other address (see [The loopback rule](#the-loopback-rule)
+  for what it does not cover). There is no ModelQuad server, no update check
+  and no telemetry.
 - ModelQuad talks to Claude Code over standard input and output, and to its
   own optional local service over loopback (`127.0.0.1`).
 - The Codex CLI, which ModelQuad starts, connects to OpenAI under your own
@@ -24,6 +26,16 @@ to any address that is not loopback, before the call is made. `localhost`,
 loopback IP addresses (`127.0.0.0/8`, `::1`, and IPv4-mapped loopback) and
 local socket or pipe paths are allowed; any other address or host name is
 refused (`tests/test_netpolicy.py`).
+
+The hook sees only the calls that raise those audit events, which are the
+calls made through Python's `socket` module. Two kinds of call raise
+neither and are not refused: a connect made by Windows asyncio's default
+(Proactor) event loop, and a host name lookup (`socket.getaddrinfo`), which
+goes to the system resolver. ModelQuad's own code makes neither: it opens
+no asyncio client connection, and its one outbound connect, to its own local
+service, names `127.0.0.1` directly (`src/modelquad/service/listener.py`).
+The hook is a check on that code, not a sandbox for anything else that runs
+in the process.
 
 The hook covers ModelQuad's own Python processes only. Programs ModelQuad
 starts, such as the Codex CLI, are separate processes; the hook does not see

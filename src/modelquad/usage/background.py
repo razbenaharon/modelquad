@@ -7,7 +7,9 @@ that probe can take up to 45 seconds. The status line and the handoff
 suggestion read the local cache instead of probing. The long-lived MCP server
 keeps that cache fresh from a daemon thread -- once at start, then every
 ``CODEX_REFRESH_INTERVAL_SECONDS``, a little inside the age at which a reading
-stops being fresh, so the display never flickers to stale between cycles.
+stops being fresh, so the display never flickers to stale between cycles. When
+a window the reading names resets sooner, the loop wakes just after that reset
+instead, so the new window's figure replaces "unknown" at once.
 
 Why the MCP server and not the status-line command: the status line runs
 every few seconds in a short-lived process, so refreshing from there would
@@ -29,14 +31,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import functools
+import json
 import logging
 import os
 from pathlib import Path
 from threading import Event, Lock, Thread
+import time
 from typing import Any
 
 from ..disclosure import notice_shown
-from .refresh import FRESH_SECONDS, refresh_provider
+from .refresh import FRESH_SECONDS, SNAPSHOT_FILENAMES, refresh_provider, window_resets
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,10 @@ CODEX_REFRESH_INTERVAL_SECONDS = FRESH_SECONDS - 60.0
 #: this session's own cycle is never skipped by jitter, while a reading
 #: another session took moments ago still is.
 CODEX_REFRESH_MIN_INTERVAL_SECONDS = CODEX_REFRESH_INTERVAL_SECONDS - 10.0
+
+#: How long after a window's reset the loop asks again, so Codex has already
+#: opened the new window when it answers.
+RESET_GRACE_SECONDS = 5.0
 
 #: Environment switch: "0", "false", "no" or "off" turns the probe off.
 REFRESH_SWITCH = "MODELQUAD_CODEX_QUOTA_REFRESH"
@@ -85,7 +93,29 @@ def run_codex_refresh_loop(
                 refresh("codex", Path(usage_directory))
             except Exception as exc:  # noqa: BLE001 -- a background refresh must never crash the server
                 logger.debug("background Codex quota refresh failed: %s", type(exc).__name__)
-        stop.wait(interval)
+        stop.wait(next_wait(usage_directory, interval))
+
+
+def next_wait(usage_directory: Path | str, interval: float, *, wall: float | None = None) -> float:
+    """Seconds until the next cycle: ``interval``, or just after a window resets.
+
+    A reading taken shortly before its window resets describes a window that
+    is over, and the status line shows that window as unknown until a new
+    reading arrives; waking just after the reset brings the figure back at
+    once instead of up to a whole interval later.
+    """
+
+    wall = time.time() if wall is None else wall
+    try:
+        snapshot = json.loads((Path(usage_directory) / SNAPSHOT_FILENAMES["codex"]).read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError):
+        return interval
+    if not isinstance(snapshot, dict):
+        return interval
+    upcoming = [reset - wall for reset in window_resets(snapshot) if reset > wall]
+    if not upcoming:
+        return interval
+    return min(interval, min(upcoming) + RESET_GRACE_SECONDS)
 
 
 def start_codex_refresh(
