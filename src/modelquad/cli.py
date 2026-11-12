@@ -145,17 +145,38 @@ def _print_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
         print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)))
 
 
-def render_status(statuses: Sequence[ProviderStatus]) -> None:
+def status_json(status: ProviderStatus, thresholds=None, now=None) -> dict:
+    """One provider for ``status --json``: the figures the status line would show."""
+    from datetime import datetime, timezone
+
+    from .assistance import shown_status_json
+    from .models import FreshnessThresholds
+
+    return shown_status_json(status, thresholds or FreshnessThresholds(),
+                             now=now or datetime.now(timezone.utc))
+
+
+def render_status(statuses: Sequence[ProviderStatus], thresholds=None, now=None) -> None:
+    # The table shows what the status line shows: no figure for a window that
+    # has reset since the reading, or for a reading whose time is not trusted.
+    from datetime import datetime, timezone
+
+    from .assistance import shown_status
+    from .models import FreshnessThresholds
+
+    moment = now or datetime.now(timezone.utc)
+    views = [shown_status(status, thresholds or FreshnessThresholds(), now=moment)
+             for status in statuses]
     rows = [
         (
-            status.name,
-            "yes" if status.available else "no",
-            _format_percentage(status.remaining_percentage),
-            status.freshness.value,
-            status.observed_at.isoformat() if status.observed_at else "unknown",
-            status.reason or "",
+            view["name"],
+            "yes" if view["available"] else "no",
+            _format_percentage(view["remaining_percentage"]),
+            view["freshness"],
+            view["observed_at"] or "unknown",
+            view["reason"] or "",
         )
-        for status in statuses
+        for view in views
     ]
     _print_table(("Provider", "Available", "Remaining", "Freshness", "Observed at", "Reason"), rows)
 
@@ -1157,6 +1178,10 @@ def _run_repo_setting(choice: str | None, project: str | None) -> int:
                                      policy=repo_policy.load(folder))
     if result.refusal is not None and result.refusal != repo_settings.USER_CODEX_OFF:
         print(f"In effect: Codex is refused here by this repository's {repo_policy.FILE_NAME}.")
+    elif result.refusal is None and _grant_decides(folder):
+        print("In effect: your standing grant covers this folder, so Claude consults Codex on "
+              "its own here, without a prompt for each call. The choice above applies to "
+              "sessions without the grant.")
     elif result.refusal is None:
         print({repo_settings.PROACTIVE: "In effect: Claude may decide on its own to consult Codex.",
                repo_settings.OFFER: "In effect: Claude offers Codex and calls it when you agree or ask.",
@@ -1208,6 +1233,16 @@ def _run_proactive_setting(enabled: bool) -> int:
     return 0
 
 
+def _grant_decides(folder) -> bool:
+    """Whether the user's standing grant covers this folder (Claude then decides on its own)."""
+    from . import grant
+
+    try:
+        return grant.allows(folder)
+    except Exception:  # noqa: BLE001 -- unreadable: no grant
+        return False
+
+
 def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
     """Turn the standing grant on or off (grant.py), after its notice and a typed yes."""
     from . import grant
@@ -1256,6 +1291,12 @@ def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
               "Claude Code settings (or answer \"don't ask again\" on the first prompt):")
         print("  " + grant.ALLOW_RULE)
         print("Takes effect in new Claude Code sessions.")
+    elif folder is not None and grant.granted(folder):
+        # The grant for every folder still covers this one: say so, never "off".
+        print("This repository has no grant of its own now, but your standing grant for every "
+              "folder is still on and covers it. Codex calls here still skip the prompt.")
+        print("To keep Codex out of this folder: modelquad settings repo off")
+        print("To turn the grant off everywhere: modelquad settings auto off --global")
     else:
         print(f"Standing grant: off, for {scope}. Codex calls ask you again in new sessions; "
               "a session that started with the grant refuses its next call.")
@@ -1270,7 +1311,9 @@ def _run_review_command(args: argparse.Namespace) -> int:
         try:
             count = review_ledger.record_verdicts(args.decision_id, [{
                 "finding": args.finding, "verdict": args.verdict, "evidence": args.evidence,
-                "action": args.action, "note": args.note}], source="user")
+                "action": "fixed" if args.fix_verified and args.action == "no_change" else args.action,
+                "fix_verified": True if args.fix_verified else None,
+                "note": args.note}], source="user")
         except review_ledger.VerdictRefused as exc:
             print(f"Not recorded: {exc}", file=sys.stderr)
             return 2
@@ -1282,10 +1325,21 @@ def _run_review_command(args: argparse.Namespace) -> int:
     workspace = None if args.all_projects else review_ledger.workspace_id(
         Path(args.project or Path.cwd()))
     try:
-        data = review_ledger.report(days=args.days, workspace=workspace)
+        if args.findings:
+            decisions = review_ledger.list_findings(days=args.days, workspace=workspace)
+        else:
+            data = review_ledger.report(days=args.days, workspace=workspace)
     except (OSError, sqlite3.Error, review_ledger.LedgerVersionError) as exc:
         print(f"The review ledger could not be read: {exc}", file=sys.stderr)
         return 1
+    if args.findings:
+        if args.as_json:
+            print(json.dumps({"days": args.days, "decisions": decisions}, indent=2, sort_keys=True))
+        else:
+            for line in review_findings_lines(decisions, days=args.days,
+                                              all_projects=args.all_projects):
+                print(line)
+        return 0
     if args.as_json:
         print(json.dumps(data, indent=2, sort_keys=True))
         return 0
@@ -1294,19 +1348,60 @@ def _run_review_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def review_findings_lines(decisions: list, *, days: float, all_projects: bool = False) -> list[str]:
+    """``modelquad review report --findings``: each recent call's id and its findings.
+
+    The decision id and the finding reference are what ``modelquad review
+    verdict`` takes. Only what the ledger keeps is printed.
+    """
+    from datetime import datetime
+
+    where = " (all projects)" if all_projects else " (this project)"
+    if not decisions:
+        return [f"No Codex findings recorded in the last {days:g} days{where}."]
+    lines = [f"Codex findings, last {days:g} days{where}, newest first"]
+    for decision in decisions:
+        when = datetime.fromtimestamp(decision["created_at"]).strftime("%Y-%m-%d %H:%M")
+        lines.append(f"{decision['decision_id']}  {when}  {decision['task_type'] or 'unknown kind'}")
+        for item in decision["findings"]:
+            if item["verdict"] is None:
+                verdict = "not judged yet"
+            else:
+                verdict = f"{item['verdict']} by {'you' if item['by'] == 'user' else 'Claude'}"
+                if item["action"] == "fixed":
+                    verdict += ", fixed" + (" and verified" if item["fix_verified"] else "")
+                elif item["action"] == "to_fix":
+                    verdict += ", fix not recorded yet"
+            lines.append(f"  {item['finding']}  {item['severity']}  {item['location']}  "
+                         f"[{verdict}]  {item['claim']}")
+    lines.append("To record your own verdict: modelquad review verdict <decision_id> <F1> "
+                 "confirmed|refuted|undecidable")
+    return lines
+
+
 def review_report_lines(data: dict, *, all_projects: bool = False) -> list[str]:
     """The review report as plain lines. Unknown stays unknown."""
+    from . import review_ledger
+
     def value(item, unit=""):
         return "unknown" if item is None else f"{item}{unit}"
 
+    def named(names):
+        found = [f"{review_ledger.OUTCOME_WORDS.get(name, name)} {data['runs_by_outcome'][name]}"
+                 for name in sorted(data["runs_by_outcome"]) if name in names]
+        return ", ".join(found) or "none"
+
     f = data["findings"]
-    outcomes = ", ".join(f"{name} {count}" for name, count in sorted(data["runs_by_outcome"].items())) or "none"
+    started = review_ledger.STARTED_OUTCOMES
+    outcomes = named(started)
+    stopped = named(set(data["runs_by_outcome"]) - started)
     triggers = ", ".join(f"{name} {count}" for name, count in sorted(data["runs_by_trigger"].items())) or "none"
     gate = data["gate"]
     lines = [
         f"Codex reviews and consultations, last {data['days']:g} days"
         + (" (all projects)" if all_projects else " (this project)"),
-        f"  Calls: {data['runs']} ({outcomes})",
+        f"  Codex calls (Codex was started): {data['codex_started']} ({outcomes})",
+        f"  Stopped before Codex started: {data['not_started']} ({stopped})",
         f"  Why: {triggers}",
         f"  Time: median {value(data['median_seconds'], ' s')}, total {value(data['total_seconds'], ' s')}",
         f"  Codex tokens: in {value(data['input_tokens'])}, out {value(data['output_tokens'])}",
@@ -2270,6 +2365,9 @@ def build_parser() -> argparse.ArgumentParser:
     review_report_cmd.add_argument('--days', type=float, default=30.0,
                                    help='The period in days (default: 30).')
     review_report_cmd.add_argument('--json', action='store_true', dest='as_json', help='Print JSON.')
+    review_report_cmd.add_argument('--findings', action='store_true',
+                                   help='List the recent calls with their decision id and each '
+                                        'finding, for modelquad review verdict.')
     review_verdict_cmd = review_actions.add_parser(
         "verdict", help="Record your own verdict on one finding; it outranks Claude's.")
     review_verdict_cmd.add_argument("decision_id")
@@ -2279,6 +2377,9 @@ def build_parser() -> argparse.ArgumentParser:
                                     choices=("test", "reproduced", "ci", "code_reading", "none"))
     review_verdict_cmd.add_argument("--action", default="no_change",
                                     choices=("to_fix", "fixed", "no_change", "deferred"))
+    review_verdict_cmd.add_argument("--fix-verified", action="store_true",
+                                    help="The fix was confirmed by a test or a reproduction "
+                                         "(records the action as fixed).")
     review_verdict_cmd.add_argument("--note", help="A short reason, no code.")
     split_cmd = subcommands.add_parser(
         "split", help="What happened after the work: Codex requests and quota per window.")
@@ -2335,6 +2436,8 @@ def build_parser() -> argparse.ArgumentParser:
     release_fate = job_actions.add_parser('release-fate', help='Release one job ModelQuad could not confirm ended.')
     release_fate.add_argument('job_id')
     release_fate.add_argument('--acknowledge-unknown-worker-fate', action='store_true')
+    clear_answers = job_actions.add_parser('clear', help='Remove every saved background answer, damaged ones included.')
+    clear_answers.add_argument('--yes', action='store_true', help='Confirm: the saved answers cannot be brought back.')
     for command_name, help_text in (
         ("serve", "Start the local control-plane HTTP service."),
     ):
@@ -2465,6 +2568,18 @@ def _run_command(argv: Sequence[str] | None) -> int:
         from .jobs.runner import run_job
 
         return run_job(args.job_id, args.spec, db_path=args.db_path)
+    if args.command == 'jobs' and args.jobs_action == 'clear':
+        if not args.yes:
+            print('The --yes flag is required. This removes every saved background answer; they cannot be brought back.', file=sys.stderr)
+            return 2
+        from .mcp.jobs_tools import clear_retained_answers
+        try:
+            removed = clear_retained_answers()
+        except (OSError, ValueError) as exc:
+            print(f'The saved answers could not be removed: {getattr(exc, "label", None) or exc}', file=sys.stderr)
+            return 1
+        print(f"Removed {removed} saved answer{'' if removed == 1 else 's'}.")
+        return 0
     if args.command == 'jobs':
         from .jobs.service_client import connect_management, Unavailable
         if args.jobs_action == 'release-fate' and not args.acknowledge_unknown_worker_fate:
@@ -2518,7 +2633,16 @@ def _run_command(argv: Sequence[str] | None) -> int:
         # module-level `state_root` function that the hook-gate branch calls,
         # and a local of that name would shadow it for the whole function.
         privacy_state_root = paths_mod.state_root()
+        forgotten = None
         if args.reset_identity:
+            # Grants and per-folder settings are keyed by the id and cannot follow
+            # a new one. They go first, so no grant outlives the user's exclusions.
+            from . import grant as _grant
+
+            try:
+                forgotten = _grant.forget_keyed_settings()
+            except Exception:  # noqa: BLE001 -- an unreadable file holds no grant
+                forgotten = None
             installation_id = identity_mod.reset_installation_id(privacy_state_root)
             reset_performed = True
         else:
@@ -2530,6 +2654,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
             "state_root": str(privacy_state_root),
             "installation_id": installation_id,
             "installation_id_reset": reset_performed,
+            "settings_cleared_by_reset": forgotten,
             "identity_kind": "pseudonymous, random, resettable",
             "telemetry": "none",
             "network": LOOPBACK_ONLY_REASON,
@@ -2541,6 +2666,15 @@ def _run_command(argv: Sequence[str] | None) -> int:
             return 0
         if reset_performed:
             print("Installation id reset. Previous host-session fingerprints are now unlinkable.")
+            if forgotten and any(forgotten.values()):
+                print("Your per-folder settings and standing grants were stored under the old id and "
+                      "cannot follow the new one, so they were removed:")
+                print("  standing grant for every folder: "
+                      + ("turned off" if forgotten["global_grant"] else "was off"))
+                print(f"  standing grants for single repositories: {forgotten['repo_grants']} removed")
+                print(f"  per-folder settings (off, offer-only, on): {forgotten['repo_settings']} removed")
+                print("Codex calls ask you each time again. Set them again with "
+                      "modelquad settings repo and modelquad settings auto.")
             print()
         print(f"Local state:        {privacy_state_root}")
         print(f"Installation id:    {installation_id or '(none created yet)'} (pseudonymous, resettable)")
@@ -2721,7 +2855,7 @@ def _run_command(argv: Sequence[str] | None) -> int:
                 print(
                     json.dumps(
                         {
-                            "providers": [status.to_dict() for status in statuses],
+                            "providers": [status_json(status, config.freshness) for status in statuses],
                             "hosts": hosts,
                             "package_version": package_check.detail if package_check is not None else "n/a",
                             "service": _service_process_summary(process_status),
@@ -2734,9 +2868,10 @@ def _run_command(argv: Sequence[str] | None) -> int:
             else:
                 render_global_status(statuses, report, process_status)
         elif args.as_json:
-            print(json.dumps([status.to_dict() for status in statuses], indent=2, sort_keys=True))
+            print(json.dumps([status_json(status, config.freshness) for status in statuses],
+                             indent=2, sort_keys=True))
         else:
-            render_status(statuses)
+            render_status(statuses, config.freshness)
             render_status_summary(statuses, config, args.usage_directory)
         if history_enabled:
             service_history.record_provider_usage(db_path, statuses)

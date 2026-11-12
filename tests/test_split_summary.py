@@ -520,3 +520,110 @@ def test_activity_counts_this_projects_split_quota_calls(projects, monkeypatch, 
     tool = getattr(mcp_server.modelquad_activity, "fn", None) or mcp_server.modelquad_activity
     block = tool(project_directory=str(one)).structured_content["split"]
     assert block["codex"]["split_quota_calls"] == {"read": True, "calls": 1, "answered": 1}
+
+
+# ------------------------------------------------ every view counts the same calls
+
+
+def _seven_calls(db_path, folder):
+    """Two real answers, an empty one, a missing file, an unknown kind, an invalid model
+    (as an older build recorded it) and a withheld answer: in the history and in the ledger."""
+    from modelquad import review_ledger as rl
+
+    started = {"worker_started": True}
+    finding = "FINDING F1 | high | a.py:1 | bug | one\n"
+    _run(db_path, folder, "s1", "review", task_status=WorkerTaskStatus.UNKNOWN,
+         reason="no_completion_envelope", metadata=started)
+    _run(db_path, folder, "s2", "review", task_status=WorkerTaskStatus.COMPLETED, metadata=started)
+    _run(db_path, folder, "s3", "review", task_status=WorkerTaskStatus.UNKNOWN,
+         reason="no_completion_envelope", metadata=started)
+    _attempt(db_path, folder, "s4", status="refused", detail="supplied_file_missing")
+    _attempt(db_path, folder, "s5", "implementation", status="refused", detail="routing_refused")
+    _run(db_path, folder, "s6", "review", task_status=WorkerTaskStatus.FAILED,
+         reason="invalid_request", success=False)
+    _run(db_path, folder, "s7", "review", task_status=WorkerTaskStatus.BLOCKED,
+         reason="noshell_violated", success=False, metadata=started)
+    for payload in (
+            {"decision_id": "s1", "output": finding, "metadata": started},
+            {"decision_id": "s2", "output": "Looks fine to me.", "metadata": started},
+            {"decision_id": "s3", "output": "", "metadata": started},
+            {"decision_id": "s4", "refused": True, "reason": "supplied_file_missing", "output": ""},
+            {"decision_id": "s5", "refused": True, "reason": "routing_refused"},
+            {"decision_id": "s6", "output": "", "reason": "invalid_request"},
+            {"decision_id": "s7", "output": "", "reason": "noshell_violated", "metadata": started}):
+        rl.record_run(payload, working_directory=folder, task_type="review", trigger="claude")
+
+
+def test_the_report_the_settings_the_summary_and_the_activity_agree(tmp_path, monkeypatch):
+    from modelquad import cli, review_ledger as rl, settings_view
+
+    db_path = tmp_path / "history.db"
+    folder = tmp_path / "seven"
+    folder.mkdir()
+    _seven_calls(db_path, folder)
+    expected = {"answered": 2, "not_answered": 1, "withheld": 1, "refused": 1, "not_started": 2}
+
+    # modelquad review report
+    report = rl.report(workspace=rl.workspace_id(folder))
+    by = report["runs_by_outcome"]
+    assert {"answered": by["answered"], "not_answered": by["failed"], "withheld": by["withheld"],
+            "refused": by["refused"], "not_started": by["not_started"]} == expected
+    assert report["codex_started"] == 4
+    assert ("  Codex calls (Codex was started): 4 (answered 2, not answered 1, "
+            "withheld (tool call seen) 1)") in cli.review_report_lines(report)
+
+    # modelquad split summary
+    summary = ss.summarize(db_path, workspace_key=project_key(str(folder)), period="1d",
+                           now=datetime.now(timezone.utc), current=(), thresholds=THRESHOLDS,
+                           ledger_path=rl.ledger_path(), ledger_workspace=rl.workspace_id(folder))
+    codex = summary["codex"]
+    outcomes = codex["outcomes"]
+    assert {"answered": outcomes[ss.ANSWERED], "not_answered": outcomes[ss.NOT_ANSWERED],
+            "withheld": outcomes[ss.WITHHELD], "refused": sum(codex["refused"].values()),
+            "not_started": outcomes[ss.NOT_STARTED]} == expected
+    assert codex["requests"] == 7 and codex["started"] == report["codex_started"]
+    # A missing file is not one of "ModelQuad's rules": it has its own line.
+    assert codex["refused"][ss.REFUSED_POLICY] == 1
+    assert "  Codex was started for 4: answered 2; withheld (tool call seen) 1; not answered 1." \
+        in summary["lines"]
+    assert any(line.startswith("  Not started for another reason (a missing file") and line.endswith(": 2.")
+               for line in summary["lines"])
+    assert banned_in("\n".join(summary["lines"])) == []
+
+    # modelquad settings
+    line = settings_view._history_line(folder)
+    assert "4 Codex call(s), 2 answered (3 more stopped before Codex started), 1 finding(s)" in line
+    assert "findings unknown for 1 answer(s) not in the findings format" in line
+
+    # modelquad_activity
+    monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
+    monkeypatch.setattr(mcp_server, "USAGE_DIRECTORY", str(tmp_path / "usage"))
+    monkeypatch.setattr(mcp_server, "_SESSION_STARTED_AT", NOW - timedelta(minutes=30))
+    tool = getattr(mcp_server.modelquad_activity, "fn", None) or mcp_server.modelquad_activity
+    result = tool(project_directory=str(folder))
+    assert result.structured_content["split"]["codex"]["outcomes"] == outcomes
+    assert "This session: 7 Codex requests (answered 2, refused 1)." in result.content[0].text
+
+
+def test_without_a_ledger_row_codex_reporting_the_task_done_is_the_answer(tmp_path):
+    db_path = tmp_path / "history.db"
+    folder = tmp_path / "seven"
+    folder.mkdir()
+    _seven_calls(db_path, folder)
+    # No ledger named: the history alone cannot tell whether an answer without
+    # Codex's own completion report was delivered, so only the reported one counts.
+    outcomes = _summary(db_path, folder)["codex"]["outcomes"]
+    assert outcomes[ss.ANSWERED] == 1 and outcomes[ss.NOT_ANSWERED] == 2
+    assert outcomes[ss.WITHHELD] == 1 and outcomes[ss.NOT_STARTED] == 2
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_activity_refuses_a_limit_below_one(projects, monkeypatch, tmp_path, limit):
+    db_path, _, _ = projects
+    monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
+    monkeypatch.setattr(mcp_server, "USAGE_DIRECTORY", str(tmp_path / "usage"))
+    tool = getattr(mcp_server.modelquad_activity, "fn", None) or mcp_server.modelquad_activity
+    result = tool(limit=limit)
+    assert result.structured_content == {"error": "limit_invalid"}
+    assert "No ModelQuad activity" not in result.content[0].text
+    assert "1 or more" in result.content[0].text

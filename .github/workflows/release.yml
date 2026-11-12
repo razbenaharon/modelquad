@@ -11,12 +11,22 @@ name: Release
 #      as required reviewer, deployment tags limited to v*.*.*, and no secrets.
 #   3. Optionally, a tag ruleset for v* so only maintainers create release tags.
 #
-# To release: set __version__ in src/modelquad/__init__.py, merge, then push
-# the tag v<that version>. The build fails if the two differ.
+# To release: set __version__ in src/modelquad/__init__.py, merge to main, wait
+# for Windows CI to pass on that commit, and push the tag v<that version>.
+# Pushing the tag publishes nothing. Then, on GitHub: Actions > Release >
+# Run workflow, choose the tag under "Use workflow from", and type publish.
+#
+# The run refuses before building anything unless all of these hold: the word
+# publish was typed, the run is on a vX.Y.Z tag, the tagged commit is part of
+# main, Windows CI passed on that commit, and the tag equals __version__.
 
 on:
-  push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "publish" to build this tag and upload it to PyPI'
+        required: true
+        type: string
 
 # Nothing by default; each job asks for only what it needs.
 permissions: {}
@@ -34,6 +44,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read  # to read whether Windows CI passed on the tagged commit
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -41,6 +52,37 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          # The whole history, so the tagged commit can be compared with main.
+          fetch-depth: 0
+
+      - name: A confirmed release of a version tag on main
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "publish" ]; then
+            echo "::error::not confirmed: type publish in the confirm box to release"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" != "tag" ] || ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::run this workflow from a vX.Y.Z tag, not from $GITHUB_REF_TYPE $GITHUB_REF_NAME"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "::error::the tagged commit $GITHUB_SHA is not part of main"
+            exit 1
+          fi
+
+      - name: Windows CI passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          passed=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/windows-ci.yml/runs?head_sha=${GITHUB_SHA}&status=success&per_page=1" --jq '.total_count')
+          if [ "$passed" -lt 1 ]; then
+            echo "::error::no successful Windows CI run for $GITHUB_SHA; run it on main first"
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
@@ -82,6 +124,8 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
+    # The build job already refused anything else; said again where the upload is.
+    if: ${{ inputs.confirm == 'publish' && github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:

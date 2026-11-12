@@ -647,6 +647,37 @@ def restore_previous_registration(
                 RestoreStatus.ALREADY_REMOVED,
                 detail="The ModelQuad registration had already been removed; nothing else was needed.",
             )
+        if (
+            record.get(_REMOVED_BY_MODELQUAD) is True
+            and config_path is not None
+            and isinstance(previous_entry, dict)
+        ):
+            # ModelQuad removed its own registration when the plugin took
+            # over, so the absence is not the user's choice and the entry
+            # install replaced is still owed back.
+            restored = previous_entry.get("command")
+            restored = restored if isinstance(restored, str) else None
+            if dry_run:
+                return RestoreResult(
+                    host, RestoreStatus.RESTORED, restored_command=restored,
+                    detail="The registration in place before this installation would be put back.",
+                )
+            action = upsert_json_key(
+                config_path, _MCP_KEY_PATH, previous_entry, dry_run=False, backup=False
+            )
+            if action.kind is ActionKind.SKIPPED:
+                return RestoreResult(
+                    host, RestoreStatus.FAILED, restored_command=restored,
+                    detail=(
+                        "The registration in place before this installation could not be "
+                        "put back; it is still recorded and can be restored manually."
+                    ),
+                )
+            forget_replacement(host, state_root=state_root)
+            return RestoreResult(
+                host, RestoreStatus.RESTORED, restored_command=restored,
+                detail="The registration that was in place before this installation was put back.",
+            )
         # The user removed the registration themselves. Their latest choice
         # stands, so the earlier entry is not written back -- but it is the
         # only copy, so it is kept for a manual restore.
@@ -780,10 +811,18 @@ def install_with_registration(
         read_registered_command, read_registered_entry, registration_is_readable,
     )
 
-    if not registration_is_readable(host) or getattr(adapter, "via_plugin", False):
-        # Beside the plugin, install writes no registration; it only takes
-        # back its own, and the record of what it displaced stays for uninstall.
+    if not registration_is_readable(host):
         return adapter.install(target_dir, dry_run=dry_run)
+    if getattr(adapter, "via_plugin", False):
+        # Beside the plugin, install writes no registration; it only takes
+        # back its own, and the record of what it displaced stays for
+        # uninstall -- marked, so that uninstall knows ModelQuad removed the
+        # entry and the user did not.
+        had_entry = read_registered_entry(host, target_dir) is not None
+        report = adapter.install(target_dir, dry_run=dry_run)
+        if had_entry and not dry_run and read_registered_entry(host, target_dir) is None:
+            _mark_removed_by_modelquad(host, True)
+        return report
     before_entry = read_registered_entry(host, target_dir)
     before_command = read_registered_command(host, target_dir)
     provisional = False
@@ -839,6 +878,9 @@ def install_with_registration(
             after_entry=after_entry, after_command=after_command,
         )
         if status is not None:
+            # A registration is in place again, so an earlier switch to the
+            # plugin no longer explains a later absence.
+            _mark_removed_by_modelquad(host, False)
             if provisional and status is not RegistrationStatus.CONNECTED_REPLACED:
                 try:
                     path = backup_path()
@@ -862,6 +904,29 @@ def install_with_registration(
                             "Later user edits cannot be reliably protected on uninstall."),
                 ),))
     return report
+
+
+#: Set on a host's record when ModelQuad itself removed its own registration
+#: (the switch to the plugin). Without it, uninstall reads the absence as the
+#: user's own removal and never gives back the entry that install replaced.
+_REMOVED_BY_MODELQUAD = "removed_by_modelquad"
+
+
+def _mark_removed_by_modelquad(host: str, removed: bool) -> None:
+    path = backup_path()
+    hosts = _read_backups(path)
+    record = hosts.get(host)
+    if not isinstance(record, dict) or bool(record.get(_REMOVED_BY_MODELQUAD)) == removed:
+        return
+    if removed:
+        record[_REMOVED_BY_MODELQUAD] = True
+    else:
+        record.pop(_REMOVED_BY_MODELQUAD, None)
+    try:
+        _write_backups(path, hosts)
+    except BackupPersistenceError:
+        # Unmarked, uninstall keeps the earlier entry on record and says where.
+        pass
 
 
 def _forget_fresh_placeholder(host: str) -> None:

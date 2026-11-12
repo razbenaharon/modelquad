@@ -411,13 +411,20 @@ class StreamVerification:
 
 _FORBIDDEN_ITEMS = frozenset({"command_execution", "local_shell_call", "file_change",
                             "file_changes", "patch", "apply_patch", "mcp_tool_call"})
-_SAFE_ITEMS = frozenset({"agent_message", "reasoning", "error", "todo_list", "collab_tool_call"})
+# The whole allow-list: the item types Codex 0.160 emits that carry prose and
+# nothing that acted. Every other item type, known or new, withholds the answer.
+_INERT_ITEMS = frozenset({"agent_message", "reasoning", "error", "todo_list"})
+_ITEM_EVENTS = frozenset({"item.started", "item.updated", "item.completed"})
 _SAFE_EVENTS = frozenset({"thread.started", "turn.started", "turn.completed", "turn.failed", "error"})
-# A type Codex adds later is accepted only when its name suggests nothing that
-# acts: anything naming commands, files, patches, tools, search, browsing or
-# plugins leaves the stream unverified rather than silently trusted.
+# Flat records of numbers or prose that the known events carry beside an item.
+_FLAT_RECORDS = frozenset({"usage", "error"})
+# An event type or field Codex adds later is skipped only when it carries
+# plain values and its name suggests nothing that acts. The name is a second
+# check, never the reason an item or a structured payload is let through.
 _RISKY_FRAGMENTS = ("command", "exec", "shell", "patch", "file", "write", "mcp", "tool", "search",
-                    "web", "fetch", "browser", "computer", "plugin", "apps", "app_", "image_gen")
+                    "web", "fetch", "browser", "computer", "plugin", "apps", "app_", "image_gen",
+                    "call", "function")
+_PLAIN_VALUES = (str, int, float, bool, type(None))
 
 
 def _benign_unknown(kind):
@@ -426,13 +433,39 @@ def _benign_unknown(kind):
             and not any(fragment in lowered for fragment in _RISKY_FRAGMENTS))
 
 
+def _jsonl_lines(raw):
+    # JSON leaves U+2028, U+2029 and U+0085 raw inside a string, and
+    # str.splitlines() would cut the line there. Only a newline ends a line.
+    lines = raw.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
+def _judge_item(item):
+    """(inert, violated, collaboration) for one item object, whatever event carried it."""
+    if type(item) is not dict:
+        return False, False, False
+    kinds = [item[key] for key in ("type", "item_type") if key in item]
+    if not kinds or any(type(value) is not str for value in kinds):
+        return False, False, False
+    return (len(set(kinds)) == 1 and kinds[0] in _INERT_ITEMS,
+            any(value in _FORBIDDEN_ITEMS or value.startswith("mcp") for value in kinds),
+            any(value.startswith(("collab_", "collaboration.")) for value in kinds))
+
+
 def verify_stream(raw) -> StreamVerification:
-    """Inspect every lifecycle stage; risky, malformed or truncated JSONL fails closed.
+    """Inspect every lifecycle stage; risky, unknown, malformed or truncated JSONL fails closed.
 
     Only closed booleans survive; prose/tool results never become evidence.
     Collaboration is observed, not certified to inherit the parent's flags.
-    An unknown event or item type whose name suggests no action is skipped,
-    so a Codex update that adds a harmless type does not withhold answers.
+    Item types are an allow-list: an item of any other type, on any event,
+    known or unknown, leaves the stream unverified and the answer withheld.
+    An event is judged by what it carries, not by how its name sounds: its
+    items by that rule, and any other nested value (beyond a flat ``usage`` or
+    ``error`` record) or tool-like field leaves the stream unverified. An
+    unknown event type is skipped only when it holds nothing but plain values
+    under names that suggest no action.
     """
     if type(raw) is not str or not raw or len(raw.encode("utf-8", "replace")) > MAX_STREAM_BYTES:
         return StreamVerification(False)
@@ -445,7 +478,7 @@ def verify_stream(raw) -> StreamVerification:
                 raise ValueError("duplicate_key")
             result[key] = value
         return result
-    for line in raw.splitlines():
+    for line in _jsonl_lines(raw):
         try:
             event = json.loads(line, object_pairs_hook=unique)
             if type(event) is not dict or type(event.get("type")) is not str:
@@ -454,29 +487,36 @@ def verify_stream(raw) -> StreamVerification:
             kind = event["type"]
             if terminal:
                 valid = False
-            if kind in {"item.started", "item.updated", "item.completed"}:
-                item = event.get("item")
-                if type(item) is not dict:
-                    valid = False
+            items = []
+            if kind in _ITEM_EVENTS and "item" not in event:
+                valid = False
+            for key, value in event.items():
+                if key == "type":
                     continue
-                kinds = [item[key] for key in ("type", "item_type") if key in item]
-                if not kinds or any(type(value) is not str for value in kinds):
+                if key == "item":
+                    items.append(value)
+                elif key == "items":
+                    if type(value) is list:
+                        items.extend(value)
+                    else:
+                        valid = False
+                elif not _benign_unknown(key):
                     valid = False
-                    continue
-                item_type = kinds[0]
-                if any(value in _FORBIDDEN_ITEMS or value.startswith("mcp") for value in kinds):
-                    violated = True
-                elif item_type not in _SAFE_ITEMS and not _benign_unknown(item_type):
+                elif key in _FLAT_RECORDS and type(value) is dict:
+                    if not all(isinstance(inner, _PLAIN_VALUES) for inner in value.values()):
+                        valid = False
+                elif not isinstance(value, _PLAIN_VALUES):
                     valid = False
-                if len(set(kinds)) != 1:
-                    valid = False
-                if any(value.startswith(("collab_", "collaboration.")) for value in kinds):
-                    collaboration = True
-            elif kind.startswith(("collab_", "collaboration.")):
+            for item in items:
+                inert, forbidden, collab = _judge_item(item)
+                valid = valid and inert
+                violated = violated or forbidden
+                collaboration = collaboration or collab
+            if kind.startswith(("collab_", "collaboration.")):
                 collaboration = True
             elif kind in _FORBIDDEN_ITEMS or kind.startswith("mcp"):
                 violated = True
-            elif kind not in _SAFE_EVENTS and not _benign_unknown(kind):
+            elif kind not in _ITEM_EVENTS and kind not in _SAFE_EVENTS and not _benign_unknown(kind):
                 valid = False
             if kind in {"turn.completed", "turn.failed"}:
                 terminal = True
@@ -495,7 +535,7 @@ def stream_usage(raw) -> dict | None:
     :func:`verify_stream` judged and decides nothing.
     """
     found = None
-    for line in (raw or "").splitlines():
+    for line in _jsonl_lines(raw or ""):
         try:
             event = json.loads(line)
         except (ValueError, RecursionError):
@@ -591,12 +631,17 @@ _SECRET_ASSIGNMENT = re.compile(
 # Refused outright: a value in one of these shapes is a credential whatever
 # its name, and redacting it would still hand the worker a broken file.
 _HIGH_CONFIDENCE_SECRET = re.compile(
-    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"
+    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+    # PuTTY and SSH2 (RFC 4716 style) private key files.
+    r"|PuTTY-User-Key-File-\d|---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----"
     r"|(?<![A-Za-z0-9_-])(?:"
     r"sk-(?:proj-|svcacct-|admin-|ant-[a-z0-9]{2,8}-)?[A-Za-z0-9_-]{32,}"
     r"|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}"
     r"|(?:AKIA|ASIA)[0-9A-Z]{16}|xox[abposr]-[A-Za-z0-9-]{10,}"
     r"|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}"
+    # Slack app tokens, Stripe webhook secrets, SendGrid, Hugging Face, DigitalOcean.
+    r"|xapp-[A-Za-z0-9-]{10,}|whsec_[A-Za-z0-9]{24,}"
+    r"|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{30,}|dop_v1_[a-f0-9]{64}"
     # Stripe secret and restricted keys (underscore, unlike OpenAI's sk-).
     r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}"
     # A Slack incoming-webhook URL carries its secret in the path.
@@ -616,10 +661,31 @@ _JWT = re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-
 # Any scheme (postgresql://, mongodb+srv://, redis://, amqp:// ...). The scheme
 # is bounded so a long dotted word cannot make each start position rescan it.
 _URL_CREDENTIAL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}://)[^\s/@:\"']+:[^\s/@\"']+@")
+# A configuration line whose key is secret-like: the whole unquoted value goes,
+# whatever characters it holds (``password: tr0ub4dor&3``, ``DB_PASSWORD=a!b$c``).
+_CONFIG_LINE = re.compile(
+    r"(?im)^(?P<key>[ \t]*(?:-[ \t]+|export[ \t]+|set[ \t]+)?[\"']?" + _SECRET_KEY +
+    r"[\"']?[ \t]*[=:][ \t]*)(?P<value>[^\s\"'<\[{][^\n]*?)(?=[ \t]*$)")
+# ``Password=...;`` inside a connection string, in code or configuration.
+_CONNECTION_SECRET = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])(?P<key>(?:password|pwd|sharedaccesskey|accountkey)=)"
+    r"(?P<value>[^;\s\"'`]+)(?=;|[\"'`])")
+# A quoted literal assigned to a name that ends in a secret word, in any of the
+# forms code uses: ``dbPassword = "..."``, ``obj['password'] = '...'``,
+# ``password: str = '...'``, ``apiKey := "..."``. Anchored at a name start.
+_CODE_SECRET_LITERAL = re.compile(
+    r"(?i)(?<![A-Za-z0-9_$])(?P<key>[A-Za-z0-9_$]{0,64}?"
+    r"(?:pass(?:word|wd|phrase)|pwd|secret|api_?key|access_?key|private_?key|auth_?key|token|credentials?)"
+    r"\d{0,3}[\"']?\]?(?:[ \t]*:[ \t]*[A-Za-z_][\w.\[\]<>| ]{0,40}?)?[ \t]*(?::=|=)[ \t]*)"
+    r"(?P<value>\"(?:[^\"\\n]|\.)+\"|'(?:[^'\\n]|\.)+'|`[^`\n]+`)"
+    # The same end as _SECRET_ASSIGNMENT: a literal that is part of an expression stays.
+    r"(?=[ \t]*(?:[,;})\]#\n]|//|$))")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 # Configuration and prose, where an unquoted value is data rather than code.
 _DATA_SUFFIXES = frozenset({".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties",
                             ".json", ".txt", ".md", ".rst", ".csv", ".tsv", ".xml"})
+# Key-value configuration, where a whole line value under a secret name is data.
+_CONFIG_SUFFIXES = frozenset({".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties"})
 CREDENTIAL_MARKER = "<credential>"
 
 
@@ -640,7 +706,7 @@ def _secret_text(text):
     return any(_high_entropy(match["value"]) for match in _SECRET_LITERAL.finditer(text))
 
 
-def _sanitize_supplied(text, *, data=False):
+def _sanitize_supplied(text, *, data=False, config=False):
     """Refuse recognisable credentials; redact other values under secret names.
 
     Never refuses ordinary code for a name: ``token = next(it)`` and
@@ -664,7 +730,29 @@ def _sanitize_supplied(text, *, data=False):
             return match[0]
         return match["key"] + CREDENTIAL_MARKER
 
+    def keep_words(match):
+        if match["value"].casefold() in {"none", "null", "true", "false", "nil", "~"}:
+            return match[0]
+        return match["key"] + CREDENTIAL_MARKER
+
+    def connection(match):
+        value = match["value"]
+        if value.startswith(CREDENTIAL_MARKER) or (
+                not data and (_IDENTIFIER.fullmatch(value) or value[0] in "{$%<")):
+            return match[0]  # a variable or a template, not a literal
+        return match["key"] + CREDENTIAL_MARKER
+
+    def code_literal(match):
+        inner = match["value"][1:-1]
+        if not inner or inner == CREDENTIAL_MARKER:
+            return match[0]
+        return match["key"] + CREDENTIAL_MARKER
+
     screened = _SECRET_ASSIGNMENT.sub(redact, text)
+    if config:
+        screened = _CONFIG_LINE.sub(keep_words, screened)
+    screened = _CONNECTION_SECRET.sub(connection, screened)
+    screened = _CODE_SECRET_LITERAL.sub(code_literal, screened)
     screened = _BEARER.sub(lambda match: match[1] + CREDENTIAL_MARKER, screened)
     screened = _JWT.sub(CREDENTIAL_MARKER, screened)
     return _URL_CREDENTIAL.sub(lambda match: match[1] + CREDENTIAL_MARKER + "@", screened)
@@ -748,16 +836,56 @@ def _read_file(root, name, budget, content_remaining):
         raise ValueError("binary_file")
     # sanitize_context_text rejects source code by design (repository memory);
     # supplied source has its own narrower credential screen.
-    return _sanitize_supplied(text, data=Path(name).suffix.lower() in _DATA_SUFFIXES)
+    suffix = Path(name).suffix.lower()
+    return _sanitize_supplied(text, data=suffix in _DATA_SUFFIXES, config=suffix in _CONFIG_SUFFIXES)
+
+
+_BACKUP_SUFFIXES = (".bak", ".backup", ".old", ".orig", ".save", ".swp", ".tmp", "~")
+_ENV_VARIANTS = frozenset({"local", "prod", "production", "dev", "development", "staging", "stage",
+                           "test", "testing", "ci", "docker", "secret", "secrets", "private"})
+_SECRET_FILE_NAMES = frozenset({
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk", "identity",
+    "secrets.json", "secrets.yaml", "secrets.yml", "secrets.toml", "secrets.xml", "secrets.txt",
+    "secret.json", "secret.yaml", "secret.yml", "secret.toml", "secret.txt",
+    "credentials.yaml", "credentials.yml", "credentials.toml", "credentials.xml", "credentials.txt",
+    "credentials.csv", "token.json", "tokens.json", "token.txt", ".dockercfg", "wp-config.php",
+    "local.settings.json", "passwords.txt", "password.txt", "passwd", "shadow", "master.key",
+    })
+
+
+def _env_file(last):
+    """``.env``, ``prod.env``, ``app.env.local``, ``env.production``: an environment file by name."""
+    pieces = last.split(".")
+    if last.startswith(".env") or pieces[-1] == "env" or "env" in pieces[1:-1]:
+        return True
+    return pieces[0] == "env" and len(pieces) == 2 and pieces[1] in _ENV_VARIANTS
+
+
+def _without_backup_suffix(last):
+    """``auth.json.bak`` is still ``auth.json``."""
+    while last.endswith(_BACKUP_SUFFIXES) and len(last) > 4:
+        last = last[:-1] if last.endswith("~") else last.rsplit(".", 1)[0]
+    return last
+
+
+def _secret_file_name(parts):
+    last = _without_backup_suffix(parts[-1])
+    if _env_file(last) or last in _SECRET_FILE_NAMES:
+        return True
+    if last.endswith((".ppk", ".jceks", ".kdbx", ".tfvars.json", ".pem", ".key", ".pfx", ".p12")):
+        return True
+    if last.endswith(".json") and last.startswith(("service-account", "service_account", "client_secret")):
+        return True
+    return last == "hosts.yml" and "gh" in parts[:-1]
 
 
 def _secret_reference(name):
     """Share the path privacy screen with diagnostics that cannot read files."""
     parts = tuple(part.casefold() for part in name.split("/"))
-    return (_CONTEXT_CREDENTIAL.search(name) is not None
+    return (_CONTEXT_CREDENTIAL.search(name) is not None or _secret_file_name(parts)
             or any(part in {".codex", ".claude", ".aws", ".ssh", ".agents", ".azure", ".kube", "gcloud",
                             ".docker", ".gnupg"} for part in parts)
-            or parts[-1].startswith(".env") or parts[-1] in {
+            or parts[-1].startswith(".env") or _without_backup_suffix(parts[-1]) in {
                 "auth.json", "credentials", "credentials.json", ".npmrc", ".yarnrc",
                 ".yarnrc.yml", ".pypirc", ".netrc", "_netrc", ".git-credentials",
                 "pip.conf", "pip.ini", "nuget.config", "kubeconfig", "application_default_credentials.json",

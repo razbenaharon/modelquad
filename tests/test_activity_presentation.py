@@ -779,3 +779,59 @@ def test_the_activity_tool_serves_a_plain_language_view_beside_the_raw_record(tm
     # "delegating" -- a handoff under way, not a proven running worker.
     assert states == {"no_result", "delegating"}
     assert "decision_id" not in json.dumps(payload["presentation"])
+
+
+# ----------------------------------------------------- why Codex was not started
+
+
+def test_every_packer_refusal_has_its_own_sentence():
+    from modelquad.execution import noshell
+    from modelquad.mcp import presentation
+
+    for reason, sentence in noshell.REFUSAL_MESSAGES.items():
+        for payload in ({"refused": True, "reason": reason},
+                        {"refused": True, "task_status_reason": reason}):
+            line = presentation.refusal_line(payload)
+            assert line != presentation.REFUSAL_FALLBACK, reason
+            assert reason not in line, reason
+        # The packer's own sentence, unless this module words the same cause itself.
+        assert presentation.refusal_line({"reason": reason}) in (
+            sentence, presentation._REFUSAL_LINES.get(reason))
+    assert presentation.refusal_line({"reason": "supplied_file_missing"}).startswith(
+        "A file named in files does not exist.")
+
+
+@pytest.mark.parametrize("reason, words", [
+    ("working_directory_missing", "does not exist"),
+    ("working_directory_not_a_folder", "is a file, not a folder"),
+    ("model_not_valid", "not a valid Codex model id"),
+    ("reasoning_effort_not_valid", "reasoning_effort"),
+    ("prompt_empty", "is empty"),
+    ("invalid_request", "could not be used"),
+])
+def test_a_request_that_could_not_be_used_names_the_problem(reason, words):
+    from modelquad import review_ledger
+    from modelquad.mcp import presentation
+
+    line = presentation.refusal_line({"refused": True, "reason": reason})
+    assert words in line and "nothing was started" in line
+    assert line != presentation.REFUSAL_FALLBACK and reason not in line
+    # The same reasons every view counts as "not started", not as a Codex failure.
+    assert reason in review_ledger.INPUT_REASONS
+
+
+def test_an_unknown_refusal_code_still_gets_the_general_sentence_not_the_code():
+    from modelquad.mcp import presentation
+
+    assert presentation.refusal_line({"reason": "some_new_code"}) == presentation.REFUSAL_FALLBACK
+    assert presentation.refusal_line(None) == presentation.REFUSAL_FALLBACK
+
+
+def test_a_call_that_never_started_shows_no_report_from_codex():
+    from modelquad.mcp import presentation
+
+    refused = presentation.build_delegation_presentation(
+        {"refused": True, "delegated": False, "reason": "supplied_file_missing",
+         "evidence": {"verified": False}}, task_type="review")
+    text = presentation.render_presentation_text(refused)
+    assert "Codex was not started" in text and "Codex's own report" not in text

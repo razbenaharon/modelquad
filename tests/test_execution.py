@@ -1701,3 +1701,124 @@ def test_execution_result_surfaces_limitations_beside_the_headline():
     assert payload["task_completed"] is True
     assert payload["limitations"] == ["cleanup denied"]
     assert ExecutionResult(provider="codex", success=True, output="", exit_code=0).to_dict()["limitations"] == []
+
+
+# --- Reading the completion envelope takes linear time -------------------------
+#
+# Codex-authored text can be megabytes long and is read several times per
+# result, outside the worker timeout. The scan used to be a lazy regex that
+# re-read the rest of the text from every unclosed ```json opener.
+
+_ENVELOPE_OK = '{"task_status": "completed", "reason": null, "limitations": ["x"]}'
+_ENVELOPE_BLOCKED = '{"task_status": "blocked", "reason": "needs network"}'
+
+_ENVELOPE_CASES = [
+    "", "no fence at all", _ENVELOPE_OK, "```json\n" + _ENVELOPE_OK, _ENVELOPE_OK + "\n```",
+    "```json\n" + _ENVELOPE_OK + "\n```",
+    "```json" + _ENVELOPE_OK + "```",
+    "```json \t\r\n\n" + _ENVELOPE_OK + " \n\t ```",
+    "```json  " + _ENVELOPE_OK + "　\x1c```",
+    "text\n```json\n" + _ENVELOPE_BLOCKED + "\n```\nmore\n```json\n" + _ENVELOPE_OK + "\n```\n",
+    "```json\n" + _ENVELOPE_OK + "\n```\n```json\n" + _ENVELOPE_BLOCKED + "\n```",
+    "```json\n" + _ENVELOPE_OK + "\n```\n```json\n{not json}\n```",
+    "```json\n" + _ENVELOPE_OK + "\n```\n```json\n[1]\n```",
+    "```json\n" + _ENVELOPE_OK + '\n```\n```json\n{"task_status": "unknown"}\n```',
+    "```json\n" + _ENVELOPE_OK + '\n```\n```json\n{"task_status": "done"}\n```',
+    "```json\n" + _ENVELOPE_OK + "\n```\n```json\n{xxx\n",
+    "```json\n{xxx\n```json\n" + _ENVELOPE_OK + "\n```",
+    "```json\n{xxx\n```\n```json\n" + _ENVELOPE_OK + "\n```",
+    "```json\nx\n```\n```json\n" + _ENVELOPE_OK + "\n```",
+    "```json\n```json\n" + _ENVELOPE_OK + "\n```",
+    "```python\n" + _ENVELOPE_OK + "\n```",
+    "```JSON\n" + _ENVELOPE_OK + "\n```",
+    "```\n" + _ENVELOPE_OK + "\n```",
+    "````json\n" + _ENVELOPE_OK + "\n````",
+    "```json\n" + _ENVELOPE_OK + "\n``",
+    "```json\n" + _ENVELOPE_OK + "} ```",
+    '```json\n{"task_status": "partial", "evidence": {"summary": "a } ``` b"}}\n```',
+    '```json\n{"task_status": "partial", "evidence": {"a": {}}\n}\n```',
+    "```json\n{}\n```", "```json{}```", "```json\n{\n```", "```json\n}\n```", "```json{``````json{}```",
+    "```json\n" + _ENVELOPE_OK + "\n```" * 3,
+]
+
+
+def _envelope_by_the_old_regex(text):
+    for candidate in reversed(re.findall(r"```json\s*(\{.*?\})\s*```", text or "", re.DOTALL)):
+        try:
+            parsed = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, dict) and parsed.get("task_status") in {"completed", "blocked", "partial", "failed"}:
+            return parsed
+    return None
+
+
+@pytest.mark.parametrize("text", _ENVELOPE_CASES, ids=range(len(_ENVELOPE_CASES)))
+def test_the_linear_envelope_scan_reads_what_the_regex_read(text):
+    from modelquad.execution.base import parse_completion_envelope
+
+    assert parse_completion_envelope(text) == _envelope_by_the_old_regex(text)
+
+
+def test_the_envelope_scan_agrees_with_the_regex_on_generated_text():
+    import random
+
+    from modelquad.execution.base import parse_completion_envelope
+
+    pieces = ["```json", "```", "``", "{", "}", " ", "\n", "x", _ENVELOPE_OK, _ENVELOPE_BLOCKED, "[1]",
+              '{"task_status": "nope"}', " "]
+    rng = random.Random(20261111)
+    for _ in range(4000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 14)))
+        assert parse_completion_envelope(text) == _envelope_by_the_old_regex(text), repr(text)
+
+
+def test_the_envelope_semantics_on_the_ordinary_cases():
+    from modelquad.execution.base import classify_worker_result, parse_completion_envelope
+
+    assert parse_completion_envelope(None) is None
+    assert parse_completion_envelope(_ENVELOPE_OK) is None  # unfenced text is not an envelope
+    fenced = "```json\n" + _ENVELOPE_OK + "\n```"
+    assert parse_completion_envelope(fenced) == json.loads(_ENVELOPE_OK)
+    # The last well-formed envelope wins; a later malformed one does not hide it.
+    both = "```json\n" + _ENVELOPE_OK + "\n```\nlater\n```json\n" + _ENVELOPE_BLOCKED + "\n```"
+    assert parse_completion_envelope(both)["task_status"] == "blocked"
+    assert parse_completion_envelope(both + "\n```json\n{broken\n```")["task_status"] == "blocked"
+    assert parse_completion_envelope('```json\n{"task_status": "unknown"}\n```') is None
+    assert classify_worker_result(returncode=0, combined_output=both, primary_output=both) == (
+        WorkerTaskStatus.BLOCKED, "needs network", True)
+
+
+@pytest.mark.parametrize("shape", [
+    "```json\n{xxx\n", "```json\n{", "```json", "```json\n", "```\n", "}\n```\n", "} ```", "}", "{", "`",
+    "```json\n{``` ", "```json {} ``", "```json\n{}\n```\n", "```json\n{\"a\": 1}\n```\n", "} ", "```json ",
+], ids=range(16))
+def test_the_envelope_scan_is_linear_on_hostile_text(shape):
+    import time
+
+    from modelquad.execution.base import parse_completion_envelope, worker_files_needed, worker_limitations
+
+    size = 2_000_000
+    text = shape * (size // len(shape))
+    tail = "\n```json\n" + _ENVELOPE_BLOCKED + "\n```"
+    for candidate in (text, text + tail, "```json\n{" + text, "```json\n{" + text + "}\n```"):
+        for read in (parse_completion_envelope, worker_limitations, worker_files_needed):
+            started = time.perf_counter()
+            read(candidate)
+            assert time.perf_counter() - started < 2
+
+
+@pytest.mark.parametrize("text", [
+    "```json\n{" + "x" * 2_000_000, "```json" + " " * 2_000_000, "```json\n{}" + " " * 2_000_000,
+    "```json\n{" + "}" * 2_000_000, "`" * 2_000_000, "```json\n{" + "`" * 2_000_000 + "}\n```",
+    "```json\n" + "{" * 2_000_000 + "}\n```", "```json\n" + "[" * 200_000 + "\n```",
+], ids=["long-line", "spaces-after-opener", "spaces-before-closer", "braces", "backticks", "nested-backticks",
+        "open-braces", "deep-list"])
+def test_the_envelope_scan_is_linear_on_one_very_long_run(text):
+    import time
+
+    from modelquad.execution.base import parse_completion_envelope
+
+    started = time.perf_counter()
+    assert parse_completion_envelope(text) is None
+    assert time.perf_counter() - started < 2

@@ -56,8 +56,9 @@ INDEPENDENT_EVIDENCE = frozenset({"test", "reproduced", "ci"})
 ACTIONS = ("to_fix", "fixed", "no_change", "deferred")
 SEVERITIES = ("high", "medium", "low")
 CONFIDENCES = ("high", "medium", "low")
-GATE_EVENTS = ("blocked", "review_done", "review_failed", "not_done_reported", "consult_reminded",
-               "consult_blocked", "consult_done", "consult_failed", "skipped_small")
+GATE_EVENTS = ("blocked", "review_done", "review_failed", "review_pending", "not_done_reported",
+               "consult_reminded", "consult_blocked", "consult_done", "consult_failed",
+               "skipped_small")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -339,12 +340,67 @@ def code_version(directory, sent_files) -> str | None:
 
 # ----------------------------------------------------------------- writing
 
+#: How one call ended. Every view (``modelquad review report``, ``modelquad
+#: settings``, the split summary and ``modelquad_activity``) takes these words
+#: from :func:`classify_call`, so they count the same calls the same way.
+#: ``answered``: Codex ran and a non-empty answer was delivered to Claude.
+#: ``withheld``: Codex ran and its answer was withheld (a tool call was seen).
+#: ``failed``: Codex was started and no usable answer came back ("not answered").
+#: ``refused``: a rule or a setting stopped the call before Codex started.
+#: ``not_started``: the request itself could not be used (a missing file, an
+#: unknown folder or model, too much to send), so Codex was never started.
+ANSWERED = "answered"
+WITHHELD = "withheld"
+FAILED = "failed"
+REFUSED = "refused"
+NOT_STARTED = "not_started"
+CALL_OUTCOMES = (ANSWERED, WITHHELD, FAILED, REFUSED, NOT_STARTED)
+#: The outcomes of a call in which Codex was actually started: only these are "Codex calls".
+STARTED_OUTCOMES = frozenset({ANSWERED, WITHHELD, FAILED})
+OUTCOME_WORDS = {ANSWERED: "answered", WITHHELD: "withheld (tool call seen)", FAILED: "not answered",
+                 REFUSED: "refused", NOT_STARTED: "not started for another reason"}
+#: Reasons that are a plain problem with the request, not a rule that refused it.
+INPUT_REASONS = frozenset({
+    "supplied_file_missing", "supplied_files_over_limit", "supplied_file_unavailable",
+    "supplied_file_changed", "relevant_files_ambiguous", "rendered_prompt_cap",
+    "invalid_request", "working_directory_missing", "working_directory_not_a_folder",
+    "model_not_valid", "reasoning_effort_not_valid", "invalid_reasoning_effort", "prompt_empty"})
+_TOOL_CALL_SEEN = "noshell_violated"
+_NOT_CONFIRMED = "worker_noshell_unavailable"
+
+
+def classify_call(*, refused: bool, started: bool | None, delivered: bool,
+                  reason: str | None = None) -> str:
+    """The one definition of how a call ended; one of :data:`CALL_OUTCOMES`.
+
+    ``refused``: the record says the call was refused. ``started``: whether
+    Codex was started (None: not recorded). ``delivered``: a non-empty answer
+    reached Claude. ``reason``: the closed reason code, when there is one.
+    """
+    if reason == _TOOL_CALL_SEEN or (refused and started is True and reason != _NOT_CONFIRMED):
+        return WITHHELD
+    if reason == _NOT_CONFIRMED:
+        return FAILED
+    if started is not True and reason in INPUT_REASONS:
+        return NOT_STARTED
+    if refused:
+        return REFUSED
+    if delivered:
+        return ANSWERED
+    return NOT_STARTED if started is False else FAILED
+
+
 def _outcome(payload: dict) -> str:
-    if payload.get("refused"):
-        return "refused" if payload.get("started") is not True else "withheld"
-    if isinstance(payload.get("output"), str) and payload["output"]:
-        return "answered"
-    return "failed"
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    started = payload.get("started")
+    if not isinstance(started, bool):
+        started = metadata.get("worker_started")
+    reason = payload.get("task_status_reason") or payload.get("reason")
+    return classify_call(
+        refused=payload.get("refused") is True,
+        started=started if isinstance(started, bool) else None,
+        delivered=isinstance(payload.get("output"), str) and bool(payload["output"].strip()),
+        reason=reason if isinstance(reason, str) else None)
 
 
 def record_run(payload: dict, *, working_directory, task_type, trigger, path: Path | None = None,
@@ -388,9 +444,22 @@ class VerdictRefused(ValueError):
     """A verdict that names no recorded finding or uses an unknown word."""
 
 
-def record_verdicts(decision_id: str, verdicts: list[dict], *, source: str,
-                    path: Path | None = None) -> int:
-    """Append verdicts for findings of one run. Raises VerdictRefused, writing nothing."""
+USER_VERDICT_NOTE = (
+    "The user already gave a verdict on {refs}, and the user's word outranks Claude's, so "
+    "this record was not kept. Only fix progress on a finding the user confirmed is kept: "
+    "verdict confirmed with action fixed (and fix_verified).")
+
+
+def record_verdicts_detail(decision_id: str, verdicts: list[dict], *, source: str,
+                           path: Path | None = None) -> dict:
+    """Append verdicts for findings of one run. Raises VerdictRefused, writing nothing.
+
+    The user's verdict outranks Claude's: once the user judged a finding,
+    Claude's record for it is not kept, except fix progress (verdict
+    confirmed, action fixed) on a finding the user confirmed. Returns
+    ``recorded`` (rows written) and ``ignored`` (the findings whose record
+    was not kept), so a caller never reports a dropped record as recorded.
+    """
     if source not in ("claude", "user"):
         raise VerdictRefused("source must be claude or user")
     conn = connect(path)
@@ -399,7 +468,12 @@ def record_verdicts(decision_id: str, verdicts: list[dict], *, source: str,
             "SELECT ref FROM findings WHERE decision_id = ?", (decision_id,))}
         if not known:
             raise VerdictRefused("no recorded findings for this decision_id")
-        rows = []
+        by_user = {}
+        if source != "user":
+            for row in conn.execute("SELECT ref, verdict FROM verdicts WHERE decision_id = ? "
+                                    "AND source = 'user' ORDER BY id", (decision_id,)):
+                by_user[row["ref"]] = row["verdict"]
+        rows, ignored = [], []
         for item in verdicts:
             ref = str(item.get("finding", "")).upper()
             if ref not in known:
@@ -409,6 +483,9 @@ def record_verdicts(decision_id: str, verdicts: list[dict], *, source: str,
                 raise VerdictRefused(
                     f"{ref}: verdict must be one of {VERDICTS}, evidence one of {EVIDENCE}, "
                     f"action one of {ACTIONS}")
+            if ref in by_user and not _fix_progress(by_user[ref], verdict, action):
+                ignored.append(ref)
+                continue
             fix_verified = item.get("fix_verified")
             note = item.get("note")
             rows.append((decision_id, ref, time.time(), verdict, evidence, action,
@@ -419,9 +496,49 @@ def record_verdicts(decision_id: str, verdicts: list[dict], *, source: str,
             "INSERT INTO verdicts (decision_id, ref, created_at, verdict, evidence, action, "
             "fix_verified, note, source) VALUES (?,?,?,?,?,?,?,?,?)", rows)
         conn.commit()
-        return len(rows)
+        result = {"recorded": len(rows), "ignored": ignored}
+        if ignored:
+            result["note"] = USER_VERDICT_NOTE.format(refs=", ".join(ignored))
+        return result
     finally:
         conn.close()
+
+
+def record_verdicts(decision_id: str, verdicts: list[dict], *, source: str,
+                    path: Path | None = None) -> int:
+    """As :func:`record_verdicts_detail`; returns only the number of rows written."""
+    return record_verdicts_detail(decision_id, verdicts, source=source, path=path)["recorded"]
+
+
+def _fix_progress(user_verdict, verdict, action) -> bool:
+    """Whether Claude's record is fix progress on a finding the user confirmed."""
+    return user_verdict == "confirmed" and verdict == "confirmed" and action == "fixed"
+
+
+def _effective_verdicts(conn, ids) -> dict:
+    """{(decision_id, ref): the verdict that counts}, for these runs.
+
+    The user's verdict outranks Claude's; otherwise the latest wins. Fix
+    progress Claude recorded after the user confirmed a finding is carried
+    onto the user's verdict (``action``, ``fix_verified``, and the evidence
+    of the fix as ``fix_evidence``); the verdict and its source stay the user's.
+    """
+    latest: dict = {}
+    if not ids:
+        return latest
+    marks = ",".join("?" * len(ids))
+    for row in conn.execute(
+            f"SELECT * FROM verdicts WHERE decision_id IN ({marks}) ORDER BY id", list(ids)):
+        row = dict(row)
+        key = (row["decision_id"], row["ref"])
+        held = latest.get(key)
+        if held is not None and held["source"] == "user" and row["source"] != "user":
+            if _fix_progress(held["verdict"], row["verdict"], row["action"]):
+                latest[key] = dict(held, action="fixed", fix_verified=row["fix_verified"],
+                                   fix_evidence=row["evidence"])
+            continue
+        latest[key] = row
+    return latest
 
 
 def session_pseudonym(session: str, state_dir: Path | None = None, length: int = 16) -> str:
@@ -513,19 +630,12 @@ def report(*, days: float = 30.0, workspace: str | None = None, path: Path | Non
             args.append(workspace)
         runs = [dict(row) for row in conn.execute(f"SELECT * FROM runs WHERE {where}", args)]
         ids = [run["decision_id"] for run in runs]
-        findings, latest = [], {}
+        findings = []
         if ids:
             marks = ",".join("?" * len(ids))
             findings = [dict(row) for row in conn.execute(
                 f"SELECT * FROM findings WHERE decision_id IN ({marks})", ids)]
-            for row in conn.execute(
-                    f"SELECT * FROM verdicts WHERE decision_id IN ({marks}) ORDER BY id", ids):
-                row = dict(row)
-                key = (row["decision_id"], row["ref"])
-                # The user's word outranks Claude's; otherwise the latest wins.
-                if latest.get(key, {}).get("source") == "user" and row["source"] != "user":
-                    continue
-                latest[key] = row
+        latest = _effective_verdicts(conn, ids)
         gate = {}
         for row in conn.execute(f"SELECT event, COUNT(*) AS n FROM gate_events WHERE {where} "
                                 "GROUP BY event", args):
@@ -578,7 +688,14 @@ def report(*, days: float = 30.0, workspace: str | None = None, path: Path | Non
         "runs": len(runs),
         "runs_by_outcome": by_outcome,
         "runs_by_trigger": by_trigger,
-        "runs_with_unknown_findings": sum(1 for run in runs if run["findings_count"] is None),
+        # Only calls in which Codex was started are Codex calls; the rest never reached it.
+        "codex_started": sum(count for name, count in by_outcome.items() if name in STARTED_OUTCOMES),
+        "answered": by_outcome.get(ANSWERED, 0),
+        "not_started": sum(count for name, count in by_outcome.items()
+                           if name not in STARTED_OUTCOMES),
+        # Answers that did not use the findings format: their findings are unknown.
+        "runs_with_unknown_findings": sum(1 for run in runs if run["outcome"] == ANSWERED
+                                          and run["findings_count"] is None),
         "median_seconds": durations[len(durations) // 2] if durations else None,
         "total_seconds": round(sum(durations), 1) if durations else None,
         "input_tokens": sum(tokens_in) if tokens_in else None,
@@ -587,3 +704,93 @@ def report(*, days: float = 30.0, workspace: str | None = None, path: Path | Non
         "by_confidence": by_confidence,
         "gate": gate,
     }
+
+
+def location_label(file, line, line_end=None) -> str:
+    """``path:line``, ``path:start-end``, ``path``, or ``-`` for a point with no file."""
+    if not file:
+        return "-"
+    if line is None:
+        return str(file)
+    return f"{file}:{line}-{line_end}" if line_end else f"{file}:{line}"
+
+
+def delivered_answers(decision_ids, *, path: Path | None = None) -> dict[str, bool] | None:
+    """{decision_id: whether an answer was delivered} for the calls the ledger recorded; read-only.
+
+    The ledger saw each reply, so it knows whether an answer reached Claude;
+    the history database does not keep that. A call the ledger has no row
+    for is absent from the result. None when the ledger cannot be read.
+    """
+    ids = [item for item in decision_ids if isinstance(item, str) and item]
+    target = Path(path) if path is not None else ledger_path()
+    if not ids or not target.is_file():
+        return {}
+    try:
+        conn = sqlite3.connect(f"{target.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.Error:
+        return None
+    try:
+        if conn.execute("PRAGMA user_version").fetchone()[0] > SCHEMA_VERSION:
+            return None
+        found: dict[str, bool] = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            for row in conn.execute(
+                    f"SELECT decision_id, outcome FROM runs WHERE decision_id IN ({marks})", chunk):
+                found[row[0]] = row[1] == ANSWERED
+        return found
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
+def list_findings(*, days: float = 30.0, workspace: str | None = None, limit: int = 20,
+                  path: Path | None = None) -> list[dict]:
+    """The recent calls that listed findings, newest first, with each finding's current verdict.
+
+    What ``modelquad review verdict`` needs: the decision id and the finding
+    references. Only what the ledger already keeps is shown: the claim is the
+    stored, redacted and capped one, and no path outside the repository.
+    """
+    since = time.time() - days * 86400
+    conn = connect(path)
+    try:
+        where, args = "created_at >= ? AND findings_count > 0", [since]
+        if workspace:
+            where += " AND workspace = ?"
+            args.append(workspace)
+        runs = [dict(row) for row in conn.execute(
+            f"SELECT decision_id, created_at, task_type, trigger FROM runs WHERE {where} "
+            "ORDER BY created_at DESC LIMIT ?", (*args, max(1, int(limit))))]
+        ids = [run["decision_id"] for run in runs]
+        latest = _effective_verdicts(conn, ids)
+        found: dict[str, list[dict]] = {}
+        if ids:
+            marks = ",".join("?" * len(ids))
+            for row in conn.execute(
+                    f"SELECT * FROM findings WHERE decision_id IN ({marks})", ids):
+                found.setdefault(row["decision_id"], []).append(dict(row))
+    finally:
+        conn.close()
+    decisions = []
+    for run in runs:
+        items = []
+        for row in sorted(found.get(run["decision_id"], ()),
+                          key=lambda item: (len(item["ref"]), item["ref"])):
+            verdict = latest.get((run["decision_id"], row["ref"]))
+            items.append({
+                "finding": row["ref"], "severity": row["severity"], "category": row["category"],
+                "location": location_label(row["file"], row["line"], row["line_end"]),
+                "claim": row["claim"],
+                "verdict": verdict["verdict"] if verdict else None,
+                "by": verdict["source"] if verdict else None,
+                "action": verdict["action"] if verdict else None,
+                "fix_verified": (None if verdict is None or verdict["fix_verified"] is None
+                                 else bool(verdict["fix_verified"]))})
+        decisions.append({"decision_id": run["decision_id"], "created_at": run["created_at"],
+                          "task_type": run["task_type"], "trigger": run["trigger"],
+                          "findings": items})
+    return decisions

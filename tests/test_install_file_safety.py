@@ -322,8 +322,7 @@ def _ansi_stdin(monkeypatch, payload: dict) -> None:
 def test_usage_hook_reads_a_cjk_path_from_utf8_bytes(monkeypatch, capsys, tmp_path):
     seen: list = []
     monkeypatch.setattr(usage_hook, "parse_claude_statusline_payload", lambda payload: seen.append(payload) or {})
-    monkeypatch.setattr(usage_hook, "retain_last_known_claude", lambda snapshot, target: snapshot)
-    monkeypatch.setattr(usage_hook, "write_usage_snapshot", lambda *a: None)
+    monkeypatch.setattr(usage_hook, "publish_claude_push", lambda target, snapshot: snapshot)
     monkeypatch.setattr(usage_hook, "status_line_text", lambda *a: "status")
     _ansi_stdin(monkeypatch, {"workspace": {"current_dir": "C:\\プロジェクト"}})
 

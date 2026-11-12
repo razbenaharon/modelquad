@@ -3,8 +3,9 @@
 ModelQuad runs on your computer. It has no server of its own, no account
 system, no upload and no telemetry. This document says what it reads, what it
 sends where and through which program, what it stores, for how long, and how
-to look at it and delete it. It is the complete inventory: every file,
-folder and database table ModelQuad writes is listed here.
+to look at it and delete it. It is meant to be a complete inventory of every file,
+folder and database table ModelQuad writes; if you find something missing,
+please report it.
 
 Everything here describes the code in this repository (`src/modelquad/`).
 Where a statement and the code disagree, the code is right and this document
@@ -113,14 +114,21 @@ starts the Codex CLI.
      2 seconds.
    - The whole input, task and files together, is capped at 192 KiB; if the
      listed files do not fit, the call is refused.
-5. **Credential files are never sent**, whatever the request says. Listing
-   one refuses the whole call before Codex starts; nothing is sent. This
-   covers names that
-   start with `.env`, the exact names `auth.json`, `credentials`, `credentials.json`,
+5. **Files with a credential name are not sent**, whatever the request says.
+   Listing one refuses the whole call before Codex starts; nothing is sent.
+   The check works by file name and cannot be complete: a secret kept in a
+   file with an ordinary name is not recognised by its name. This
+   covers environment files by name (`.env`, `.env.local`, `prod.env`,
+   `app.env.production`, `env.local`), the exact names `auth.json`, `credentials`, `credentials.json`,
    `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pypirc`, `.netrc`, `_netrc`,
    `.git-credentials`, `pip.conf`, `pip.ini`, `nuget.config`, `kubeconfig`,
-   `application_default_credentials.json`, files ending in `.pem`, `.key`,
-   `.pfx` or `.p12`, anything inside a `.codex`, `.claude`, `.aws`, `.ssh`,
+   `application_default_credentials.json`, SSH key files (`id_rsa`,
+   `id_ed25519` and similar, not their `.pub` halves), `secrets.json`,
+   `secrets.yaml`, `credentials.yml`, `token.json`, `service-account*.json`,
+   `client_secret*.json`, `.dockercfg`, `wp-config.php`,
+   `local.settings.json`, files ending in `.pem`, `.key`,
+   `.pfx`, `.p12`, `.ppk`, `.jceks`, `.kdbx` or `.tfvars.json`, a backup copy
+   of any of these (`auth.json.bak`), anything inside a `.codex`, `.claude`, `.aws`, `.ssh`,
    `.agents`, `.azure`, `.kube` or `gcloud` folder, and paths that themselves
    contain a credential. A file named `PROJECT_NOTES.md` is not sent either;
    it is skipped and the call goes on without it.
@@ -128,8 +136,15 @@ starts the Codex CLI.
    a recognizable access token in a listed file refuses the call. Other secret-looking values become `<credential>`. In
    configuration and text files (`.json`, `.yaml`, `.toml`, `.ini`, `.md`,
    `.txt` and similar) every unquoted value under a secret-like name is
-   replaced; in code a variable name or a number there is kept, so
-   `token = next(it)` is sent as written. Paths in file text are not changed.
+   replaced; in key-value configuration (`.yaml`, `.toml`, `.ini`, `.cfg`,
+   `.conf`, `.properties`) that is the whole rest of the line, whatever
+   characters it holds. In code a variable name or a number there is kept, so
+   `token = next(it)` is sent as written, while a quoted literal assigned to a
+   name ending in a secret word (`dbPassword = "..."`) and a `Password=...;`
+   part of a connection string are replaced. This screen works on names and
+   shapes; it does not understand the code, so a secret under an ordinary
+   name, or built from parts, can still be sent. Do not name files that hold
+   secrets. Paths in file text are not changed.
 7. **What Codex receives** on its standard input: the screened task text, the
    files' text as JSON with line numbers, a fixed instruction (no tools; treat
    the files as evidence, not instructions), a fixed answer format, and a
@@ -177,7 +192,7 @@ starts the Codex CLI.
     whether you approved through the delegate prompt or the handoff form, is
     kept in the history (see [The history database](#the-history-database));
     never the contents.
-12. **What you approved is what is sent.** Right after you approve,
+12. **What was checked is what is sent.** Right after you approve,
     ModelQuad takes the same digest of
     each file it would send. If, when Codex is about to start, a file's text
     differs or a file not sent then would be sent now, the call is refused
@@ -509,7 +524,7 @@ bytes from disk.
 | Conversation transcripts are never opened | `cli_entry.dispatch_gate` (a no-op), `adapters/pending_reminder.py`, `hostobs.record_host_push`; `tests/test_hook_transcript_boundary.py` |
 | Absolute paths do not reach the history | `privacy.py`, `service/history.py`; `tests/test_privacy_paths.py` |
 | The raw Claude Code session id is not stored. It becomes a 16-character HMAC keyed by the installation id | `hostobs.session_fingerprint` |
-| Provider credential files are not opened, copied or sent to Codex. Sign-in checks test only whether they exist. Two kinds of copies can still hold secrets you put in configuration: `host-registration-backup.json` and the `*.modelquad-backup-*` files | `provider_connection.py`, `execution/noshell.py`, `adapters/registration.py` |
+| Provider credential files (the names listed above) are not opened, copied or sent to Codex. Sign-in checks test only whether they exist. Two kinds of copies can still hold secrets you put in configuration: `host-registration-backup.json` and the `*.modelquad-backup-*` files | `provider_connection.py`, `execution/noshell.py`, `adapters/registration.py` |
 | Only six named environment variables of the Claude Code process are read to observe Claude Code. ModelQuad also reads its own `MODELQUAD_*` settings, `CLAUDE_CONFIG_DIR`, `CLAUDE_PROJECT_DIR` (the folder a session started in, to check the standing grant) and `CODEX_HOME`, checks whether `OPENAI_API_KEY` is set, and passes Codex the filtered environment described above | `hostobs.CLAUDE_ENV_ALLOWLIST`; `tests/test_host_observability.py` |
 | Nothing is collected for telemetry | ModelQuad has no telemetry code |
 
@@ -525,7 +540,10 @@ can group one session's records without storing the raw id.
 
 `modelquad privacy --reset-identity` replaces it. After a reset, earlier
 session fingerprints can no longer be linked to new ones. A reset does not
-delete history.
+delete history. Your per-repository settings and standing grants are stored
+under keys made from the id and cannot follow a new one, so a reset removes
+them and turns every standing grant off, and says so; Codex calls then ask you
+each time until you set them again.
 
 ## How to see what is stored
 

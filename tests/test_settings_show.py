@@ -179,7 +179,7 @@ def test_history_line_counts_and_unknowns(tmp_path, capsys, monkeypatch):
                                            "evidence": "code_reading", "action": "no_change"}],
                                   source="claude")
     line = next(text for text in _show(capsys, repo, db).splitlines() if text.startswith("3."))
-    assert "2 Codex call(s), 2 finding(s): 1 confirmed (1 by Claude's reading only, not proof)" in line
+    assert "2 Codex call(s), 2 answered, 2 finding(s): 1 confirmed (1 by Claude's reading only, not proof)" in line
     assert "0 refuted" in line and "1 not judged yet" in line
     assert "findings unknown for 1 answer(s)" in line
     # Another project's history is not this one's.

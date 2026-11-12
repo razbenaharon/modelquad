@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 import stat
 from typing import Any, Callable
 
@@ -233,6 +234,7 @@ class StagedJson(StagedText):
     Written back with the user's own key order and characters
     (``ensure_ascii=False``, no key sorting): these files belong to the user
     and the host, and a rewrite should differ only where ModelQuad changed it.
+    The one exception is a lone surrogate, which is written as its escape.
     """
 
     payload: dict[str, Any] | None = None
@@ -261,4 +263,14 @@ class StagedJson(StagedText):
     def render(self) -> bytes | None:
         if self.refusal is not None or self.payload is None or self.payload == self._baseline:
             return None
-        return (json.dumps(self.payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+        text = json.dumps(self.payload, indent=2, ensure_ascii=False) + "\n"
+        # Half of a surrogate pair ("\ud83d", what a JavaScript host writes for
+        # an emoji it cut in two) is valid JSON as an escape, and UTF-8 has no
+        # bytes for it. Once parsed, a surrogate code point is always a lone
+        # one and sits inside a JSON string, so it goes back as that escape.
+        return _LONE_SURROGATE.sub(
+            lambda match: f"\\u{ord(match.group()):04x}", text
+        ).encode("utf-8")
+
+
+_LONE_SURROGATE = re.compile("[\\ud800-\\udfff]")

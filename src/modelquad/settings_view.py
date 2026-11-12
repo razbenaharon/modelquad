@@ -113,11 +113,16 @@ def _history_line(folder: Path) -> str:
                                     workspace=review_ledger.workspace_id(folder))
     except (OSError, sqlite3.Error, review_ledger.LedgerVersionError):
         return "3. History here: unknown (the review ledger could not be read)."
-    if not data["runs"]:
-        return f"3. History here: no Codex calls in the last {HISTORY_DAYS} days."
+    # The same counts as modelquad review report: a Codex call is one in which Codex was
+    # started; a call stopped before that is named apart, never counted as a call.
+    stopped = (f" ({data['not_started']} more stopped before Codex started)"
+               if data["not_started"] else "")
+    if not data["codex_started"]:
+        return f"3. History here: no Codex calls in the last {HISTORY_DAYS} days{stopped}."
     f = data["findings"]
     confirmed = f["confirmed_independent"] + f["confirmed_claude_only"]
-    text = (f"3. History here, last {HISTORY_DAYS} days: {data['runs']} Codex call(s), "
+    text = (f"3. History here, last {HISTORY_DAYS} days: {data['codex_started']} Codex call(s), "
+            f"{data['answered']} answered{stopped}, "
             f"{f['findings']} finding(s): {confirmed} confirmed")
     if f["confirmed_claude_only"]:
         text += f" ({f['confirmed_claude_only']} by Claude's reading only, not proof)"

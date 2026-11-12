@@ -50,8 +50,8 @@ Claude keeps doing the work; Codex only reads and advises.
    automatic in `/modelquad:settings`), Claude asks Codex without a prompt
    for each call. Without it, Claude Code asks you before each call and shows
    the task and the files.
-3. ModelQuad reads only the files the call names, skips credential files and
-   replaces secret-looking values, and gives the text to your Codex CLI. Codex
+3. ModelQuad reads only the files the call names, refuses a call that names a
+   credential file, replaces secret-looking values, and gives the text to your Codex CLI. Codex
    runs read-only in an empty temporary folder, with no file, command, web or
    MCP tools.
 4. Codex's findings come back to Claude as input to check, not as a verified
@@ -119,7 +119,8 @@ In short:
   `modelquad review report`.
 - **Optional background jobs.** With the local service running and background
   work turned on (off by default), a delegated task keeps running after you
-  close the chat. Answers are kept for 7 days by default.
+  close the chat. Answers are kept for 7 days by default;
+  `modelquad jobs clear --yes` deletes the saved answers.
 
 ## What it is not
 
@@ -222,9 +223,18 @@ In short:
   reproduction, CI or your own verdict), what Claude only agreed with, what
   was wrong, what was fixed and verified, and the time and tokens it took.
   `modelquad review verdict <decision_id> <F1> confirmed|refuted|undecidable`
-  records your own verdict, which outranks Claude's.
+  records your own verdict, which outranks Claude's (add `--fix-verified`
+  once you checked the fix yourself). `modelquad review report --findings`
+  lists recent calls with their decision id and each finding's id, place and
+  verdict.
+- With the grant, Claude consults Codex on its own even where you chose
+  `offer-only` or the repository's file says `on_request`; only `off` stops
+  it. Calls without a prompt are limited to the folder the session started
+  in: a call that names another folder is refused.
 - `modelquad settings auto off` turns it off; a session that started with
-  the grant refuses its next Codex call. `modelquad settings repo off
+  the grant refuses its next Codex call. Turning it off for one repository
+  while the grant for every folder is on changes nothing there, and the
+  command says so. `modelquad settings repo off
   [--project DIR]` and a `.modelquad.toml` that turns Codex off outrank the grant.
 - In a terminal, `modelquad_handoff` then shows the handoff form. Codex starts
   only if you tick the box and accept. In the desktop app's Code tab, which
@@ -251,15 +261,19 @@ it and why, in a fixed reason: steps that edit files or run commands are
 always Claude's, because Codex through ModelQuad is read-only. A review of
 Claude's own change, or another opinion that should not come from Claude, can
 be proposed for Codex. The proposal starts nothing. Each Codex step is its own
-call, with Claude Code's approval prompt when it runs (or under the standing
-grant, if you turned it on); there is no way to approve the whole plan at
-once. What decides first is the kind of step, your repository setting and the
+call. Without the standing grant, Claude Code shows its approval prompt when
+the step runs, and there is no way to approve the whole plan at once. With
+the standing grant, Claude makes that call on its own, without a prompt, and
+the reply says so. What decides first is the kind of step, your repository setting and the
 repository's `.modelquad.toml`. Quota can then move one kind of step: when
 Claude's current reading is at 80% of its 5-hour window or 90% of its weekly
 window, and both of Codex's current readings are under 90%, a medium or large
 read-only step that would have been Claude's is proposed for Codex, and the
-reply says so with the numbers. A missing or old reading on either side moves
-nothing, and a small step never moves. Steps that edit files or run commands
+reply says so with the numbers. Quota alone never starts a task: it only
+changes who takes a read-only step of a task you asked for, and under the
+standing grant that step then goes to Codex without a further prompt. A
+missing or old reading on either side moves nothing, and a small step never
+moves. Steps that edit files or run commands
 stay with Claude. The account kind of each plan is shown beside the proposal
 and never changes it. ModelQuad has no measurement that this division
 improves results or changes how much of either plan you use; the calls made
@@ -555,7 +569,7 @@ the file.
    anything an earlier version added that install had not yet taken back (the
    `CLAUDE.md` block, the `PreToolUse` hook, the global timeout setting if
    ModelQuad set it and you did not change it). When the `statusLine` object
-   holds only what ModelQuad wrote, the whole object goes. Uninstall puts back
+   holds only what ModelQuad wrote, the whole object goes. A `modelquad` entry that is not ModelQuad's own is left in place. Uninstall puts back
    a `modelquad` entry that install replaced. Use `--dry-run` to preview.
    `modelquad integrations off` removes the same wiring without putting back
    an earlier entry, and refuses later installs until
@@ -583,8 +597,8 @@ the file.
   own code makes neither, see [NETWORK.md](https://github.com/razbenaharon/modelquad/blob/main/NETWORK.md)). `modelquad network`
   shows the rule.
 - For a Codex call, ModelQuad reads the files the request names, inside the
-  working folder only. It skips credential files such as `.env` and
-  `auth.json`, replaces secret-looking values with `<credential>`, and refuses,
+  working folder only. It refuses a call that names a credential file such as
+  `.env` or `auth.json` (the check is by file name and cannot be complete), replaces secret-looking values with `<credential>`, and refuses,
   with a reason, text that holds a private key or a recognizable access token.
   Your Codex CLI then sends the task and that text to OpenAI, under OpenAI's
   terms.
@@ -599,8 +613,9 @@ the file.
   except its listener check needs the installation secret.
 - Answers waiting to be collected are kept for 7 days by default. History
   stays until you delete it.
-- **Model training.** Each provider's terms forbid using its output to train
-  models that compete with it, and ModelQuad passes text in both directions.
+- **Model training.** OpenAI's terms forbid using its output to develop
+  competing models, and Anthropic's forbid using Claude to train AI models or
+  build competing products. ModelQuad passes text in both directions.
   Turn off model training in your ChatGPT data controls and in your Claude
   privacy settings while you use ModelQuad, and do not use its answers or
   history as training data. Opting out does not cover feedback you submit or
@@ -634,7 +649,7 @@ Anthropic.
 
 ModelQuad is an independent project. It is not affiliated with, endorsed by
 or sponsored by Anthropic or OpenAI. "Claude" and "Claude Code" are
-trademarks of Anthropic. "OpenAI" and "Codex" are trademarks of OpenAI.
+trademarks of Anthropic. "OpenAI", "ChatGPT" and "Codex" are trademarks of OpenAI.
 
 The code is open source; the ModelQuad name and logo are not part of the
 licence. A changed version needs a name of its own. See
@@ -643,6 +658,9 @@ licence. A changed version needs a name of its own. See
 <!-- disclaimer: owner review 2026-11-03; re-read provider terms before each release -->
 
 ## Provider terms and your account
+
+This section describes the tool. It is not legal advice, and neither provider
+has approved ModelQuad.
 
 - ModelQuad runs Anthropic's Claude Code and OpenAI's Codex CLI under your own
   accounts. Your use of each is governed by that provider's terms and usage
@@ -663,8 +681,9 @@ licence. A changed version needs a name of its own. See
 - Text you send through Codex goes to OpenAI, and Codex's answer goes to
   Anthropic as part of your conversation. If the code belongs to an employer
   or a client, check that you may send it to both.
-- Each provider's terms forbid using its output to train models that compete
-  with it. Turn off model training with both while you use ModelQuad, and do
+- OpenAI's terms forbid using its output to develop competing models, and
+  Anthropic's forbid using Claude to train AI models or build competing
+  products. Turn off model training with both while you use ModelQuad, and do
   not use ModelQuad's answers or history as training data.
 - Codex's answers can be wrong, and code in them may be subject to third-party
   licences. Check them before you rely on them.

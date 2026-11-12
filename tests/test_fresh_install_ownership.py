@@ -294,7 +294,10 @@ def test_negative_control_unconditional_deletion_is_caught(
 
     _uninstall(claude_home)
 
-    assert _read_registration(claude_home) is None, (
-        "with the ownership step disabled the user's value IS destroyed -- "
-        "which is what case 2 proves no longer happens"
+    # This used to be the negative control (the value was destroyed). The
+    # adapter itself now leaves an entry that is not recognisably ModelQuad's
+    # in place, so the user's value is protected twice.
+    assert _read_registration(claude_home) == users_own, (
+        "the adapter must leave a foreign entry in place on its own, "
+        "whatever the ownership step does"
     )

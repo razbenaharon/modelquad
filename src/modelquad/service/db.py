@@ -307,6 +307,18 @@ class PreReleaseDatabase(sqlite3.DatabaseError):
         self.version = version
 
 
+class NewerDatabase(sqlite3.DatabaseError):
+    """A history database written by a newer ModelQuad, which this build must not write."""
+
+    def __init__(self, version: int) -> None:
+        super().__init__(
+            f"This history database was written by a newer ModelQuad (schema version {version}; "
+            f"this build reads version {SCHEMA_VERSION}). Update ModelQuad, or move the database "
+            "aside and ModelQuad will create a new one."
+        )
+        self.version = version
+
+
 def connect(path: str | Path) -> sqlite3.Connection:
     """Open (creating parent directories as needed) a WAL-mode connection."""
 
@@ -331,8 +343,10 @@ def init_db(conn: sqlite3.Connection) -> None:
         if conn.in_transaction:
             conn.commit()
         current_version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if current_version >= SCHEMA_VERSION:
+        if current_version == SCHEMA_VERSION:
             return
+        if current_version > SCHEMA_VERSION:
+            raise NewerDatabase(current_version)
         if current_version != 0:
             raise PreReleaseDatabase(current_version)
         # Every statement uses IF NOT EXISTS, so concurrent creation is idempotent.

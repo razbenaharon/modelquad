@@ -40,7 +40,7 @@ from ..execution.bound_launch import (
     run_bound_delegation,
 )
 from ..execution.base import CallerWaitHandle, WORKER_ENV_VAR
-from ..assistance import handoff_suggestion, statusline_text
+from ..assistance import handoff_suggestion, shown_status, statusline_text
 from ..models import ExpectedConsumption
 from ..hostobs import (
     HostDecisionSnapshot,
@@ -128,6 +128,8 @@ _STANDING_GRANT = _grant.active_at_start()
 #: Without a standing grant, Claude Code shows its approval prompt for every
 #: call (AGENTS.md invariant 7); with one, its ordinary permissions apply.
 _DELEGATE_META = None if _STANDING_GRANT else {"anthropic/requiresUserInteraction": True}
+#: The folder this session started in. Calls without the per-call prompt stay inside it.
+_SESSION_PROJECT = _grant.session_project()
 
 #: Tools that only read local state. Claude Code may run these in parallel and
 #: retry them after a dropped connection. Never give this to a tool that starts
@@ -357,7 +359,50 @@ async def _delegate_heartbeat(progress: _DelegateProgress, started_at: float) ->
         await progress.report(f"Codex is working ({elapsed}s)")
 
 
+def _only_error(group: BaseException) -> BaseException:
+    """The one real error inside a task group's wrapper; the wrapper itself when there are several."""
+    error = group
+    while isinstance(error, BaseExceptionGroup) and len(error.exceptions) == 1:
+        error = error.exceptions[0]
+    return group if isinstance(error, BaseExceptionGroup) else error
+
+
 async def _delegate_observing_the_caller(
+    call: Any, handle: CallerWaitHandle, progress: _DelegateProgress | None = None,
+) -> Any:
+    """``_observe_the_caller``, raising the delegation's own error.
+
+    The task group there wraps whatever the delegation raises, so the caller
+    would read "unhandled errors in a TaskGroup" in place of the cause. A
+    cancellation is not wrapped and passes through untouched.
+    """
+    try:
+        return await _observe_the_caller(call, handle, progress)
+    except BaseExceptionGroup as group:
+        raise _only_error(group) from None
+
+
+def _delegate_error(error: Exception) -> ToolError:
+    """What Claude reads when a delegate call raised: the cause, without a path or a traceback.
+
+    A problem with the arguments (a ValueError or TypeError, such as a
+    capsule without a goal) is said as it is, so Claude can correct the call.
+    Anything else names only the kind of error.
+    """
+    if isinstance(error, ToolError):
+        return error
+    if isinstance(error, (ValueError, TypeError)):
+        from ..privacy import redact_paths
+
+        text = " ".join(redact_paths(str(error)).split())[:300] or "an argument is not valid"
+        return ToolError(f"Codex was not started: the request is not valid ({text}). "
+                         "Correct it and call again.")
+    return ToolError(f"Codex was not started or did not finish: ModelQuad hit an internal error "
+                     f"({type(error).__name__}). Nothing else was started. If it repeats, run: "
+                     "modelquad doctor")
+
+
+async def _observe_the_caller(
     call: Any, handle: CallerWaitHandle, progress: _DelegateProgress | None = None,
 ) -> Any:
     """Run one blocking delegation on a worker thread, watching for the caller to leave.
@@ -548,19 +593,14 @@ def _provider_status_payload(
     files = _usage_files(usage_directory, providers)
     # Do not disclose provider plans, raw collector metadata, or local source
     # paths to an MCP client.  They are implementation evidence, not status.
-    def public(status):
-        view = status.to_dict()
-        view["reason"] = _redact_local_paths(view.get("reason"), files)
-        return {key: view.get(key) for key in (
-            "name", "available", "remaining_percentage", "observed_at", "freshness", "reason",
-        )} | {"windows": [
-            {"window": window.window, "remaining_percentage": window.remaining_percentage,
-             "used_percentage": window.used_percentage,
-             "reset_at": window.reset_at.isoformat() if window.reset_at else None,
-             "freshness": window.freshness.value if window.freshness else "unknown"}
-            for window in __import__("modelquad.quota_windows", fromlist=["reported_windows"]).reported_windows(status)
-        ]}
     now = datetime.now(timezone.utc)
+
+    def public(status):
+        # The same view as the status line: no figure for a window that has
+        # reset since the reading, or for a reading whose time is not trusted.
+        view = shown_status(status, config.freshness, now=now)
+        view["reason"] = _redact_local_paths(view.get("reason"), files)
+        return view
     return {
         "providers": [public(status) for status in statuses],
         "summary": statusline_text(statuses, config.freshness, now=now),
@@ -1564,7 +1604,18 @@ def _split_reply(working_directory: str, steps: list) -> dict:
     return split.propose(checked, router=Router(config), statuses=statuses,
                          thresholds=config.freshness, now=datetime.now(timezone.utc),
                          plan_views=views, policy=policy, user_mode=user_mode,
-                         global_proactive=read_proactive(), codex_paused=paused)
+                         global_proactive=read_proactive(), codex_paused=paused,
+                         standing=_runs_without_prompt(working_directory))
+
+
+def _runs_without_prompt(working_directory: str) -> bool:
+    """Whether a Codex call for this folder would run under the standing grant, unprompted."""
+    try:
+        return bool(_STANDING_GRANT and not _worker_refused()
+                    and _grant.allows(working_directory)
+                    and _grant.inside_session_project(working_directory, _SESSION_PROJECT))
+    except Exception:  # noqa: BLE001 -- unknown: say the prompt will show
+        return False
 
 
 @server.tool(title="Propose who does each step", annotations=READ_ONLY)
@@ -1575,7 +1626,8 @@ def modelquad_split(
     """Show the user a proposed division of a task of several steps between Claude
     and Codex. It starts nothing. Steps that edit files or run commands stay with
     Claude; Codex can take only read-only review, exploration or architecture
-    steps, and each Codex step is its own call that asks the user when it runs.
+    steps, and each Codex step is its own call: it asks the user when it runs, or
+    runs without a prompt under their standing grant (the reply says which).
     When Claude's fresh quota reading is near its limit and Codex's fresh readings
     show room, a medium or large read-only step may be proposed for Codex; pass
     that step's `trigger` to modelquad_delegate. Plans never change the proposal."""
@@ -1847,6 +1899,33 @@ def _record_review(payload: dict[str, Any], working_directory: str, task_type: s
         payload["findings_note"] = FINDINGS_NOTE
 
 
+OUTPUT_CUT_MARKER = (
+    "\n\n[ModelQuad cut this answer here: the first {shown} of {whole} characters are shown. "
+    "Ask Codex for a shorter answer, or split the request.]")
+
+
+def _cap_shown_output(payload: dict[str, Any]) -> None:
+    """Cut a very long answer to the shown length, in the text and the data alike, and say so."""
+    from .jobs_tools import MAX_SHOWN_OUTPUT_CHARS
+
+    output = payload.get("output")
+    if not isinstance(output, str) or len(output) <= MAX_SHOWN_OUTPUT_CHARS:
+        return
+    payload["output"] = output[:MAX_SHOWN_OUTPUT_CHARS] + OUTPUT_CUT_MARKER.format(
+        shown=MAX_SHOWN_OUTPUT_CHARS, whole=len(output))
+    payload["output_truncated"] = True
+    payload["output_chars"] = len(output)
+
+
+async def _delegate_reporting_errors(call: Any, handle: CallerWaitHandle,
+                                     progress: _DelegateProgress | None = None) -> Any:
+    """The delegation, with an error it raised turned into one plain sentence for Claude."""
+    try:
+        return await _delegate_observing_the_caller(call, handle, progress)
+    except Exception as error:  # noqa: BLE001 -- a cancellation is not an Exception and passes
+        raise _delegate_error(error) from None
+
+
 def _delegate_completion_notice(payload: dict[str, Any]) -> str:
     """Return a closed, content-free terminal phase for one inline call.
 
@@ -1896,6 +1975,19 @@ async def modelquad_delegate(
         return _refused_result({"delegated": False, "executed": False, "refused": True,
                                 "started": False, "recorded": False,
                                 "reason": _grant.NO_GRANT, "message": _grant.NO_GRANT_MESSAGE})
+    if (_STANDING_GRANT and not _worker_refused()
+            and not _grant.inside_session_project(working_directory, _SESSION_PROJECT)):
+        # No prompt shows the user which folder is read, so the model cannot
+        # point a call at a folder the session did not start in.
+        return _refused_result({"delegated": False, "executed": False, "refused": True,
+                                "started": False, "recorded": False,
+                                "reason": _grant.OTHER_FOLDER, "message": _grant.OTHER_FOLDER_MESSAGE})
+    # A request that cannot be used at all (no such folder, a model name that
+    # is not one) is answered here, as that, before the notice or anything else.
+    unusable = None if _worker_refused() else _unusable_request(
+        working_directory, prompt if capsule is None else None, model, reasoning_effort)
+    if unusable is not None:
+        return unusable
     first = _notice_before_first_call(task_type, working_directory, files)
     if first is not None:
         return first
@@ -1916,7 +2008,7 @@ async def modelquad_delegate(
     handle = CallerWaitHandle()
     started_at = time.monotonic()
     with _runner_notifications(ctx) as progress:
-        payload = await _delegate_observing_the_caller(
+        payload = await _delegate_reporting_errors(
             functools.partial(
                 _delegate_payload,
                 task_type,
@@ -1951,7 +2043,16 @@ async def modelquad_delegate(
     if "job_id" not in payload:
         _record_review(payload, working_directory, task_type, trigger,
                        round(time.monotonic() - started_at, 1))
+        # After the ledger read the whole answer: one cap for the text and the data.
+        _cap_shown_output(payload)
     if "job_id" in payload:
+        if "receipt" in payload:
+            # A job that finished within this call already carries its answer:
+            # it goes to the review ledger like any collected answer.
+            from .jobs_tools import record_collected_review
+
+            payload = record_collected_review(payload, working_directory,
+                                              task_type=task_type, trigger=trigger)
         # A job response has its own evidence shape. Legacy presentation
         # expects process fields that the output seam deliberately cannot claim.
         return CallToolResult(content=[
@@ -1973,11 +2074,9 @@ async def modelquad_delegate(
                                                  "sent_files", "skipped_files", "codex_account",
                                                  "suggested_files", "files_needed",
                                                  "files_needed_note", "decision_id", "findings",
-                                                 "findings_note")
+                                                 "findings_note", "output_truncated",
+                                                 "output_chars")
                if key in payload}
-    if isinstance(visible.get("output"), str):
-        from .jobs_tools import MAX_SHOWN_OUTPUT_CHARS
-        visible["output"] = visible["output"][:MAX_SHOWN_OUTPUT_CHARS]
     result.content.append(TextContent(type="text", text=json.dumps(visible)))
     return result
 
@@ -2015,11 +2114,15 @@ def modelquad_review_verdict(
     if _worker_refused():
         raise ToolError("a worker does not record review verdicts")
     try:
-        count = review_ledger.record_verdicts(decision_id, [item.model_dump() for item in verdicts],
-                                              source="claude")
+        kept = review_ledger.record_verdicts_detail(
+            decision_id, [item.model_dump() for item in verdicts], source="claude")
     except review_ledger.VerdictRefused as exc:
         raise ToolError(str(exc)) from None
-    payload = {"recorded": count, "decision_id": decision_id}
+    payload = {"recorded": kept["recorded"], "decision_id": decision_id}
+    if kept["ignored"]:
+        # Never a silent drop: the user's verdict stands, and Claude is told which were not kept.
+        payload["not_recorded"] = kept["ignored"]
+        payload["note"] = kept["note"]
     return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload))],
                           structured_content=payload)
 
@@ -2048,6 +2151,42 @@ NOT_STARTED = "Codex was not started."
 
 def _refused_result(payload: dict) -> CallToolResult:
     return _plain_result(payload, [NOT_STARTED, refusal_line(payload)])
+
+
+def _unusable_request(working_directory: Any, prompt: Any, model: Any,
+                      reasoning_effort: Any) -> CallToolResult | None:
+    """A refusal for a request that cannot be used at all, before anything starts; None to go on.
+
+    A folder that does not exist, a file given as the folder, an empty task
+    text, or a model or reasoning effort that is not one: Codex is not
+    started, and the reply names the problem. Nothing is recorded, so no path
+    reaches the stored history. Runs after ``_unusable_directory``, so the
+    folder is local and may be looked at.
+    """
+    from ..codex_config import safe_model_id
+    from ..execution.codex import VALID_REASONING_EFFORTS
+
+    reason = None
+    try:
+        folder = Path(working_directory)
+        if not folder.exists():
+            reason = "working_directory_missing"
+        elif not folder.is_dir():
+            reason = "working_directory_not_a_folder"
+    except (OSError, ValueError, TypeError):
+        reason = "working_directory_missing"
+    # With a capsule the task text may be in the capsule; the delegation checks that itself.
+    if reason is None and prompt is not None and (not isinstance(prompt, str) or not prompt.strip()):
+        reason = "prompt_empty"
+    if reason is None and model is not None and safe_model_id(model) != model:
+        reason = "model_not_valid"
+    if reason is None and reasoning_effort is not None \
+            and reasoning_effort not in VALID_REASONING_EFFORTS:
+        reason = "reasoning_effort_not_valid"
+    if reason is None:
+        return None
+    return _refused_result({"delegated": False, "executed": False, "refused": True,
+                            "started": False, "recorded": False, "reason": reason})
 
 
 NOTICE_FIRST_NEXT = (
@@ -2588,6 +2727,10 @@ def modelquad_activity(
     provider's percentage points used in each of its own windows, never
     added together. ModelQuad does not measure Claude's own work.
     """
+    if type(limit) is not int or limit < 1:
+        # Zero or a negative limit would read as "nothing recorded" although rows exist.
+        return _plain_result({"error": "limit_invalid"},
+                             ["limit must be a whole number, 1 or more. Nothing was read."])
     key = None
     if project_directory is not None:
         from ..adapters.pending_reminder import project_key

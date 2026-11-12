@@ -150,7 +150,7 @@ def test_the_cli_report_says_what_is_proof(tmp_path, capsys, monkeypatch):
     assert cli.main(["review", "report"]) == 0
     out = capsys.readouterr().out
     assert "Confirmed with independent evidence" in out and "not proof" in out
-    assert "Calls: 1 (answered 1)" in out
+    assert "Codex calls (Codex was started): 1 (answered 1)" in out
     assert cli.main(["review", "verdict", "d-1", "F7", "refuted"]) == 2
 
 
@@ -291,3 +291,188 @@ def test_the_delegate_tool_records_the_split_quota_trigger(tmp_path):
     assert rl.report(workspace=rl.workspace_id(tmp_path))["runs_by_trigger"] == {
         "split_quota": 1, "claude": 1}
     assert "split_quota" in mcp.modelquad_delegate.__doc__
+
+
+# ------------------------------------------------- one definition of a call's outcome
+
+
+@pytest.mark.parametrize("payload, outcome", [
+    ({"output": "An answer.", "metadata": {"worker_started": True}}, rl.ANSWERED),
+    ({"output": "An answer."}, rl.ANSWERED),
+    # Codex ran and nothing usable came back: started, not answered.
+    ({"output": "", "metadata": {"worker_started": True}}, rl.FAILED),
+    ({"output": "  \n", "metadata": {"worker_started": True}}, rl.FAILED),
+    ({"output": "", "reason": "noshell_violated", "metadata": {"worker_started": True}}, rl.WITHHELD),
+    ({"refused": True, "started": True}, rl.WITHHELD),
+    ({"refused": True, "reason": "worker_noshell_unavailable"}, rl.FAILED),
+    # A rule or a setting refused it before Codex started.
+    ({"refused": True, "started": False, "reason": "routing_refused"}, rl.REFUSED),
+    ({"refused": True, "reason": "repo_policy_codex_off"}, rl.REFUSED),
+    ({"refused": True, "reason": "supplied_file_secret"}, rl.REFUSED),
+    # The request itself could not be used: never started, and not a Codex failure.
+    ({"refused": True, "reason": "supplied_file_missing", "output": ""}, rl.NOT_STARTED),
+    ({"output": "", "task_status": "failed", "reason": "invalid_request"}, rl.NOT_STARTED),
+    ({"refused": True, "started": False, "reason": "working_directory_missing"}, rl.NOT_STARTED),
+    ({"refused": True, "started": False, "reason": "model_not_valid"}, rl.NOT_STARTED),
+])
+def test_one_function_names_how_a_call_ended(payload, outcome):
+    assert rl._outcome(payload) == outcome
+    assert outcome in rl.CALL_OUTCOMES
+
+
+def test_only_started_calls_are_codex_calls_in_the_report(tmp_path):
+    db = tmp_path / "ledger.db"
+    calls = [
+        {"decision_id": "s-1", "output": ANSWER, "metadata": {"worker_started": True}},
+        {"decision_id": "s-2", "output": "Looks fine.", "metadata": {"worker_started": True}},
+        {"decision_id": "s-3", "output": "", "metadata": {"worker_started": True}},
+        {"decision_id": "s-4", "refused": True, "reason": "supplied_file_missing", "output": ""},
+        {"decision_id": "s-5", "refused": True, "reason": "routing_refused"},
+        {"decision_id": "s-6", "output": "", "reason": "invalid_request"},
+        {"decision_id": "s-7", "output": "", "reason": "noshell_violated",
+         "metadata": {"worker_started": True}},
+    ]
+    for payload in calls:
+        rl.record_run(payload, working_directory=tmp_path, task_type="review", trigger="claude", path=db)
+    data = rl.report(path=db)
+    assert data["runs_by_outcome"] == {"answered": 2, "failed": 1, "withheld": 1, "refused": 1,
+                                       "not_started": 2}
+    assert data["runs"] == 7 and data["codex_started"] == 4 and data["not_started"] == 3
+    assert data["answered"] == 2
+    # Only an answer can be "not in the findings format"; a refusal has no findings to miss.
+    assert data["runs_with_unknown_findings"] == 1
+
+    from modelquad import cli
+
+    lines = cli.review_report_lines(data)
+    assert ("  Codex calls (Codex was started): 4 (answered 2, not answered 1, "
+            "withheld (tool call seen) 1)") in lines
+    assert "  Stopped before Codex started: 3 (not started for another reason 2, refused 1)" in lines
+    assert any("Findings: 3 (and 1 answer(s) not in the findings format)" in line for line in lines)
+
+
+# ------------------------------------------- the user's verdict and Claude's fix progress
+
+
+def _one_finding(db):
+    rl.record_run(_payload(), working_directory=db.parent, task_type="review", trigger="claude", path=db)
+
+
+def _verdict(db, source, action, **extra):
+    item = {"finding": "F1", "verdict": "confirmed", "evidence": "test", "action": action, **extra}
+    return rl.record_verdicts_detail("d-1", [item], source=source, path=db)
+
+
+def test_fix_progress_after_the_users_verdict_is_kept(tmp_path):
+    db = tmp_path / "ledger.db"
+    _one_finding(db)
+    _verdict(db, "claude", "to_fix")
+    _verdict(db, "user", "to_fix", evidence="none")
+    kept = _verdict(db, "claude", "fixed", fix_verified=True)
+    assert kept == {"recorded": 1, "ignored": []}
+    counts = rl.report(path=db)["findings"]
+    assert counts["to_fix"] == 0 and counts["fixed"] == 1 and counts["fixed_and_verified"] == 1
+    # The verdict itself is still the user's.
+    assert counts["by_user"] == 1 and counts["confirmed_independent"] == 1
+    assert counts["confirmed_claude_only"] == 0
+
+
+def test_claude_cannot_override_the_users_verdict_and_is_told_so(tmp_path):
+    db = tmp_path / "ledger.db"
+    _one_finding(db)
+    rl.record_verdicts("d-1", [{"finding": "F1", "verdict": "refuted", "evidence": "none",
+                                "action": "no_change"}], source="user", path=db)
+    for item in ({"verdict": "confirmed", "evidence": "test", "action": "to_fix"},
+                 # "Fixed" on a finding the user refuted is not fix progress on a confirmed one.
+                 {"verdict": "confirmed", "evidence": "test", "action": "fixed", "fix_verified": True},
+                 {"verdict": "undecidable", "evidence": "none", "action": "deferred"}):
+        result = rl.record_verdicts_detail("d-1", [{"finding": "F1", **item}], source="claude", path=db)
+        assert result["recorded"] == 0 and result["ignored"] == ["F1"]
+        assert "user already gave a verdict on F1" in result["note"]
+        assert rl.record_verdicts("d-1", [{"finding": "F1", **item}], source="claude", path=db) == 0
+    counts = rl.report(path=db)["findings"]
+    assert counts["refuted"] == 1 and counts["confirmed_independent"] == 0 and counts["fixed"] == 0
+    # A finding the user did not judge is still Claude's to record, in the same call.
+    mixed = rl.record_verdicts_detail("d-1", [
+        {"finding": "F1", "verdict": "confirmed", "evidence": "test", "action": "to_fix"},
+        {"finding": "F2", "verdict": "confirmed", "evidence": "test", "action": "to_fix"}],
+        source="claude", path=db)
+    assert mixed["recorded"] == 1 and mixed["ignored"] == ["F1"]
+
+
+def test_the_verdict_tool_says_when_a_record_was_not_kept(tmp_path):
+    import importlib
+
+    server = importlib.import_module("modelquad.mcp.server")
+    rl.record_run(_payload(), working_directory=tmp_path, task_type="review", trigger="claude")
+    rl.record_verdicts("d-1", [{"finding": "F1", "verdict": "confirmed", "evidence": "none",
+                                "action": "to_fix"}], source="user")
+    tool = getattr(server.modelquad_review_verdict, "fn", None) or server.modelquad_review_verdict
+
+    def call(action, verdict="confirmed"):
+        return tool("d-1", [server.FindingVerdict(finding="F1", verdict=verdict, evidence="test",
+                                                  action=action, fix_verified=True)]).structured_content
+
+    dropped = call("no_change", verdict="refuted")
+    assert dropped["recorded"] == 0 and dropped["not_recorded"] == ["F1"] and "outranks" in dropped["note"]
+    kept = call("fixed")
+    assert kept == {"recorded": 1, "decision_id": "d-1"}
+    assert rl.report()["findings"]["fixed_and_verified"] == 1
+
+
+def test_the_user_can_record_a_verified_fix(tmp_path, capsys, monkeypatch):
+    from modelquad import cli
+
+    monkeypatch.chdir(tmp_path)
+    rl.record_run(_payload(), working_directory=tmp_path, task_type="review", trigger="claude")
+    assert cli.main(["review", "verdict", "d-1", "F1", "confirmed", "--fix-verified"]) == 0
+    counts = rl.report()["findings"]
+    assert counts["fixed"] == 1 and counts["fixed_and_verified"] == 1 and counts["by_user"] == 1
+
+
+# ------------------------------------------------------------ finding a decision id
+
+
+def test_the_findings_listing_gives_what_a_verdict_needs(tmp_path, capsys, monkeypatch):
+    import json
+
+    from modelquad import cli
+
+    monkeypatch.chdir(tmp_path)
+    rl.record_run(_payload(), working_directory=tmp_path, task_type="review", trigger="review_gate")
+    rl.record_run(_payload("d-2", "Looks fine."), working_directory=tmp_path, task_type="review",
+                  trigger="claude")
+    other = tmp_path / "other"
+    other.mkdir()
+    rl.record_run(_payload("d-3"), working_directory=other, task_type="review", trigger="claude")
+    rl.record_verdicts("d-1", [{"finding": "F2", "verdict": "refuted", "evidence": "none",
+                                "action": "no_change"}], source="user")
+
+    assert cli.main(["review", "report", "--findings"]) == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    # The id and the finding references, as `modelquad review verdict` takes them.
+    assert any(line.startswith("d-1  ") and line.endswith("  review") for line in lines)
+    assert any(line.startswith("  F1  high  invoicing/tax.py:7  [not judged yet]") for line in lines)
+    assert any(line.startswith("  F2  medium  invoicing/render.py:12  [refuted by you]") for line in lines)
+    # A call without findings, and another project's call, are not listed.
+    assert "d-2" not in out and "d-3" not in out
+    # Redacted like the rest of the ledger: no absolute path, no secret, no answer text.
+    assert "C:/Users" not in out and "hunter2" not in out and str(tmp_path) not in out
+    assert "Review of the discount change" not in out
+    assert "modelquad review verdict <decision_id> <F1>" in lines[-1]
+
+    assert cli.main(["review", "report", "--findings", "--json", "--all-projects"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert {item["decision_id"] for item in data["decisions"]} == {"d-1", "d-3"}
+    first = next(item for item in data["decisions"] if item["decision_id"] == "d-1")
+    assert [(item["finding"], item["location"], item["verdict"], item["by"])
+            for item in first["findings"]] == [
+        ("F1", "invoicing/tax.py:7", None, None),
+        ("F2", "invoicing/render.py:12", "refuted", "user"),
+        ("F3", "-", None, None)]
+
+    monkeypatch.chdir(other)
+    (other / "empty").mkdir()
+    assert cli.main(["review", "report", "--findings", "--project", str(other / "empty")]) == 0
+    assert "No Codex findings recorded in the last 30 days (this project)." in capsys.readouterr().out

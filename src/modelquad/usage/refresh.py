@@ -36,6 +36,7 @@ from .base import (
     claim_usage_refresh, release_usage_refresh,
     publish_usage_snapshot, valid_timestamp_epoch,
 )
+from ..providers.base import finite_float
 from .claude import CLAUDE_STATUSLINE_SOURCE
 
 
@@ -402,9 +403,7 @@ SNAPSHOT_FILENAMES = {
 
 
 def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    return float(value) if isinstance(value, (int, float)) else None
+    return finite_float(value) if isinstance(value, (int, float)) else None
 
 
 def _remaining_of(snapshot: Mapping[str, Any]) -> float | None:

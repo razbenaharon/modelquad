@@ -36,8 +36,13 @@ and review gate.
 
 A review (``modelquad_delegate`` with task_type review or trigger
 review_gate) that Codex answered starts the count again; one that was refused
-or failed marks the review failed. Any other answered call counts as the
-change's consultation. The hook never approves
+or failed, or that returned only the first-use notice, marks the review
+failed. A reply that is only the handle of a background job is neither: the
+review is pending, the gate does not ask for it again, and the user is told
+once that the change is not reviewed yet. Any other answered call counts as
+the change's consultation. A gate counts as used only once its message was
+written: a run that ran out of time before that leaves the gate as it was.
+The hook never approves
 or denies a tool call, never opens the transcript path Claude Code hands it,
 starts no process and never starts Codex.
 
@@ -112,17 +117,22 @@ GATE = (
     "not run Codex any other way.")
 NOT_DONE = ("ModelQuad: Codex did not review this change ({count} file(s)). The review gate "
             "asked for one and none was done.")
+#: The gate never asked (Claude was already continuing for a stop hook), so it says only that.
+NOT_REVIEWED = "ModelQuad: Codex did not review this change ({count} file(s))."
+PENDING = ("ModelQuad: the Codex review of this change ({count} file(s)) is still running in "
+           "the background, so the change has not been reviewed by Codex yet.")
 FAILED = ("ModelQuad: the Codex review of this change did not complete ({count} file(s)), "
           "so it was not reviewed by Codex.")
 
 _EMPTY = {"files": [], "reminders": 0, "edits_since": 0, "sensitive": False,
-          "consulted": False, "consult_gate": False, "consult_reminded": False,
-          "skip_logged": 0, "gate": "none", "review": "none"}
+          "consulted": False, "consult_pending": False, "consult_gate": False,
+          "consult_reminded": False, "skip_logged": 0, "gate": "none", "review": "none"}
 _CHANGE_RESET = {"files": [], "edits_since": 0, "reminders": 0, "sensitive": False,
-                 "consulted": False, "consult_gate": False, "consult_reminded": False,
-                 "skip_logged": 0, "gate": "none", "review": "none"}
+                 "consulted": False, "consult_pending": False, "consult_gate": False,
+                 "consult_reminded": False, "skip_logged": 0, "gate": "none", "review": "none"}
 _GATES = ("none", "blocked", "reported")
-_REVIEWS = ("none", "done", "fixups", "failed")
+#: ``pending``: a background job was started for the review and its answer has not been seen.
+_REVIEWS = ("none", "done", "fixups", "failed", "pending")
 _EVENTS = ("PostToolUse", "PreToolUse", "Stop")
 
 
@@ -199,6 +209,7 @@ def _load(path: Path) -> dict:
             "edits_since": _count(payload.get("edits_since")),
             "sensitive": payload.get("sensitive") is True,
             "consulted": payload.get("consulted") is True,
+            "consult_pending": payload.get("consult_pending") is True,
             "consult_gate": payload.get("consult_gate") is True,
             "consult_reminded": payload.get("consult_reminded") is True,
             "skip_logged": _count(payload.get("skip_logged")),
@@ -261,49 +272,85 @@ def _granted(cwd) -> bool:
     return grant.allows(cwd)
 
 
-_FAILED_HEADLINES = ("Codex was not started", "Codex answer withheld")
+_FAILED_HEADLINES = ("Codex was not started", "Codex answer withheld", "Codex did not finish",
+                     "Codex did not return in time")
+_PENDING_HEADLINE = "Codex is working on this in the background"
+_PRODUCT_PREFIX = "ModelQuad: "
+ANSWERED, PENDING_REPLY, NOT_ANSWERED = "answered", "pending", "failed"
 
 
 def _refused_payload(payload: dict) -> bool:
     return payload.get("refused") is True or payload.get("reason") == "no_standing_grant"
 
 
-def _review_failed(response) -> bool:
-    """Whether a modelquad_delegate reply says Codex did not answer.
-
-    Decided from the reply's data when the host passes it, otherwise from the
-    reply's first line only (the outcome line, ``server._plain_result``):
-    Codex's own answer text may quote a refusal marker, and that is no refusal.
-    """
+def _reply_data(response):
+    """(the reply's data or None, its first text or None)."""
     content = response
     if isinstance(response, dict):
         for key in ("structuredContent", "structured_content"):
             if isinstance(response.get(key), dict):
-                return _refused_payload(response[key])
+                return response[key], None
         content = response.get("content")
-    text = None
+    texts = []
     if isinstance(content, str):
-        text = content
+        texts = [content]
     elif isinstance(content, list):
-        text = next((block.get("text") for block in content if isinstance(block, dict)
-                     and block.get("type") == "text" and isinstance(block.get("text"), str)), None)
+        texts = [block["text"] for block in content if isinstance(block, dict)
+                 and block.get("type") == "text" and isinstance(block.get("text"), str)]
+    for text in texts:
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data, texts[0]
+    return None, (texts[0] if texts else None)
+
+
+def _reply_state(response) -> str:
+    """What a modelquad_delegate reply delivered: an answer, a pending job, or neither.
+
+    Decided from the reply's data when the host passes it, otherwise from the
+    reply's first line only (the outcome line, ``server._plain_result``):
+    Codex's own answer text may quote a refusal marker, and that is no refusal.
+    Only a reply that carries Codex's answer is ``answered``. The handle of a
+    background job is ``pending``: Codex has not answered yet. A refusal, the
+    first-use notice and a run without an answer are ``failed``.
+    """
+    data, text = _reply_data(response)
+    if data is not None:
+        if _refused_payload(data) or data.get("status") == "notice_first":
+            return NOT_ANSWERED
+        if "job_id" in data:
+            return PENDING_REPLY
+        if "output" in data:
+            output = data["output"]
+            return ANSWERED if isinstance(output, str) and output.strip() else NOT_ANSWERED
+        return ANSWERED
     if text is None:
         # A shape this hook does not know: the old whole-reply search, which
         # errs toward "failed".
         try:
             text = response if isinstance(response, str) else json.dumps(response)
         except (TypeError, ValueError):
-            return True
-        return any(marker in text for marker in (
-            '"refused": true', '"refused":true', *_FAILED_HEADLINES, "no_standing_grant"))
-    try:
-        data = json.loads(text)
-    except ValueError:
-        data = None
-    if isinstance(data, dict):
-        return _refused_payload(data)
+            return NOT_ANSWERED
+        if _PENDING_HEADLINE in text or '"job_id"' in text:
+            return PENDING_REPLY
+        failed = any(marker in text for marker in (
+            '"refused": true', '"refused":true', '"notice_first"', *_FAILED_HEADLINES,
+            "no_standing_grant"))
+        return NOT_ANSWERED if failed else ANSWERED
     first = text.strip().splitlines()[0] if text.strip() else ""
-    return any(first.startswith(marker) for marker in _FAILED_HEADLINES)
+    if first.startswith(_PRODUCT_PREFIX):
+        first = first[len(_PRODUCT_PREFIX):]
+    if first.startswith(_PENDING_HEADLINE):
+        return PENDING_REPLY
+    return NOT_ANSWERED if any(first.startswith(marker) for marker in _FAILED_HEADLINES) else ANSWERED
+
+
+def _review_failed(response) -> bool:
+    """Whether a modelquad_delegate reply says Codex did not answer (and none is pending)."""
+    return _reply_state(response) == NOT_ANSWERED
 
 
 def _is_review(tool_input) -> bool:
@@ -324,39 +371,47 @@ def _context(event_name: str, text: str) -> str:
                       separators=(",", ":")) + "\n"
 
 
-def _stop(event, payload, cwd, session, standing) -> str | None:
-    """The review gate's answer at Stop: a block, a message to the user, or None."""
+def _stop(event, payload, cwd, session, standing) -> tuple[str | None, str | None]:
+    """The review gate's answer at Stop, and the gate event to record once it was shown.
+
+    The answer is a block, a message to the user, or None. A gate event is
+    returned, not recorded: the caller records it only after the answer was
+    written, so a gate whose message nobody saw is not counted as used.
+    """
     if payload["review"] in ("fixups", "done"):
         # The change was reviewed (and these edits fixed its findings). Close it;
         # later edits are a new change with its own consultation and review.
         payload.update(_CHANGE_RESET, files=[])
-        return None
+        return None, None
     count = len(payload["files"])
     pending = count >= THRESHOLD or (payload["sensitive"] and count >= 1)
     if not pending:
         if count and payload["skip_logged"] != count and (standing or _granted)(cwd):
             payload["skip_logged"] = count
             _gate_event(cwd, session, "skipped_small", count)
-        return None
+        return None, None
     if not (standing or _granted)(cwd):
-        return None
-    if payload["review"] == "failed":
+        return None, None
+    if payload["review"] in ("failed", "pending"):
         if payload["gate"] == "reported":
-            return None
+            return None, None
         payload["gate"] = "reported"
-        _gate_event(cwd, session, "review_failed", count)
-        return json.dumps({"systemMessage": FAILED.format(count=count)}) + "\n"
+        if payload["review"] == "failed":
+            return json.dumps({"systemMessage": FAILED.format(count=count)}) + "\n", "review_failed"
+        # A background job has the review: never a second ask, and never "done".
+        return json.dumps({"systemMessage": PENDING.format(count=count)}) + "\n", "review_pending"
     if payload["gate"] == "none" and event.get("stop_hook_active") is not True:
         payload["gate"] = "blocked"
-        _gate_event(cwd, session, "blocked", count)
         reason = GATE.format(count=count, sensitive=", including a sensitive one"
                              if payload["sensitive"] else "")
-        return json.dumps({"decision": "block", "reason": reason}) + "\n"
+        return json.dumps({"decision": "block", "reason": reason}) + "\n", "blocked"
     if payload["gate"] != "reported":
+        # "Asked for one" only when the gate did ask; a Stop first seen while
+        # Claude continues for another stop hook was never asked anything.
+        message = NOT_DONE if payload["gate"] == "blocked" else NOT_REVIEWED
         payload["gate"] = "reported"
-        _gate_event(cwd, session, "not_done_reported", count)
-        return json.dumps({"systemMessage": NOT_DONE.format(count=count)}) + "\n"
-    return None
+        return json.dumps({"systemMessage": message.format(count=count)}) + "\n", "not_done_reported"
+    return None, None
 
 
 def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=None,
@@ -388,13 +443,19 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
         from modelquad.review_ledger import session_pseudonym
         record = folder / f"{session_pseudonym(session, Path(state), length=32)}.json"
         output = None
+        # For a gate: the state to put back if its message is not written, and
+        # the gate event to record once it was.
+        unused = shown_event = None
 
         if name == "Stop":
             if not record.exists():
                 return 0
             payload = _load(record)
-            output = _stop(event, payload, cwd, session, standing)
+            before = dict(payload, files=list(payload["files"]))
+            output, event_name = _stop(event, payload, cwd, session, standing)
             _save(record, payload)
+            if output is not None:
+                unused, shown_event = before, (event_name, len(before["files"]))
         elif name == "PreToolUse":
             if tool not in EDIT_TOOLS:
                 return 0
@@ -405,7 +466,8 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
             digest = _digest(relative.casefold())
             if _new_set(payload, digest):
                 payload = dict(_CHANGE_RESET, files=[])
-            if payload["consulted"] or payload["review"] in ("done", "fixups"):
+            if (payload["consulted"] or payload["consult_pending"]
+                    or payload["review"] in ("done", "fixups", "pending")):
                 return 0
             match = SENSITIVE.search(relative)
             grows = digest not in payload["files"] and len(payload["files"]) >= THRESHOLD - 1
@@ -414,9 +476,12 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
             if (standing or _granted)(cwd):
                 if payload["consult_gate"]:
                     return 0  # This change was stopped once already.
+                unused = dict(payload, files=list(payload["files"]))
+                shown_event = ("consult_blocked", len(payload["files"]))
+                # Saved before the message, so a gate is never shown twice; put
+                # back below if the message is not written after all.
                 payload["consult_gate"] = True
                 _save(record, payload)
-                _gate_event(cwd, session, "consult_blocked", len(payload["files"]))
                 why = ("this edit changes a sensitive file" if match is not None
                        else f"this edit makes the change {len(payload['files']) + 1} files")
                 output = json.dumps({"hookSpecificOutput": {
@@ -435,17 +500,24 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
                 output = _context("PreToolUse", CONSULT.format(kind=kind[:60]))
         elif is_delegate:
             payload = _load(record) if record.exists() else dict(_EMPTY, files=[])
-            failed = _review_failed(event.get("tool_response"))
+            reply = _reply_state(event.get("tool_response"))
             if _is_review(event.get("tool_input")):
-                if failed:
+                if reply == NOT_ANSWERED:
                     payload["review"] = "failed"
+                elif reply == PENDING_REPLY:
+                    # Only a job handle: Codex has not answered, so nothing is done yet.
+                    payload["review"] = "pending"
                 else:
                     if payload["gate"] == "blocked":
                         _gate_event(cwd, session, "review_done", len(payload["files"]))
                     payload.update(files=[], edits_since=0, reminders=0, sensitive=False,
                                    gate="none", review="done", skip_logged=0)
+            elif reply == PENDING_REPLY:
+                # Asked, not answered yet: the gate does not ask for it again.
+                payload["consult_pending"] = True
             else:
                 # A consultation: it counts for this change once Codex answered.
+                failed = reply == NOT_ANSWERED
                 _gate_event(cwd, session, "consult_failed" if failed else "consult_done",
                             len(payload["files"]))
                 if not failed:
@@ -486,9 +558,20 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
                 # findings: not a new change set to review again.
                 payload["review"] = "fixups"
             _save(record, payload)
-        _prune(folder, now())
+        written = False
         if output is not None and clock() < deadline:
-            stdout.write(output)
+            try:
+                stdout.write(output)
+                written = True
+            except Exception:
+                written = False
+        if written and shown_event is not None:
+            _gate_event(cwd, session, *shown_event)
+        elif not written and unused is not None:
+            # Nobody saw the gate's message (out of time, or the write failed):
+            # the gate was not used, so the state goes back to what it was.
+            _save(record, unused)
+        _prune(folder, now())
     except Exception:
         pass  # No diagnostic text, state marker or user-facing message.
     return 0

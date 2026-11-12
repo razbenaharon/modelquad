@@ -696,3 +696,168 @@ def test_explicit_history_distinguishes_refusal_from_executor_failure(tmp_path, 
     assert row[1] == ("codex" if entered else None)
     [attempt] = history.fetch_delegation_attempts(path)
     assert attempt["requested_provider"] == "codex"
+
+
+# --------------------------------------------- a request that could not be used
+
+
+def _codex(monkeypatch, synthetic_worker_binary, qualified_codex_inventory, text="ok"):
+    """A Codex that answers ``text`` and records every start."""
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        output = codex_event_stream(text) if "--json" in argv else "ok"
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr(mcp_server, "_build_execution_manager", lambda config: ExecutionManager(
+        config, executors={"codex": CodexExecutor(which=lambda _: synthetic_worker_binary("codex.exe"),
+                                                  run=run, inventory=qualified_codex_inventory)}))
+    return calls
+
+
+def _history_rows():
+    import sqlite3
+
+    from modelquad.service import db as service_db
+
+    try:
+        conn = sqlite3.connect(service_db.DEFAULT_DB_PATH)
+        return (conn.execute("SELECT COUNT(*) FROM delegation_attempts").fetchone()[0]
+                + conn.execute("SELECT COUNT(*) FROM execution_history").fetchone()[0])
+    except sqlite3.Error:
+        return 0
+
+
+@pytest.mark.parametrize("change, reason, words", [
+    ({"working_directory": "missing"}, "working_directory_missing", "does not exist"),
+    ({"working_directory": "file"}, "working_directory_not_a_folder", "is a file, not a folder"),
+    ({"model": "x; rm -rf /"}, "model_not_valid", "not a valid Codex model id"),
+    ({"reasoning_effort": "ultra"}, "reasoning_effort_not_valid", "reasoning_effort"),
+    ({"prompt": "   \n"}, "prompt_empty", "is empty"),
+])
+def test_a_request_that_cannot_be_used_is_refused_before_anything_starts(
+        tmp_path, monkeypatch, change, reason, words, *, synthetic_worker_binary,
+        qualified_codex_inventory):
+    from modelquad import review_ledger
+
+    write_usage_fixtures(tmp_path)
+    calls = _codex(monkeypatch, synthetic_worker_binary, qualified_codex_inventory)
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    folders = {"missing": str(tmp_path / "no-such-folder" / "deeper"), "file": str(tmp_path / "a.py")}
+    arguments = {"task_type": "review", "prompt": "do the thing", "working_directory": str(tmp_path)}
+    arguments.update(change)
+    if "working_directory" in change:
+        arguments["working_directory"] = folders[change["working_directory"]]
+
+    result = asyncio.run(server.call_tool("modelquad_delegate", arguments))
+
+    payload = tool_payload(result)
+    assert payload == {"delegated": False, "executed": False, "refused": True, "started": False,
+                       "recorded": False, "reason": reason}
+    text = result.content[0].text
+    # Not a Codex failure, and nothing about a report from Codex: it never started.
+    assert text.startswith("Codex was not started.") and words in text
+    assert "did not finish" not in text and "Codex's own report" not in text
+    assert "no-such-folder" not in text and str(tmp_path) not in text
+    assert calls == []
+    # Nothing is stored, so no path reaches the history or the ledger.
+    assert _history_rows() == 0
+    assert not review_ledger.ledger_path().exists() or review_ledger.report()["runs"] == 0
+
+
+# --------------------------------------------------- an error names its real cause
+
+
+@pytest.mark.parametrize("capsule, words", [
+    ({"goal": 5}, "goal must be a non-empty string"),
+    ({}, "goal must be a non-empty string"),
+    ({"zzz": 1}, "Unknown keys in TaskCapsule payload: zzz"),
+])
+def test_a_bad_capsule_says_what_is_wrong_with_it(tmp_path, monkeypatch, capsule, words, *,
+                                                  synthetic_worker_binary, qualified_codex_inventory):
+    write_usage_fixtures(tmp_path)
+    calls = _codex(monkeypatch, synthetic_worker_binary, qualified_codex_inventory)
+    with pytest.raises(Exception) as raised:
+        asyncio.run(server.call_tool("modelquad_delegate", {
+            "task_type": "review", "prompt": "do the thing", "working_directory": str(tmp_path),
+            "capsule": capsule}))
+    text = str(raised.value)
+    assert words in text and "Codex was not started" in text and "Correct it and call again" in text
+    assert "TaskGroup" not in text and "sub-exception" not in text
+    assert calls == []
+
+
+def test_an_unexpected_error_is_short_and_carries_no_path(tmp_path, monkeypatch):
+    write_usage_fixtures(tmp_path)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError(f"cannot open {tmp_path / 'private' / 'notes.txt'}")
+
+    monkeypatch.setattr(mcp_server, "_delegate_payload", broken)
+    with pytest.raises(Exception) as raised:
+        asyncio.run(server.call_tool("modelquad_delegate", {
+            "task_type": "review", "prompt": "do the thing", "working_directory": str(tmp_path)}))
+    text = str(raised.value)
+    assert "internal error (RuntimeError)" in text and "modelquad doctor" in text
+    assert "TaskGroup" not in text and "Traceback" not in text
+    assert "notes.txt" not in text and str(tmp_path) not in text
+
+
+def test_an_argument_error_with_a_path_in_it_is_shown_without_the_path(tmp_path, monkeypatch):
+    write_usage_fixtures(tmp_path)
+
+    def broken(*args, **kwargs):
+        raise ValueError(f"working directory is odd: {tmp_path / 'private'}")
+
+    monkeypatch.setattr(mcp_server, "_delegate_payload", broken)
+    with pytest.raises(Exception) as raised:
+        asyncio.run(server.call_tool("modelquad_delegate", {
+            "task_type": "review", "prompt": "do the thing", "working_directory": str(tmp_path)}))
+    text = str(raised.value)
+    assert "working directory is odd" in text and str(tmp_path) not in text
+
+
+def test_the_task_groups_wrapper_is_removed_from_a_single_error():
+    inner = ValueError("goal must be a non-empty string")
+    assert mcp_server._only_error(ExceptionGroup("unhandled errors in a TaskGroup", [inner])) is inner
+    nested = ExceptionGroup("outer", [ExceptionGroup("inner", [inner])])
+    assert mcp_server._only_error(nested) is inner
+    several = ExceptionGroup("two", [ValueError("a"), ValueError("b")])
+    assert mcp_server._only_error(several) is several
+
+
+# ------------------------------------------------------- a very long answer is cut
+
+
+def test_a_very_long_answer_is_cut_in_the_text_and_the_data_and_says_so(
+        tmp_path, monkeypatch, *, synthetic_worker_binary, qualified_codex_inventory):
+    from modelquad import review_ledger
+    from modelquad.mcp.jobs_tools import MAX_SHOWN_OUTPUT_CHARS
+
+    write_usage_fixtures(tmp_path)
+    answer = "A" * 600_000 + "\nFINDING F1 | low | a.py:1 | style | found past the cut\n"
+    _codex(monkeypatch, synthetic_worker_binary, qualified_codex_inventory, text=answer)
+    result = asyncio.run(server.call_tool("modelquad_delegate", {
+        "task_type": "review", "prompt": "do the thing", "working_directory": str(tmp_path)}))
+    payload = tool_payload(result)
+    shown = payload["output"]
+    assert shown.startswith("A" * MAX_SHOWN_OUTPUT_CHARS)
+    assert len(shown) < MAX_SHOWN_OUTPUT_CHARS + 300
+    assert f"the first {MAX_SHOWN_OUTPUT_CHARS} of {len(answer)} characters are shown" in shown
+    assert payload["output_truncated"] is True and payload["output_chars"] == len(answer)
+    visible = json.loads(result.content[-1].text)
+    assert visible["output"] == shown and visible["output_truncated"] is True
+    assert all(len(block.text) < MAX_SHOWN_OUTPUT_CHARS + 2000 for block in result.content)
+    # The ledger read the whole answer before the cut.
+    assert [item["finding"] for item in payload["findings"]] == ["F1"]
+    assert review_ledger.report()["findings"]["findings"] == 1
+
+
+def test_a_short_answer_is_not_marked_as_cut(tmp_path, monkeypatch, *, synthetic_worker_binary,
+                                             qualified_codex_inventory):
+    write_usage_fixtures(tmp_path)
+    _codex(monkeypatch, synthetic_worker_binary, qualified_codex_inventory, text="Looks fine.")
+    payload = _tool_payload("modelquad_delegate", {
+        "task_type": "review", "prompt": "do the thing", "working_directory": str(tmp_path)})
+    assert payload["output"] == "Looks fine." and "output_truncated" not in payload

@@ -961,3 +961,30 @@ def test_a_pre_release_database_is_refused_and_left_untouched(tmp_path, version)
         assert check.execute("PRAGMA user_version").fetchone()[0] == version
     finally:
         check.close()
+
+
+@pytest.mark.parametrize("version", [service_db.SCHEMA_VERSION + 1, 99])
+def test_a_database_from_a_newer_build_is_refused_and_left_untouched(tmp_path, version):
+    """A newer schema is not this build's to write into: its tables and their
+    meaning may differ, so writing would damage the newer build's history."""
+
+    path = tmp_path / "newer.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute(f"PRAGMA user_version={version}")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(service_db.NewerDatabase, match="newer ModelQuad") as raised:
+        service_db.connect_and_init(path)
+    assert isinstance(raised.value, sqlite3.DatabaseError)
+    assert raised.value.version == version
+    assert "Update ModelQuad" in str(raised.value)
+    with pytest.raises(sqlite3.DatabaseError):
+        history.put_plan_advice_enabled(path, True)
+    check = sqlite3.connect(path)
+    try:
+        assert check.execute("PRAGMA user_version").fetchone()[0] == version
+        assert check.execute("SELECT COUNT(*) FROM settings").fetchone()[0] == 0
+    finally:
+        check.close()

@@ -38,10 +38,13 @@ def put(store, job_id="waiting-job", attempt_id=99999, *, age=timedelta()):
 def test_list_has_only_summary_fields_with_optional_attempt_labels(surface):
     client, path, store = surface
     ident = history.record_delegation_attempt(path, task_type="implementation", requested_provider="codex")
+    # The aged answer is stored before the store is first read: an answer is
+    # stamped with the store's own clock, which never runs behind a read.
+    put(store, "no-attempt", age=timedelta(days=6, hours=1))
     put(store, attempt_id=ident)
     response = client.get("/api/pending-output")
     assert response.status_code == 200
-    item = response.json()[0]
+    item = next(entry for entry in response.json() if entry["job_id"] == "waiting-job")
     assert set(item) == {"job_id", "job_status", "expires_at", "expiring_soon", "extended_until",
                          "max_expires_at", "task_label", "provider"}
     assert item["task_label"] == "implementation" and item["provider"] is None
@@ -54,9 +57,9 @@ def test_list_has_only_summary_fields_with_optional_attempt_labels(surface):
     assert client.get("/api/pending-output").status_code == 403
     client.headers["X-ModelQuad-Token"] = "pending-test-secret"
     # Optional labels still allow an absent history row for the desktop list.
-    put(store, "no-attempt", age=timedelta(days=6, hours=1))
-    item = client.get("/api/pending-output").json()[0]
-    assert item["job_id"] == "no-attempt" and item["expiring_soon"]
+    item = next(entry for entry in client.get("/api/pending-output").json()
+                if entry["job_id"] == "no-attempt")
+    assert item["expiring_soon"]
     assert item["task_label"] is None and item["provider"] is None
 
 

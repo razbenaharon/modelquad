@@ -794,3 +794,58 @@ def test_a_users_own_file_at_a_command_skill_path_is_never_replaced_or_removed(t
     assert action.kind is ActionKind.SKIPPED
     assert mine.read_text(encoding="utf-8") == "my own review skill\n"
     assert not (target / "skills" / "modelquad-quota" / "SKILL.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# A lone surrogate escape in a host file ("\ud83d": half an emoji, which a
+# JavaScript host writes when it cuts one in two) is valid JSON that UTF-8
+# cannot spell. Install and uninstall must finish, and keep it as it was.
+# ---------------------------------------------------------------------------
+
+_LONE = r'"\ud83d"'  # the six characters a host writes, inside quotes
+
+
+def _surrogate_home(tmp_path):
+    target = tmp_path / "claude"
+    target.mkdir()
+    mcp_path = target.parent / "claude.json"
+    mcp_path.write_text('{"note": ' + _LONE + ', "mcpServers": {}}', encoding="utf-8")
+    settings = target / "settings.json"
+    settings.write_text('{"title": ' + _LONE + "}", encoding="utf-8")
+    return target, mcp_path, settings
+
+
+def test_install_and_uninstall_finish_when_a_host_file_holds_half_an_emoji(tmp_path):
+    target, mcp_path, settings = _surrogate_home(tmp_path)
+
+    report = ClaudeAdapter(via_plugin=False).install(target)
+
+    assert not [a for a in report.actions if a.kind is ActionKind.SKIPPED]
+    for path in (mcp_path, settings):
+        raw = path.read_bytes().decode("utf-8")  # still UTF-8 on disk
+        assert _LONE in raw, "the user's escape is written back as the same escape"
+    assert json.loads(mcp_path.read_text(encoding="utf-8"))["mcpServers"]["modelquad"]
+    assert "hook-pending" in settings.read_text(encoding="utf-8")
+
+    report = ClaudeAdapter(via_plugin=False).uninstall(target)
+
+    assert not [a for a in report.actions if a.kind is ActionKind.SKIPPED]
+    after = json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert "modelquad" not in after["mcpServers"]
+    assert after["note"] == "\ud83d"
+    left = settings.read_bytes().decode("utf-8")
+    assert _LONE in left
+    assert "hook-pending" not in left and "usage-hook" not in left
+    assert not (target / "skills" / "modelquad" / "SKILL.md").exists()
+
+
+def test_a_real_emoji_in_a_host_file_is_written_back_as_itself(tmp_path):
+    target = tmp_path / "claude"
+    target.mkdir()
+    mcp_path = target.parent / "claude.json"
+    mcp_path.write_text('{"note": "\U0001f600 ' + r'\ud83d\ude00"}', encoding="utf-8")
+
+    ClaudeAdapter(via_plugin=False).install(target)
+
+    raw = mcp_path.read_bytes().decode("utf-8")
+    assert raw.count("\U0001f600") == 2 and r"\u" not in raw

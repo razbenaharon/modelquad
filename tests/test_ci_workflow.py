@@ -316,17 +316,75 @@ def _on(definition: dict) -> dict:
     return definition.get("on", definition.get(True))
 
 
-def test_release_runs_only_on_a_version_tag(release: dict):
-    """No manual dispatch and no branch push: a release is a pushed v-tag."""
+def test_release_runs_only_when_a_person_starts_it_and_types_publish(release: dict):
+    """Pushing a tag publishes nothing. A release is a manual run, started on
+    the tag, with the word ``publish`` typed into a required box."""
     trigger = _on(release)
-    assert set(trigger) == {"push"}
-    assert set(trigger["push"]) == {"tags"}
-    assert trigger["push"]["tags"] == ["v[0-9]+.[0-9]+.[0-9]+"]
+    assert set(trigger) == {"workflow_dispatch"}
+    confirm = trigger["workflow_dispatch"]["inputs"]["confirm"]
+    assert confirm["required"] is True and confirm["type"] == "string"
+    assert "default" not in confirm, "the word is typed, never pre-filled"
+
+
+def _release_step(release: dict, name: str) -> tuple[int, dict]:
+    steps = release["jobs"]["build"]["steps"]
+    names = [step.get("name") for step in steps]
+    return names.index(name), steps[names.index(name)]
+
+
+def test_release_refuses_before_building_unless_confirmed_from_a_tag_on_main(release: dict):
+    """The gate runs before anything is built, and each refusal fails the job:
+    no typed confirmation, a ref that is not a ``vX.Y.Z`` tag, or a tagged
+    commit that is not part of ``main``."""
+    position, gate = _release_step(release, "A confirmed release of a version tag on main")
+    build, _ = _release_step(release, "Build and check the distributions")
+    checkout, checked_out = _release_step(release, "Checkout repository")
+    assert checkout < position < build
+    # The whole history, so that main is there to compare against.
+    assert checked_out["with"]["fetch-depth"] == 0
+    script = gate["run"]
+    assert script.lstrip().startswith("set -euo pipefail")
+    # The typed word reaches the script as data, never as part of the script.
+    assert gate["env"] == {"CONFIRM": "${{ inputs.confirm }}"}
+    assert "${{" not in script
+    assert 'if [ "$CONFIRM" != "publish" ]; then' in script
+    assert 'if [ "$GITHUB_REF_TYPE" != "tag" ]' in script
+    assert "^v[0-9]+\\.[0-9]+\\.[0-9]+$" in script
+    assert 'if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then' in script
+    assert script.count("exit 1") == 3
+
+
+def test_release_requires_a_green_windows_ci_run_for_the_tagged_commit(release: dict):
+    position, step = _release_step(release, "Windows CI passed on this commit")
+    build, _ = _release_step(release, "Build and check the distributions")
+    assert position < build
+    script = step["run"]
+    assert "actions/workflows/windows-ci.yml/runs" in script
+    assert "head_sha=${GITHUB_SHA}" in script and "status=success" in script
+    assert "exit 1" in script
+    # The job's own short-lived token; nothing stored.
+    assert step["env"] == {"GH_TOKEN": "${{ github.token }}"}
+
+
+def test_the_publish_job_repeats_the_confirmation(release: dict):
+    condition = release["jobs"]["publish"]["if"]
+    assert "inputs.confirm == 'publish'" in condition
+    assert "github.ref_type == 'tag'" in condition
+
+
+def test_release_adds_no_action_beyond_the_reviewed_ones():
+    used = {target.split("@")[0] for target, _rest in _USES.findall(RELEASE.read_text(encoding="utf-8"))}
+    assert used == {"actions/checkout", "actions/setup-python", "actions/upload-artifact",
+                    "actions/download-artifact", "pypa/gh-action-pypi-publish"}
+    for target, rest in _USES.findall(RELEASE.read_text(encoding="utf-8")):
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", target), target
+        assert re.fullmatch(r"\s+# v\d+\.\d+\.\d+\s*", rest), target
 
 
 def test_release_grants_nothing_by_default(release: dict):
     assert release["permissions"] == {}
-    assert release["jobs"]["build"]["permissions"] == {"contents": "read"}
+    # Reading the code, and reading whether CI passed; nothing can be written.
+    assert release["jobs"]["build"]["permissions"] == {"contents": "read", "actions": "read"}
 
 
 def test_only_the_publish_job_can_mint_an_oidc_token(release: dict):

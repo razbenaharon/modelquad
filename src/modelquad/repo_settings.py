@@ -147,7 +147,7 @@ def repo_key(working_directory, installation_key: str | None) -> str | None:
     if local_reason(working_directory) is not None:
         return None
     try:
-        directory = Path(os.path.abspath(working_directory))
+        directory = real_directory(working_directory)
         marker = _git_marker(directory)
         key = bytes.fromhex(installation_key)
         if marker is None:
@@ -155,6 +155,42 @@ def repo_key(working_directory, installation_key: str | None) -> str | None:
         return _hash(key, "repo", str(_canonical_directory(_git_common_dir(marker))))
     except (OSError, ValueError, UnicodeError):
         return None
+
+
+def real_directory(working_directory) -> Path:
+    """The folder with every link and junction in its path resolved.
+
+    A junction that points into a repository is that repository: its
+    ``.git``, the user's setting and ``.modelquad.toml`` are the target's.
+    Raises OSError when the target is on a network share or a device.
+    """
+    directory = Path(os.path.realpath(os.path.abspath(working_directory)))
+    if local_reason(str(directory)) is not None:
+        raise OSError("the folder resolves outside this machine")
+    return directory
+
+
+def _inherited_mode(working_directory, installation_key: str, modes: dict) -> str | None:
+    """Outside Git, the nearest folder above whose stored word narrows Codex use.
+
+    A folder that is not a repository has no boundary of its own, so ``off``
+    or ``offer-only`` set on it covers the folders below it. ``on`` never
+    travels down: a wider choice is made for one folder at a time.
+    """
+    from .repo_identity import _canonical_directory, _hash
+
+    try:
+        directory = real_directory(working_directory)
+        if _git_marker(directory) is not None:
+            return None
+        key = bytes.fromhex(installation_key)
+        for parent in directory.parents:
+            word = modes.get(_hash(key, "folder", str(_canonical_directory(parent))))
+            if word in ("off", "offer-only"):
+                return word
+    except (OSError, ValueError, UnicodeError):
+        return None
+    return None
 
 
 # ------------------------------------------------------ preferences.json
@@ -204,7 +240,11 @@ def read_mode(working_directory, *, path: Path | None = None,
         except Exception:  # noqa: BLE001 -- no id means no entry can match
             return None
     key = repo_key(working_directory, installation_key)
-    return modes.get(key) if key else None
+    if not key:
+        return None
+    if key in modes:
+        return modes[key]
+    return _inherited_mode(working_directory, installation_key, modes)
 
 
 def write_mode(working_directory, choice: str, *, path: Path | None = None,
@@ -337,7 +377,29 @@ def local_policy(working_directory):
     try:
         (root / REPO_FILE_NAME).lstat()
     except FileNotFoundError:
-        return None  # No file: nothing more to read, and the packer is not imported.
+        # No file where the path is written. A junction or link into a
+        # repository is that repository, so the folder it resolves to is asked.
+        try:
+            real = real_directory(working_directory)
+        except OSError:
+            from .repo_policy import UNREADABLE, _broken
+
+            return _broken(UNREADABLE, "unreadable")
+        real_marker = _git_marker(real)
+        real_root = real_marker if real_marker is not None else real
+        if os.path.normcase(str(real_root)) == os.path.normcase(os.path.abspath(root)):
+            return None  # No file: nothing more to read, and the packer is not imported.
+        try:
+            (real_root / REPO_FILE_NAME).lstat()
+        except FileNotFoundError:
+            return None
+        except OSError:
+            from .repo_policy import UNREADABLE, _broken
+
+            return _broken(UNREADABLE, "unreadable")
+        from .repo_policy import load_from_root
+
+        return load_from_root(real_root)
     except OSError:
         from .repo_policy import UNREADABLE, _broken
 
@@ -373,4 +435,22 @@ def advice_line(working_directory, *, preferences: Path | None = None) -> str | 
     default = PROACTIVE if global_proactive else OFFER
     if result.offer == default:
         return None
+    if result.refusal is None and _standing_grant_covers(directory, preferences):
+        # The user's standing grant: Claude consults Codex on its own here, as
+        # the server's instructions say. A line telling it to offer, to wait
+        # to be asked, or that each call is prompted would contradict them.
+        return None
     return ADVICE[result.offer]
+
+
+def _standing_grant_covers(directory, preferences: Path | None) -> bool:
+    import os
+
+    if os.environ.get("MODELQUAD_WORKER") == "1":
+        return False
+    try:
+        from . import grant
+
+        return grant.allows(directory, path=preferences)
+    except Exception:  # noqa: BLE001 -- unreadable: no grant
+        return False
