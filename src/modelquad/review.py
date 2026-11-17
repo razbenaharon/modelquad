@@ -490,12 +490,30 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         metadata["model_source"] = "explicit"
     if request.reasoning_effort is not None:
         metadata["reasoning_effort_source"] = "explicit"
+    decision_id = uuid.uuid4().hex
+
+    def spawned(pid):
+        # Codex exists from here on. The call is recorded now, with what it was
+        # given, so a session that closes mid-run still leaves a record; the
+        # end of the call replaces both rows.
+        try:
+            review_ledger.record_start(
+                decision_id, working_directory=request.working_directory,
+                task_type=request.task_type, trigger=request.trigger)
+            review_ledger.record_package(
+                decision_id, shown, working_directory=request.working_directory,
+                round_number=round_number, follows=request.follows)
+        except Exception:  # noqa: BLE001 -- a record that cannot be written does not stop the review
+            pass
+        if on_spawn is not None:
+            on_spawn(pid)
+
     try:
         execution = ExecutionRequest(
             provider="codex", task_type=TaskType(request.task_type), prompt=request.prompt,
             working_directory=Path(request.working_directory), timeout=request.timeout,
             model=request.model, reasoning_effort=request.reasoning_effort, metadata=metadata,
-            on_spawn=on_spawn, on_packed=on_packed, stop_requested=stop_requested)
+            on_spawn=spawned, on_packed=on_packed, stop_requested=stop_requested)
     except ValueError:
         return refusal("invalid_request")
     key = shown["package_id"]
@@ -504,7 +522,6 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
             # At most one active attempt per request (invariant 2).
             return refusal(DUPLICATE)
         _running.add(key)
-    decision_id = uuid.uuid4().hex
     started_at = clock()
     # The worker's whole tree is tied to this process: it ends if this server does.
     token = procutil.default_kill_on_close.set(True)

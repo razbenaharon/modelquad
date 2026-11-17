@@ -414,7 +414,7 @@ file contents and no full answer.
 
 | Table | What a row records |
 |---|---|
-| `runs` | One Codex call: time, a digest of the project folder (not its path), the task kind, why the call was made (the trigger), the code version (the first 12 characters of the `HEAD` commit and a digest of the sent files' digests), the outcome, the duration, Codex's input and output token counts, and the number of findings |
+| `runs` | One Codex call: time, a digest of the project folder (not its path), the task kind, why the call was made (the trigger), the code version (the first 12 characters of the `HEAD` commit and a digest of the sent files' digests), the outcome, the duration, Codex's input and output token counts, and the number of findings. The row is written when Codex starts, as `unfinished`, and replaced when the call ends; a call whose session closed in the middle keeps the `unfinished` row |
 | `findings` | One finding Codex listed in the agreed one-line form: its reference, the repository-relative file and line or line range (an absolute path is dropped), severity, category, Codex's stated confidence and its short reason, the claim and the reasoning. Free text is redacted for credentials and paths and capped |
 | `verdicts` | What Claude or you decided about a finding: the verdict, its evidence, the action, whether a fix was verified, an optional short note (redacted and capped) and who recorded it |
 | `gate_events` | What a review gate did: time, the folder digest, a session pseudonym, the event and a file count |

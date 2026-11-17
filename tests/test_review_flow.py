@@ -162,6 +162,66 @@ def test_a_review_sends_the_package_and_records_it(project):
     assert (run["outcome"], run["input_tokens"], run["findings_count"]) == ("answered", 1200, 1)
 
 
+def _ledger_rows():
+    conn = review_ledger.connect()
+    try:
+        runs = [dict(row) for row in conn.execute("SELECT * FROM runs")]
+        packages = [dict(row) for row in conn.execute("SELECT * FROM packages")]
+    finally:
+        conn.close()
+    return runs, packages
+
+
+def test_the_call_is_recorded_when_codex_starts_and_replaced_when_it_ends(project):
+    executor = FakeExecutor()
+    during = {}
+    executor.before_answer = lambda: during.update(zip(("runs", "packages"), _ledger_rows()))
+
+    reply = review.run(request_for(project), executor)
+
+    # While Codex ran: one row that says so, with what it was given and nothing invented.
+    (run,), (sent,) = during["runs"], during["packages"]
+    assert run["decision_id"] == sent["decision_id"] == reply["decision_id"]
+    assert run["outcome"] == review_ledger.UNFINISHED
+    assert (run["duration_seconds"], run["input_tokens"], run["findings_count"]) == (None, None, None)
+    assert sent["package_id"] == reply["package"]["package_id"] and sent["file_count"] == 1
+    # After: the same call, once, with how it ended.
+    (run,), (sent,) = _ledger_rows()
+    assert (run["outcome"], run["input_tokens"]) == ("answered", 1200)
+    assert sent["model_calls"] == 1
+
+
+def test_a_session_that_closes_mid_run_leaves_a_record_of_the_start(project):
+    """The end of the call never runs; the package still went to Codex."""
+    executor = FakeExecutor()
+
+    def session_closes():
+        raise KeyboardInterrupt
+
+    executor.before_answer = session_closes
+    with pytest.raises(KeyboardInterrupt):
+        review.run(request_for(project, trigger="user"), executor)
+
+    (run,), (sent,) = _ledger_rows()
+    assert (run["outcome"], run["trigger"], run["task_type"]) == (review_ledger.UNFINISHED, "user", "review")
+    assert json.loads(sent["manifest"])["files"][0]["path"] == "app.py"
+    counts = review_ledger.report()
+    assert (counts["codex_started"], counts["answered"]) == (1, 0)
+    # The lock is released, so the same package can be reviewed again.
+    assert review.headline(review.run(request_for(project), FakeExecutor())) == "Codex answered."
+
+
+def test_a_call_that_never_starts_codex_writes_no_start_record(project):
+    executor = FakeExecutor()
+    shown = review.package(request_for(project))
+    (project / "app.py").write_text("def run():\n    return 99\n", encoding="utf-8")
+
+    review.run(request_for(project, package_id=shown["package_id"]), executor)
+
+    runs, _ = _ledger_rows()
+    assert review_ledger.UNFINISHED not in {run["outcome"] for run in runs}
+
+
 def test_a_package_the_user_was_not_shown_is_not_sent(project):
     executor = FakeExecutor()
     shown = review.package(request_for(project))

@@ -63,6 +63,11 @@ is the install.
 
 ### Changes
 
+- **A call is recorded when Codex starts.** The ledger row and the package
+  manifest are written at the start, as `unfinished`, and replaced when the
+  call ends. A session that closed in the middle of a review used to leave
+  no record that a package had gone to Codex; `modelquad review report` now
+  counts it as a Codex call with no end recorded.
 - **Install and uninstall say when they did not finish.** A file ModelQuad
   could not read, write or remove is now an error (`Not finished: ...`, exit
   code 1) and no longer a skipped row under a successful result. A file that

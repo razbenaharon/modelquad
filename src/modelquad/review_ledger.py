@@ -368,11 +368,16 @@ WITHHELD = "withheld"
 FAILED = "failed"
 REFUSED = "refused"
 NOT_STARTED = "not_started"
-CALL_OUTCOMES = (ANSWERED, WITHHELD, FAILED, REFUSED, NOT_STARTED)
+#: ``unfinished``: Codex was started and no end was recorded. The row is
+#: written when Codex starts and replaced when the call ends, so it stays only
+#: for a call that is still running or whose session closed in the middle.
+UNFINISHED = "unfinished"
+CALL_OUTCOMES = (ANSWERED, WITHHELD, FAILED, REFUSED, NOT_STARTED, UNFINISHED)
 #: The outcomes of a call in which Codex was actually started: only these are "Codex calls".
-STARTED_OUTCOMES = frozenset({ANSWERED, WITHHELD, FAILED})
+STARTED_OUTCOMES = frozenset({ANSWERED, WITHHELD, FAILED, UNFINISHED})
 OUTCOME_WORDS = {ANSWERED: "answered", WITHHELD: "withheld (tool call seen)", FAILED: "not answered",
-                 REFUSED: "refused", NOT_STARTED: "not started for another reason"}
+                 REFUSED: "refused", NOT_STARTED: "not started for another reason",
+                 UNFINISHED: "no end recorded (still running, or the session closed mid-run)"}
 #: Reasons that are a plain problem with the request, not a rule that refused it.
 INPUT_REASONS = frozenset({
     "supplied_file_missing", "supplied_files_over_limit", "supplied_file_unavailable",
@@ -466,6 +471,26 @@ def package_round(decision_id: str, working_directory, *, path: Path | None = No
     finally:
         conn.close()
     return None if row is None else int(row["round"])
+
+
+def record_start(decision_id: str, *, working_directory, task_type, trigger,
+                 path: Path | None = None) -> None:
+    """Record that Codex was started for this call, before anything comes back.
+
+    :func:`record_run` replaces the row when the call ends. A session that
+    closes in the middle never reaches that, and without this row a package
+    would have gone to Codex with no local record of it. Time, tokens and
+    findings are unknown at this point and are stored as unknown.
+    """
+    conn = connect(path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (decision_id, time.time(), workspace_id(working_directory), str(task_type)[:40],
+             trigger if trigger in TRIGGERS else "claude", None, UNFINISHED, None, None, None, None))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def record_run(payload: dict, *, working_directory, task_type, trigger, path: Path | None = None,
