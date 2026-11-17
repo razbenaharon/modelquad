@@ -108,8 +108,8 @@ def _review_lines(payload: dict) -> list[str]:
             "To go ahead, ask again. Claude Code shows its approval prompt before the call."]
     if payload.get("refused"):
         return lines + [review.refusal_line(payload)]
-    if payload.get("reason") == review.WORKER_REPORTED and not payload.get("output"):
-        lines.append(review.refusal_line(payload))
+    if payload.get("message") and payload["message"] != lines[0]:
+        lines.append(payload["message"])
     package = payload.get("package")
     if isinstance(package, dict):
         lines.append(f"Sent: the task text and {package['file_count']} file(s), "

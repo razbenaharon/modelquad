@@ -548,6 +548,10 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     if reason in POLICY_REFUSAL_REASONS or reason in noshell.REFUSAL_LABELS:
         payload.update(delegated=False, refused=True, started=started)
         payload["message"] = refusal_line(payload)
+    elif reason in _LINES and not (isinstance(payload.get("output"), str) and payload["output"].strip()):
+        # Why no answer came back, in the data: Claude Code hands Claude the
+        # data of a reply, not the lines written for a person.
+        payload["message"] = _LINES[reason]
     note = workspace_stability_note(payload["metadata"], request.working_directory)
     if note:
         note.pop("workspace", None)
