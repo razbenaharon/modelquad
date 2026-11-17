@@ -67,7 +67,9 @@ def test_an_ai_tool_co_author_needs_no_sign_off():
 ])
 def test_the_maintainers_e_mail_alone_exempts_nothing(facts, source, why):
     found = dco.problems(_commit(), facts, source)
-    assert found == [f"no Signed-off-by trailer for its author <{MAINTAINER_EMAIL}>"], why
+    # A failed lookup says so: the commit may well be the maintainer's.
+    unknown = " (GitHub could not be asked about this commit)" if facts is None else ""
+    assert found == [f"no Signed-off-by trailer for its author <{MAINTAINER_EMAIL}>{unknown}"], why
     # The sign-off still satisfies the check.
     assert dco.problems(_commit(signoffs=[MAINTAINER_EMAIL]), facts, source) == []
 
@@ -133,7 +135,8 @@ def test_a_failed_github_lookup_is_unknown_not_a_pass(monkeypatch):
     lookup = dco.github_facts("o/r", "token")
     assert lookup("a" * 40) is None
     assert dco.check([_commit()], OWN_BRANCH, lookup) == [
-        f"{'a' * 40} has no Signed-off-by trailer for its author <{MAINTAINER_EMAIL}>"]
+        f"{'a' * 40} has no Signed-off-by trailer for its author <{MAINTAINER_EMAIL}>"
+        " (GitHub could not be asked about this commit)"]
 
 
 # -- against real commits ---------------------------------------------------
@@ -196,14 +199,68 @@ def test_trailers_are_read_from_real_commits(repo: Path):
     assert len(dco.check([quoted, theirs, mine], FORK, lookup)) == 2
 
 
-def test_merge_commits_are_not_checked_but_what_they_bring_in_is(repo: Path):
+def _write(repo: Path, name: str, text: str, message: str, author: str) -> None:
+    (repo / name).write_text(text, encoding="utf-8")
+    _git(repo, "add", name, author=author)
+    _git(repo, "commit", "-q", "-m", message, author=author)
+
+
+def test_a_merge_that_adds_nothing_passes_and_what_it_brings_in_is_checked(repo: Path):
     base = _git(repo, "rev-parse", "HEAD").strip()
     _git(repo, "checkout", "-q", "-b", "theirs")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "outside work", author=STRANGER_EMAIL)
+    _write(repo, "theirs.txt", "outside work\n", "outside work", STRANGER_EMAIL)
     _git(repo, "checkout", "-q", "main")
-    _git(repo, "merge", "-q", "--no-ff", "theirs", "-m", "Merge theirs")
-    commits = dco.read_commits(f"{base}..HEAD")
-    assert [c.author_email for c in commits] == [STRANGER_EMAIL]
+    _write(repo, "mine.txt", "mine\n", "mine", MAINTAINER_EMAIL)
+    _git(repo, "merge", "-q", "--no-ff", "theirs", "-m", "Merge theirs", author=STRANGER_EMAIL)
+
+    merge, *rest = dco.read_commits(f"{base}..HEAD")
+    assert merge.plain_merge is True
+    assert sorted(c.author_email for c in rest) == sorted([MAINTAINER_EMAIL, STRANGER_EMAIL])
+    assert all(c.plain_merge is False for c in rest)
+    # The merge itself needs nothing, from anyone; the commit it brought in does.
+    assert dco.problems(merge, dco.Facts(STRANGER, STRANGER, False), FORK) == []
+    failures = dco.check([merge, *rest], FORK, lambda sha: dco.Facts(STRANGER, STRANGER, False))
+    assert len(failures) == 2 and not any(merge.sha in failure for failure in failures)
+
+
+def test_a_merge_that_carries_its_own_change_needs_a_sign_off(repo: Path):
+    """Skipping every merge commit let a change ride in unsigned inside one
+    (pre-merge review, 2026-11-18)."""
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "checkout", "-q", "-b", "theirs")
+    _write(repo, "theirs.txt", "outside work\n", "outside work", STRANGER_EMAIL)
+    _git(repo, "checkout", "-q", "main")
+    _write(repo, "mine.txt", "mine\n", "mine", MAINTAINER_EMAIL)
+    _git(repo, "merge", "-q", "--no-ff", "--no-commit", "theirs", author=STRANGER_EMAIL)
+    (repo / "smuggled.txt").write_text("added in the merge itself\n", encoding="utf-8")
+    _git(repo, "add", "smuggled.txt", author=STRANGER_EMAIL)
+    _git(repo, "commit", "-q", "-m", "Merge theirs", author=STRANGER_EMAIL)
+
+    merge = dco.read_commits(f"{base}..HEAD")[0]
+    assert merge.plain_merge is False
+    assert dco.problems(merge, dco.Facts(STRANGER, STRANGER, False), OWN_BRANCH) == [
+        f"no Signed-off-by trailer for its author <{STRANGER_EMAIL}>"]
+
+
+def test_a_pull_request_is_measured_from_the_base_as_it_is_now(repo: Path):
+    """The base the event names can be older than the base branch. A branch
+    brought up to date would then drag the base's newer commits into the
+    range, and a contributor cannot sign the maintainer's commits."""
+    old_base = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "main moved on")
+    new_base = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "checkout", "-q", "-b", "work")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "their change", author=STRANGER_EMAIL)
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "--no-ff", "work", "-m", "test merge")
+    test_merge = _git(repo, "rev-parse", "HEAD").strip()
+
+    env = {"EVENT_NAME": "pull_request", "PR_BASE": old_base, "PR_HEAD": head, "PUSH_AFTER": test_merge}
+    assert dco.range_from_event(env) == f"{new_base}..{head}"
+    assert [c.author_email for c in dco.read_commits(dco.range_from_event(env))] == [STRANGER_EMAIL]
+    # Without the test merge (or with one for another head) the event's base stands.
+    assert dco.range_from_event({**env, "PUSH_AFTER": head}) == f"{old_base}..{head}"
 
 
 def test_the_range_follows_the_event(repo: Path):

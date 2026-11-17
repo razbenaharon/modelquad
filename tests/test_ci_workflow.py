@@ -160,10 +160,14 @@ def test_the_dco_job_runs_the_checked_in_script_with_the_events_facts(workflow: 
 
 
 def test_the_dco_job_never_runs_with_a_fork_given_the_repositorys_token(workflow: dict):
-    """`pull_request_target` would run with write access next to a fork's
-    code. The check reads commit metadata and needs nothing of the kind."""
+    """The workflow keeps to `pull_request` and a read-only token. The price
+    is known and written down: a pull request that changes `.github/` runs its
+    own copy of the check, so CONTRIBUTING.md has it checked by hand."""
     triggers = workflow.get("on", workflow.get(True))
     assert "pull_request_target" not in triggers
+    contributing = " ".join(
+        (WORKFLOW.parents[2] / "CONTRIBUTING.md").read_text(encoding="utf-8").split())
+    assert "A pull request that changes `.github/` is checked by hand" in contributing
 
 
 def test_the_secret_scan_reads_the_whole_history(workflow: dict):

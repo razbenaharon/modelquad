@@ -134,8 +134,18 @@ author and committer to the maintainer's account. Every commit in a pull
 request from a fork needs a sign-off, whatever its author field says. When
 GitHub cannot be asked, the sign-off is required.
 
-The check cannot see text copied into a commit the maintainer authored. The
-maintainer brings outside work in as that person's own signed-off commit.
+A merge commit needs a sign-off as well (`git merge --signoff`) unless it adds
+nothing of its own. The sign-off has to be in the last paragraph of the
+message, where `git commit -s` puts it.
+
+The check cannot see text copied into a commit the maintainer authored, or a
+commit someone forged in the maintainer's name that the maintainer then
+pushed. The maintainer brings outside work in as that person's own signed-off
+commit, and merges an outside pull request with a merge commit or a rebase,
+not a squash, so that each commit keeps its author and its sign-off. A pull
+request that changes `.github/` is checked by hand: under GitHub's
+`pull_request` trigger the check that runs is the pull request's own copy, so
+its result does not count there.
 
 ## License
 

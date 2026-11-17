@@ -70,8 +70,12 @@ OUTPUT_CUT_MARKER = (
 REFUSAL_FALLBACK = "ModelQuad's rules did not allow this Codex call."
 NOT_RECORDED_NOTE = (
     "ModelQuad could not write this call to its review ledger (the file was locked or could "
-    "not be written), so the call is missing from the review report and its findings cannot "
-    "take a verdict. Tell the user.")
+    "not be written), so the review report misses it or shows it with no end recorded, and "
+    "its findings cannot take a verdict. Tell the user.")
+PACKAGE_NOT_RECORDED_NOTE = (
+    "ModelQuad could not write what this call sent to its review ledger (the file was locked "
+    "or could not be written), so the review report misses its package and a completion "
+    "round cannot follow it. Tell the user.")
 WORKER_REPORTED = "worker_reported"
 
 #: One plain sentence per closed reason; a person reads the sentence, never the code.
@@ -104,9 +108,10 @@ _LINES: dict[str, str] = {
                         "argument is not valid), so nothing was started."),
     "cli_not_found": "The Codex CLI was not found on this computer. Run: modelquad doctor",
     "timed_out": "Codex did not return in time.",
-    WORKER_REPORTED: ("Codex itself reported an error and gave no answer. ModelQuad does not pass "
-                      "Codex's error text on. If a model was named, check the name; otherwise "
-                      "check that Codex is signed in and has usage left, or run: modelquad doctor"),
+    WORKER_REPORTED: ("Codex ended with an error or was stopped, and gave no answer. ModelQuad "
+                      "does not pass Codex's error text on. If a model was named, check the name; "
+                      "otherwise check that Codex is signed in and has usage left, or run: "
+                      "modelquad doctor"),
     "stop_requested": "The call was cancelled, and ModelQuad stopped Codex.",
 }
 
@@ -551,7 +556,8 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     if reason in POLICY_REFUSAL_REASONS or reason in noshell.REFUSAL_LABELS:
         payload.update(delegated=False, refused=True, started=started)
         payload["message"] = refusal_line(payload)
-    elif reason in _LINES and not (isinstance(payload.get("output"), str) and payload["output"].strip()):
+    elif (started and reason in _LINES
+          and not (isinstance(payload.get("output"), str) and payload["output"].strip())):
         # Why no answer came back, in the data: Claude Code hands Claude the
         # data of a reply, not the lines written for a person.
         payload["message"] = _LINES[reason]
@@ -580,13 +586,17 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         findings = review_ledger.record_run(
             payload, working_directory=request.working_directory, task_type=request.task_type,
             trigger=request.trigger, seconds=seconds)
-        review_ledger.record_package(
-            decision_id, payload.get("package"), working_directory=request.working_directory,
-            round_number=round_number, follows=request.follows, files_needed=needed,
-            usage=payload["usage"])
     except Exception:  # noqa: BLE001 -- the answer matters more than its record
         findings = None
         payload["ledger_note"] = NOT_RECORDED_NOTE
+    else:
+        try:
+            review_ledger.record_package(
+                decision_id, payload.get("package"), working_directory=request.working_directory,
+                round_number=round_number, follows=request.follows, files_needed=needed,
+                usage=payload["usage"])
+        except Exception:  # noqa: BLE001 -- the run and its findings are recorded
+            payload["ledger_note"] = PACKAGE_NOT_RECORDED_NOTE
     if findings:
         payload["findings"] = [{"finding": item.ref, "severity": item.severity, "file": item.file,
                                 "line": item.line, "line_end": item.line_end,

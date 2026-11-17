@@ -20,8 +20,11 @@ class build_py_from_empty(build_py):
     def run(self):
         # Not ignore_errors: a leftover that cannot be removed must stop the
         # build, not ship.
-        if Path(self.build_lib).is_dir():
-            shutil.rmtree(self.build_lib)
+        # Only the build's own folder: a --build-lib pointed elsewhere is left alone.
+        target = Path(self.build_lib).resolve()
+        base = Path(self.get_finalized_command("build").build_base).resolve()
+        if target.is_dir() and base in target.parents:
+            shutil.rmtree(target)
         super().run()
 
 

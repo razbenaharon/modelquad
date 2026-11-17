@@ -20,8 +20,17 @@ maintainer's own pull request, and any commit GitHub could not be asked
 about. A ``Co-authored-by`` person who is not an AI tool needs a sign-off of
 their own, on the maintainer's commits too.
 
-What this cannot see: text copied into a commit the maintainer authored. The
-maintainer answers for that, as CONTRIBUTING.md says.
+A merge commit is checked like any other commit unless it adds nothing of
+its own (its content is what Git makes from its parents): a merge can carry
+changes, and skipping every merge would let them in unsigned.
+
+What this cannot see: text copied into a commit the maintainer authored, and
+a commit someone forged with the maintainer's e-mail that the maintainer then
+pushed (GitHub attributes a commit by its e-mail; the maintainer's commits are
+not cryptographically signed). The maintainer answers for what the maintainer
+pushes, as CONTRIBUTING.md says. Under ``pull_request`` the workflow and this
+script come from the pull request, so a pull request that changes them is
+checked by hand.
 
 Stdlib only; runs on the hosted Linux runner.
 """
@@ -63,6 +72,8 @@ class Commit:
     committer_email: str
     signoffs: tuple[str, ...]
     coauthors: tuple[str, ...]
+    #: A merge commit whose content is only what Git makes from its parents.
+    plain_merge: bool = False
 
 
 @dataclass(frozen=True)
@@ -120,12 +131,13 @@ def is_dependabot(commit: Commit, facts: Facts | None) -> bool:
 def problems(commit: Commit, facts: Facts | None, source: Source) -> list[str]:
     """Why this commit fails the check; empty when it passes."""
     found = []
-    if is_dependabot(commit, facts):
+    if is_dependabot(commit, facts) or commit.plain_merge:
         return found
     signed = set(commit.signoffs)
     author = commit.author_email.lower()
     if not is_maintainers_own(commit, facts, source) and author not in signed:
-        found.append(f"no Signed-off-by trailer for its author <{commit.author_email}>")
+        unknown = " (GitHub could not be asked about this commit)" if facts is None else ""
+        found.append(f"no Signed-off-by trailer for its author <{commit.author_email}>{unknown}")
     for coauthor in commit.coauthors:
         if coauthor in AI_TOOL_EMAILS or coauthor == author or coauthor in signed:
             continue
@@ -138,22 +150,29 @@ def _git(*args: str) -> str:
                           encoding="utf-8").stdout
 
 
+def _plain_merge(sha: str) -> bool:
+    """Whether a merge commit adds nothing of its own: no path differs from
+    every parent."""
+    return not _git("diff-tree", "--cc", "-r", "--no-commit-id", "--name-only", sha).strip()
+
+
 def read_commits(revision_range: str) -> list[Commit]:
-    """The non-merge commits of a range. Only real trailers count, so a
-    "Signed-off-by:" quoted in a message body does not."""
+    """The commits of a range, merges included. Only real trailers count, so
+    a "Signed-off-by:" quoted in a message body does not."""
     fmt = _FIELD.join([
-        "%H", "%ae", "%ce",
+        "%H", "%P", "%ae", "%ce",
         "%(trailers:key=Signed-off-by,valueonly,separator=%x1d)",
         "%(trailers:key=Co-authored-by,valueonly,separator=%x1d)",
     ]) + _RECORD
     commits = []
-    for record in _git("log", "--no-merges", f"--format={fmt}", revision_range).split(_RECORD):
+    for record in _git("log", f"--format={fmt}", revision_range).split(_RECORD):
         record = record.strip("\n")
         if not record:
             continue
-        sha, author, committer, signoffs, coauthors = record.split(_FIELD)
+        sha, parents, author, committer, signoffs, coauthors = record.split(_FIELD)
         commits.append(Commit(sha, author, committer,
-                              _emails(signoffs.split("\x1d")), _emails(coauthors.split("\x1d"))))
+                              _emails(signoffs.split("\x1d")), _emails(coauthors.split("\x1d")),
+                              plain_merge=len(parents.split()) > 1 and _plain_merge(sha)))
     return commits
 
 
@@ -195,12 +214,26 @@ def source_from_event(env: dict[str, str]) -> Source:
     return Source(in_repository=in_repository, actor_id=actor_id)
 
 
+def _resolve(revision: str) -> str | None:
+    """The commit a revision names, or None when it names none."""
+    found = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{revision}^{{commit}}"],
+                           capture_output=True, text=True)
+    return found.stdout.strip() if found.returncode == 0 and found.stdout.strip() else None
+
+
 def range_from_event(env: dict[str, str]) -> str:
     """The pull request's commits, the commits a push added, or, for a manual
     run, what the branch adds to main."""
-    if env.get("PR_BASE") and env.get("PR_HEAD"):
-        return f"{env['PR_BASE']}..{env['PR_HEAD']}"
     before, after = env.get("PUSH_BEFORE", ""), env.get("PUSH_AFTER", "") or "HEAD"
+    if env.get("PR_BASE") and env.get("PR_HEAD"):
+        # The run is on GitHub's test merge of the pull request: its first
+        # parent is the base branch as it is now. The base the event names can
+        # be an older one, and a branch brought up to date since would drag
+        # the base's own newer commits into the range.
+        base_now, merged_head = _resolve(f"{after}^1"), _resolve(f"{after}^2")
+        if base_now and merged_head == env["PR_HEAD"]:
+            return f"{base_now}..{env['PR_HEAD']}"
+        return f"{env['PR_BASE']}..{env['PR_HEAD']}"
     if before and before != ZERO_SHA:
         return f"{before}..{after}"
     if env.get("EVENT_NAME") == "workflow_dispatch":

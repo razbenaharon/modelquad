@@ -631,7 +631,10 @@ def test_an_error_codex_reports_is_named_without_its_text(project, monkeypatch):
 
     lines = result.content[0].text.splitlines()
     assert lines[0] == "Codex did not finish: it returned no answer."
-    assert lines[1].startswith("Codex itself reported an error") and "modelquad doctor" in lines[1]
+    # worker_reported is also the catch-all for a crash or an outside kill,
+    # so the sentence does not claim to know which.
+    assert lines[1].startswith("Codex ended with an error or was stopped")
+    assert "modelquad doctor" in lines[1]
     # Claude Code hands Claude the data, so the sentence is there too.
     assert result.structured_content["reason"] == "worker_reported"
     assert result.structured_content["message"] == lines[1]
