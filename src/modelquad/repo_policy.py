@@ -516,7 +516,9 @@ def message(code: str, policy: RepoPolicy | None = None, *, task_type=None, acco
                  "(a reading an earlier version stored does not count)")
         return (f"This repository's {FILE_NAME} allows Codex only on a work account "
                 f"([codex] account = \"workspace\"), and {which}, so ModelQuad started nothing. "
-                "Use a work Codex account here, or change that line.")
+                + ("Use a work Codex account here, or change that line." if account_kind == "personal"
+                   else "No account passes this rule in this version: to use Codex here, set that "
+                        "line to account = \"any\" or remove it."))
     problem = policy.problem if policy is not None and policy.problem in PROBLEMS else None
     key = policy.problem_key if policy is not None and policy.problem_key in _KNOWN_KEYS else None
     what = _PROBLEM_TEXT.get(problem, "could not be used")

@@ -182,6 +182,11 @@ def test_the_workspace_rule_refuses_because_the_account_is_unknown(tmp_path, no_
     assert payload["reason"] == rp.ACCOUNT_WORKSPACE_REQUIRED and started == []
     assert payload["refused"] is True and payload["started"] is False
     assert "does not read which Codex account" in payload["message"]
+    # The way out it names must work: switching accounts would not, here.
+    assert "Use a work Codex account" not in payload["message"]
+    assert 'account = "any"' in payload["message"]
+    from modelquad.execution import noshell
+    assert "Use a work Codex account" not in noshell.REFUSAL_MESSAGES[rp.ACCOUNT_WORKSPACE_REQUIRED]
     assert package("review", "Review it.", str(repo))["reason"] == rp.ACCOUNT_WORKSPACE_REQUIRED
 
 

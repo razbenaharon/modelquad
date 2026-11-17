@@ -162,7 +162,8 @@ REFUSAL_MESSAGES = {
         "was started. Ask for a kind it lists in [codex] task_kinds, or edit that line."),
     "repo_policy_account_workspace_required": (
         "This repository's .modelquad.toml allows Codex only on a work account, so nothing was "
-        "started. Use a work Codex account here, or change [codex] account."),
+        "started. This version cannot confirm an account, so no account passes: set [codex] "
+        "account = \"any\" or remove the line to use Codex here."),
     "repo_policy_invalid": (
         "This repository's .modelquad.toml is not valid, so ModelQuad refuses Codex here until "
         "it is fixed. Use the schema 1 format in docs/REPO-POLICY.md, or remove the file."),
