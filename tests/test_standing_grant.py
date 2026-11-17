@@ -14,7 +14,23 @@ from pathlib import Path
 import pytest
 
 from modelquad import grant, repo_settings
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+from modelquad.mcp import worker_guard
 from modelquad.procutil import no_window_kwargs
+
+
+class _Recorder:
+    """Stands in for Codex: notes the folder of each request that passed the gates."""
+
+    def __init__(self, reached):
+        self.reached = reached
+
+    def execute(self, request):
+        self.reached.append(str(request.working_directory))
+        return ExecutionResult(provider="codex", success=False, output="", exit_code=None,
+                               task_status=WorkerTaskStatus.BLOCKED,
+                               task_status_reason="codex_version_unsupported",
+                               metadata={"worker_started": False})
 
 
 def _repo(path: Path) -> Path:
@@ -86,11 +102,15 @@ def test_a_session_without_the_marker_refuses_an_ungranted_folder(tmp_path, monk
 
     monkeypatch.setattr(server, "_STANDING_GRANT", True)
     monkeypatch.setattr(server._grant, "allows", lambda directory: False)
+    monkeypatch.setattr(server, "_executor", lambda: _Recorder([]))
+    monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
     result = asyncio.run(server.modelquad_delegate(
         task_type="review", prompt="look", working_directory=str(tmp_path), timeout=10))
     payload = result.structured_content
     assert payload["refused"] is True and payload["started"] is False
     assert payload["reason"] == grant.NO_GRANT
+    assert payload["message"] == grant.NO_GRANT_MESSAGE
+    assert result.content[0].text.splitlines()[0] == "Codex was not started."
 
 
 def test_the_marker_is_set_without_a_grant():
@@ -98,7 +118,6 @@ def test_the_marker_is_set_without_a_grant():
 
     tools = {tool.name: tool for tool in asyncio.run(server.server.list_tools())}
     assert tools["modelquad_delegate"].meta["anthropic/requiresUserInteraction"] is True
-    assert tools["modelquad_handoff"].meta["anthropic/requiresUserInteraction"] is True
 
 
 def test_with_a_grant_the_server_registers_delegate_without_the_marker(tmp_path):
@@ -117,15 +136,13 @@ def test_with_a_grant_the_server_registers_delegate_without_the_marker(tmp_path)
     show = ("import asyncio, json; from modelquad.mcp import server; "
             "tools = {t.name: t.meta for t in asyncio.run(server.server.list_tools())}; "
             "print(json.dumps({'standing': server._STANDING_GRANT, "
-            "'delegate': tools['modelquad_delegate'], 'handoff': tools['modelquad_handoff']}))")
+            "'delegate': tools['modelquad_delegate']}))")
     out = subprocess.run([sys.executable, "-c", show], env=dict(env, CLAUDE_PROJECT_DIR=str(repo)),
                          check=True, capture_output=True, text=True, timeout=180, cwd=str(repo),
                          **no_window_kwargs())
     seen = json.loads(out.stdout.strip().splitlines()[-1])
     assert seen["standing"] is True
     assert "anthropic/requiresUserInteraction" not in (seen["delegate"] or {})
-    # The low-quota handoff keeps its prompt either way.
-    assert seen["handoff"]["anthropic/requiresUserInteraction"] is True
 
 
 def test_the_cli_needs_a_typed_yes(tmp_path, capsys, monkeypatch):
@@ -186,7 +203,7 @@ def test_the_refusal_tells_claude_to_tell_the_user_and_turn_nothing_on():
     assert "Tell the user" in message and "started nothing" in message
     assert "/modelquad:settings" in message and "own terminal" in message
     assert "Do not run any command to turn it back on yourself" in message
-    assert "Never turn on a grant, reconnect ModelQuad or undo an exclusion unless the user asks" in _NEVER_REENABLE
+    assert "Never turn on a grant, turn ModelQuad back on or undo an exclusion unless the user asks" in _NEVER_REENABLE
     assert _STANDING.endswith(_NEVER_REENABLE) and _NEVER_REENABLE in _REST
     for proactive in (True, False):
         assert server_instructions(proactive).count(_NEVER_REENABLE) == 1
@@ -349,14 +366,15 @@ def test_without_the_prompt_a_call_stays_inside_the_sessions_folder(tmp_path, mo
     monkeypatch.setattr(server, "_STANDING_GRANT", True)
     monkeypatch.setattr(server, "_SESSION_PROJECT", str(project))
     monkeypatch.setattr(server._grant, "allows", lambda directory: True)
+    monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
     reached = []
-    monkeypatch.setattr(server, "_notice_before_first_call",
-                        lambda *args: reached.append(args[1]) or server._refused_result({"stop": True}))
+    monkeypatch.setattr(server, "_executor", lambda: _Recorder(reached))
     result = asyncio.run(server.modelquad_delegate(
         task_type="review", prompt="look", working_directory=str(other), timeout=10))
     payload = result.structured_content
     assert payload["refused"] is True and payload["started"] is False
     assert payload["reason"] == grant.OTHER_FOLDER
+    assert payload["message"] == grant.OTHER_FOLDER_MESSAGE
     assert reached == []
     for inside in (project, project / "sub"):
         asyncio.run(server.modelquad_delegate(

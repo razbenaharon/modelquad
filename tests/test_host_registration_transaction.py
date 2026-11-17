@@ -20,33 +20,37 @@ Two separate properties are covered, and they fail in different ways:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from modelquad import cli
 from modelquad.adapters.claude_adapter import ClaudeAdapter
 from modelquad.adapters.registration import (
-    HostRegistrationOutcome,
+    BackupPersistenceError,
     RegistrationStatus,
     RestoreStatus,
     backup_path,
-    note_installed_registration,
-    record_replaced_registration,
+    classify_registration_change,
+    install_with_registration,
     recorded_replacement,
     restore_previous_registration,
+    restore_supported,
 )
-from modelquad.onboarding import install_detected_hosts
-from modelquad.registry import (
-    HostAdapterDescriptor,
-    ProviderCapabilities,
-    ProviderPlugin,
-    ProviderRegistry,
-    UsageSourceKind,
-)
+from modelquad.adapters.registry import HostAdapterDescriptor
+from modelquad.hostruntime import read_registered_command, read_registered_entry
 
 
 HOST_ID = "claude"
+
+_CONNECTED = (
+    RegistrationStatus.CONNECTED_NEW,
+    RegistrationStatus.CONNECTED_UNCHANGED,
+    RegistrationStatus.CONNECTED_REPLACED,
+)
 
 
 @pytest.fixture
@@ -73,34 +77,61 @@ def claude_home(tmp_path: Path) -> Path:
     return target
 
 
-def _registry(target: Path) -> ProviderRegistry:
-    """A registry whose one host is the REAL Claude adapter, aimed at tmp_path.
+@dataclass(frozen=True)
+class InstallOutcome:
+    """What one install did to the registration, read before and after it ran.
+
+    ``status`` is None when the install finished and no registration is on
+    disk; that is not a connected outcome of any kind.
+    """
+
+    status: RegistrationStatus | None
+    previous_registration_present: bool = False
+    previous_registration_different: bool = False
+    previous_command: str | None = None
+    new_command: str | None = None
+    error: str | None = None
+    report: Any | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.status in _CONNECTED
+
+
+def install_host(claude_home: Path, *, dry_run: bool = False) -> InstallOutcome:
+    """Install through the REAL Claude adapter and the registration transaction.
 
     The real adapter is used deliberately: the defect lived in the interaction
     between the adapter's ``upsert``/``remove`` pair and the result model, so a
-    stub adapter would test the reporting and miss the destruction.
+    stub adapter would test the reporting and miss the destruction. This is
+    the path ``modelquad install claude`` takes; the outcome is the product's
+    own classification of the registration read before and after.
     """
 
-    return ProviderRegistry(
-        (
-            ProviderPlugin(
-                id="claude",
-                display_name="Claude",
-                capabilities=ProviderCapabilities(coding=True),
-                usage_source_kind=UsageSourceKind.LOCAL_LOGS,
-                cli_executable="claude",
-                host_adapters=(
-                    HostAdapterDescriptor(
-                        id=HOST_ID,
-                        display_name="Claude Code",
-                        provider_id="claude",
-                        adapter_cls=ClaudeAdapter,
-                        default_target_dir=lambda: target,
-                        detect=lambda: True,
-                    ),
-                ),
-            ),
+    before_entry = read_registered_entry(HOST_ID, claude_home)
+    before_command = read_registered_command(HOST_ID, claude_home)
+    had_prior = before_entry is not None or before_command is not None
+    try:
+        report = install_with_registration(
+            HOST_ID, claude_home, ClaudeAdapter(via_plugin=False), dry_run=dry_run
         )
+    except (OSError, ValueError, BackupPersistenceError) as exc:
+        return InstallOutcome(
+            RegistrationStatus.FAILED, previous_registration_present=had_prior,
+            previous_command=before_command, error=str(exc),
+        )
+    after_command = read_registered_command(HOST_ID, claude_home)
+    status = classify_registration_change(
+        before_entry=before_entry, before_command=before_command,
+        after_entry=read_registered_entry(HOST_ID, claude_home), after_command=after_command,
+    )
+    return InstallOutcome(
+        status,
+        previous_registration_present=had_prior,
+        previous_registration_different=status is RegistrationStatus.CONNECTED_REPLACED,
+        previous_command=before_command,
+        new_command=after_command,
+        report=report,
     )
 
 
@@ -123,10 +154,8 @@ def _read_registration(claude_home: Path) -> dict | None:
     return payload.get("mcpServers", {}).get("modelquad")
 
 
-def _install(claude_home: Path):
-    return install_detected_hosts(
-        [HOST_ID], dry_run=False, registry=_registry(claude_home)
-    )[0]
+def _install(claude_home: Path) -> InstallOutcome:
+    return install_host(claude_home)
 
 
 # ---------------------------------------------------------------------------
@@ -175,88 +204,31 @@ def test_replacing_a_different_registration_says_so(state_root, claude_home):
     assert _read_registration(claude_home) != original
 
 
-def test_a_replacement_is_worded_differently_from_a_fresh_connection(
-    state_root, claude_home, tmp_path
+def test_a_supported_host_can_have_its_registration_restored(state_root, claude_home):
+    """Claude Code's entry is a JSON value this product can rewrite verbatim."""
+
+    _write_registration(claude_home, {"command": "modelquad-mcp"})
+    _install(claude_home)
+
+    assert restore_supported(HOST_ID, claude_home) is True
+
+
+def test_an_undetected_host_is_not_reported_as_connected(
+    state_root, claude_home, monkeypatch, capsys
 ):
-    """The three outcomes must not collapse back into one sentence."""
+    monkeypatch.setattr(cli, "get_host_descriptor", lambda client: HostAdapterDescriptor(
+        id=HOST_ID, display_name="Claude Code", adapter_cls=ClaudeAdapter,
+        default_target_dir=lambda: claude_home, detect=lambda: False,
+    ))
 
-    from modelquad.onboarding import _host_step_wording
+    assert cli.main(["install", "--global", "--json"]) == 0
 
-    host = _registry(claude_home).all()[0].host_adapters[0]
-    fresh = _install(claude_home)
-    fresh_detail, fresh_user = _host_step_wording(host, fresh, dry_run=False)
-
-    other = tmp_path / "other.claude"
-    other.mkdir()
-    _write_registration(other, {"command": "modelquad-mcp"})
-    replaced = _install(other)
-    replaced_detail, replaced_user = _host_step_wording(host, replaced, dry_run=False)
-
-    assert fresh_user != replaced_user
-    assert "replac" in replaced_user.lower()
-    assert fresh_detail != replaced_detail
-
-
-def test_a_supported_host_may_promise_the_restore(state_root, claude_home):
-    """Claude Code's entry is a JSON value this product can rewrite verbatim,
-    so saying the previous one was saved is true."""
-
-    from modelquad.onboarding import _host_step_wording
-
-    _write_registration(claude_home, {"command": "modelquad-mcp"})
-    host = _registry(claude_home).all()[0].host_adapters[0]
-    outcome = _install(claude_home)
-    assert outcome.restore_supported is True
-
-    detail, user_detail = _host_step_wording(host, outcome, dry_run=False)
-
-    assert "saved" in user_detail.lower()
-    assert "can be restored" in detail.lower()
-
-
-def test_the_user_sentence_never_names_a_path(state_root, claude_home):
-    """``user_detail`` is plain language; launch commands are absolute paths."""
-
-    from modelquad.onboarding import _host_step_wording
-
-    _write_registration(claude_home, {"command": "modelquad-mcp"})
-    host = _registry(claude_home).all()[0].host_adapters[0]
-    outcome = _install(claude_home)
-    _detail, user_detail = _host_step_wording(host, outcome, dry_run=False)
-
-    assert outcome.new_command not in user_detail
-    assert "modelquad-mcp" not in user_detail
-    assert "\\" not in user_detail and "/" not in user_detail
-
-
-def test_an_undetected_host_is_not_reported_as_connected(state_root, claude_home):
-    registry = _registry(claude_home)
-    plugin = registry.all()[0]
-    absent = ProviderRegistry(
-        (
-            ProviderPlugin(
-                id=plugin.id,
-                display_name=plugin.display_name,
-                capabilities=plugin.capabilities,
-                usage_source_kind=plugin.usage_source_kind,
-                cli_executable=plugin.cli_executable,
-                host_adapters=(
-                    HostAdapterDescriptor(
-                        id=HOST_ID,
-                        display_name="Claude Code",
-                        provider_id="claude",
-                        adapter_cls=ClaudeAdapter,
-                        default_target_dir=lambda: claude_home,
-                        detect=lambda: False,
-                    ),
-                ),
-            ),
-        )
-    )
-    outcome = install_detected_hosts([HOST_ID], dry_run=False, registry=absent)[0]
-
-    assert outcome.status is RegistrationStatus.NOT_DETECTED
-    assert outcome.ok is False
+    result, = json.loads(capsys.readouterr().out)["results"]
+    assert result["detected"] is False
+    assert result["report"] is None
+    assert _read_registration(claude_home) is None
+    assert recorded_replacement(HOST_ID) is None
+    assert not (claude_home / "skills").exists()
 
 
 def test_the_record_never_captures_a_neighbouring_mcp_server(state_root, claude_home):

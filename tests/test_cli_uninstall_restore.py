@@ -26,14 +26,13 @@ import pytest
 from modelquad import cli
 from modelquad.adapters.claude_adapter import ClaudeAdapter
 from modelquad.adapters.registration import recorded_replacement
-from modelquad.onboarding import install_detected_hosts
 
 from test_host_registration_transaction import (  # noqa: F401 -- fixtures + helpers
     HOST_ID,
     _read_registration,
-    _registry,
     _write_registration,
     claude_home,
+    install_host,
     state_root,
 )
 
@@ -42,7 +41,8 @@ ENV_VALUE_SENTINEL = "modelquad-test-sentinel-cli-must-not-print-this"
 
 
 def _install(home: Path):
-    return install_detected_hosts([HOST_ID], dry_run=False, registry=_registry(home))[0]
+    """``modelquad install claude``'s path: the real adapter inside the registration transaction."""
+    return install_host(home)
 
 
 def _uninstall(home: Path, *, as_json: bool = False) -> int:
@@ -436,12 +436,12 @@ def test_uninstall_leaves_no_skill_folders_and_keeps_a_copy_of_an_edited_skill(
 ):
     _install(claude_home)
     skills = claude_home / "skills"
-    edited = skills / "modelquad-quota" / "SKILL.md"
+    edited = skills / "modelquad-review" / "SKILL.md"
     edited.write_bytes(edited.read_bytes() + b"my own note\n")
 
     assert _uninstall(claude_home) == 0
 
     left = sorted(p.name for p in skills.iterdir()) if skills.exists() else []
-    assert left == ["modelquad-quota"], left
-    copies = list((skills / "modelquad-quota").iterdir())
+    assert left == ["modelquad-review"], left
+    copies = list((skills / "modelquad-review").iterdir())
     assert len(copies) == 1 and b"my own note" in copies[0].read_bytes()

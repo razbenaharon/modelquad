@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Fresh-process startup boundaries; never start a provider or a service."""
+"""Fresh-process startup boundaries: a hook never loads the CLI or the MCP server."""
 
 from __future__ import annotations
 
@@ -38,12 +38,20 @@ def forbid_spawn(event, args):
 sys.addaudithook(forbid_spawn)
 """
 
+#: What a hook process must never have loaded when it exits.
+NOTHING_HEAVY = """
+heavy = sorted(name for name in sys.modules if name in ('modelquad.cli', 'modelquad.mcp.server')
+               or name.split('.')[0] in ('mcp', 'pydantic', 'anyio'))
+assert not heavy, heavy
+"""
 
-def test_runner_launch_sources_do_not_import_mcp():
+
+def test_execution_sources_do_not_import_mcp():
     root = Path(__file__).resolve().parents[1] / "src" / "modelquad"
-    sources = [root / "jobs" / "runner.py", *(root / "execution").rglob("*.py")]
+    sources = sorted((root / "execution").rglob("*.py"))
+    assert sources
     for path in sources:
-        package = "modelquad." + ".".join(path.parent.relative_to(root).parts)
+        package = ".".join(("modelquad", *path.parent.relative_to(root).parts))
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
                 modules = [alias.name for alias in node.names]
@@ -57,76 +65,83 @@ def test_runner_launch_sources_do_not_import_mcp():
                            module == "modelquad.mcp.server" for module in modules), path
 
 
-def test_runner_delegation_imports_are_light():
-    _fresh(NO_SPAWNS + """
-import ast
-import inspect
-import sys
-from modelquad.jobs import runner
-
-# Import the real delegation path's immediate dependencies without executing
-# admission, history writes, repository probes or a worker.
-function = ast.parse(inspect.getsource(runner._run_delegation)).body[0]
-imports = ast.Module(body=[node for node in function.body
-    if isinstance(node, (ast.Import, ast.ImportFrom))], type_ignores=[])
-namespace = {}
-exec(compile(imports, 'runner-delegation-imports', 'exec'), namespace)
-assert namespace['_bind_launch'].__module__ == 'modelquad.execution.bound_launch'
-assert namespace['run_bound_delegation'].__module__ == 'modelquad.execution.bound_launch'
-assert 'modelquad.mcp.server' not in sys.modules
-assert not any(name == 'mcp' or name.startswith('mcp.') for name in sys.modules)
-""")
-
-
-@pytest.mark.parametrize("host", ["claude"])
-@pytest.mark.parametrize("count", [0, 1])
-def test_hook_entry_imports_are_light(host, count):
+@pytest.mark.parametrize("event", [
+    # An edit: the reminder counts the file and may write its record.
+    {"hook_event_name": "PostToolUse", "tool_name": "Edit", "session_id": "startup-fixture",
+     "tool_input": {"file_path": "a.py"}},
+    # The end of a turn: the review gate's path.
+    {"hook_event_name": "Stop", "session_id": "startup-fixture"},
+], ids=["edit", "stop"])
+def test_the_review_hook_imports_are_light(event, tmp_path):
     output = _fresh(NO_SPAWNS + f"""
 import io
 import json
-import sys
-from pathlib import Path
+import os
 from modelquad.cli_entry import main
-from modelquad.jobs import service_client
 
-# Exercise valid input, directory hashing and serialization with an offline
-# service reply, so an invalid-event shortcut cannot hide heavy imports.
-service_client.read_pending_summary = lambda *args, **kwargs: {{
-    'count': {count}, 'more': False, 'jobs': [{ {
-        'job_id': 'startup-fixture', 'job_status': 'finished', 'task_type': 'review',
-        'may_have_changed_files': False, 'expires_at': '2099-01-01T00:00:00Z',
-        'expiring_soon': False,
-    }!r}] if {count} else []}}
-sys.stdin = io.StringIO(json.dumps({{'hook_event_name': 'SessionStart',
-                                   'cwd': str(Path.cwd())}}))
-sys.stdout = io.StringIO()
-assert main(['hook-pending', {host!r}]) == 0
-output = sys.stdout.getvalue()
-assert bool(output) == bool({count})
-if output:
-    assert json.loads(output)['hookSpecificOutput']['hookEventName'] == 'SessionStart'
-assert 'modelquad.cli' not in sys.modules
-assert 'modelquad.mcp.server' not in sys.modules
-assert 'modelquad.service.app' not in sys.modules
-assert not any(name == 'mcp' or name.startswith('mcp.') or
-               name == 'fastapi' or name.startswith('fastapi.') for name in sys.modules)
-""")
+# Valid input in a real folder, so an invalid-event shortcut cannot hide heavy imports.
+os.environ['MODELQUAD_STATE_ROOT'] = {str(tmp_path / "state")!r}
+event = dict({event!r}, cwd={str(tmp_path)!r})
+if 'tool_input' in event:
+    event['tool_input']['file_path'] = os.path.join({str(tmp_path)!r}, event['tool_input']['file_path'])
+
+
+class Stdin:
+    buffer = io.BytesIO(json.dumps(event).encode('utf-8'))
+
+
+sys.stdin = Stdin()
+assert main(['hook-review', 'claude']) == 0
+assert 'modelquad.adapters.review_reminder' in sys.modules
+""" + NOTHING_HEAVY)
+    assert output == ""
+
+
+@pytest.mark.parametrize("argv", [
+    ["hook-pending", "claude"], ["hook-gate"], ["usage-hook", "claude", "--quiet"],
+    ["--usage-directory", "DIR", "usage-hook", "claude"],
+])
+def test_a_retired_hook_command_imports_nothing_and_reads_nothing(argv):
+    output = _fresh(NO_SPAWNS + f"""
+from modelquad.cli_entry import main
+
+
+class ForbiddenInput:
+    def read(self, *args):
+        raise AssertionError('a retired hook read stdin')
+    buffer = property(lambda self: self.read())
+
+
+sys.stdin = ForbiddenInput()
+assert main({argv!r}) == 0
+loaded = sorted(name for name in sys.modules if name.startswith('modelquad'))
+assert loaded == ['modelquad', 'modelquad.cli_entry', 'modelquad.netpolicy'], loaded
+""" + NOTHING_HEAVY)
     assert output == ""
 
 
 def test_worker_hook_entry_does_not_import_handler_or_read_input():
     _fresh(NO_SPAWNS + """
 import os
-import sys
 from modelquad.cli_entry import main
 class ForbiddenInput:
     def read(self, *args):
         raise AssertionError('worker read stdin')
+    buffer = property(lambda self: self.read())
 sys.stdin = ForbiddenInput()
 os.environ['MODELQUAD_WORKER'] = '1'
-assert main(['hook-pending', 'claude']) == 0
-assert 'modelquad.adapters.pending_reminder' not in sys.modules
+assert main(['hook-review', 'claude']) == 0
+assert 'modelquad.adapters.review_reminder' not in sys.modules
 assert 'modelquad.cli' not in sys.modules
+""")
+
+
+def test_importing_the_cli_does_not_load_the_mcp_server():
+    _fresh(NO_SPAWNS + """
+import modelquad.cli
+modelquad.cli.build_parser()
+assert 'modelquad.mcp.server' not in sys.modules
+assert not any(name.split('.')[0] in ('mcp', 'pydantic', 'anyio') for name in sys.modules)
 """)
 
 
@@ -137,7 +152,7 @@ def test_other_commands_keep_cli_dispatch_and_arguments(monkeypatch):
     calls = []
     monkeypatch.setitem(sys.modules, "modelquad.cli", SimpleNamespace(
         main=lambda argv: calls.append(argv) or 7))
-    args = ["--history-db", "fixture.db", "status"]
+    args = ["settings", "show"]
     assert main(args) == 7
     assert calls == [args]
 
@@ -148,63 +163,3 @@ def test_installed_commands_use_the_light_entry():
     scripts = config["project"]["scripts"]
     assert scripts["modelquad"] == "modelquad.cli_entry:main"
     assert set(scripts) == {"modelquad", "modelquad-mcp"}
-
-
-@pytest.mark.parametrize("command", ["hook-pending", "usage-hook", "hook-gate", "mcp"])
-def test_light_entry_preserves_live_protocol_stdout_and_discards_stderr(monkeypatch, command):
-    import io
-    from types import SimpleNamespace
-    from modelquad import cli_entry, windowless_diagnostics as diagnostics
-    out = io.StringIO()
-    monkeypatch.setattr(sys, "stdout", out)
-    monkeypatch.setattr(sys, "stderr", None)
-    monkeypatch.setattr(diagnostics, "_active", False)
-    monkeypatch.setattr(diagnostics, "_sink", None)
-    monkeypatch.setattr(diagnostics, "bind_selected_state", lambda role: pytest.fail("protocol bound a log"))
-    # The light handlers are bypassed so every protocol command reaches the
-    # same fixture dispatch; they have their own tests.
-    monkeypatch.setattr(cli_entry, "dispatch_pending", lambda argv: None)
-    monkeypatch.setattr(cli_entry, "dispatch_usage_hook", lambda argv: None)
-    monkeypatch.setattr(cli_entry, "dispatch_gate", lambda argv: None)
-    def dispatch(argv):
-        sys.stdout.write('{"fixture":"live-protocol"}\n')
-        sys.stdout.flush()
-        sys.stderr.write('private traceback canary')
-        return 0
-    monkeypatch.setitem(sys.modules, "modelquad.cli", SimpleNamespace(main=dispatch))
-    assert cli_entry.main([command]) == 0
-    assert out.getvalue() == '{"fixture":"live-protocol"}\n'
-
-
-def test_cli_import_failure_after_explicit_state_has_only_fixed_diagnostics(monkeypatch, tmp_path):
-    from types import SimpleNamespace
-    from modelquad import cli_entry, windowless_diagnostics as diagnostics
-    default, chosen = tmp_path / "default", tmp_path / "chosen"
-    monkeypatch.setenv("MODELQUAD_STATE_ROOT", str(default))
-    monkeypatch.setattr(sys, "stdout", None)
-    monkeypatch.setattr(sys, "stderr", None)
-    monkeypatch.setattr(diagnostics, "_active", False)
-    monkeypatch.setattr(diagnostics, "_sink", None)
-    monkeypatch.setattr(diagnostics, "_budgets", {})
-    def fail(argv):
-        assert isinstance(sys.stdout, diagnostics.NullText)
-        assert (chosen / "logs" / "service-diagnostics.log").exists()
-        sys.stderr.write('private task contents canary')
-        raise ImportError('private import exception canary')
-    monkeypatch.setitem(sys.modules, "modelquad.cli", SimpleNamespace(main=fail))
-    assert cli_entry.main(["serve", "--managed-child", "--state-root", str(chosen)]) == 1
-    lines = (chosen / "logs" / "service-diagnostics.log").read_text(encoding="utf-8").splitlines()
-    assert [line.split(" ", 1)[1] for line in lines] == ["entry", "startup_failed", "exit"]
-    assert not default.exists()
-
-
-def test_broken_protocol_dispatch_cannot_escape_as_a_startup_traceback(monkeypatch):
-    from types import SimpleNamespace
-    from modelquad import cli_entry, windowless_diagnostics as diagnostics
-    monkeypatch.setattr(sys, "stdout", None)
-    monkeypatch.setattr(sys, "stderr", None)
-    monkeypatch.setattr(diagnostics, "_active", False)
-    monkeypatch.setattr(diagnostics, "_sink", None)
-    monkeypatch.setitem(sys.modules, "modelquad.cli", SimpleNamespace(
-        main=lambda argv: (_ for _ in ()).throw(OSError("private transport failure"))))
-    assert cli_entry.main(["mcp"]) == 0

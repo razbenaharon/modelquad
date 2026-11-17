@@ -14,11 +14,9 @@ from typing import Any
 
 import pytest
 
-import modelquad.catalog as catalog_mod
 import modelquad.execution as exec_mod
 import modelquad.execution.base as exec_base
 import modelquad.procutil as procutil
-import modelquad.usage.base as usage_base
 from modelquad.procutil import no_window_kwargs, run_with_tree_kill
 
 
@@ -131,7 +129,6 @@ def test_no_window_kwargs_reexported_identically():
     """All re-exports must refer to the exact same canonical function object."""
     assert exec_base.no_window_kwargs is procutil.no_window_kwargs
     assert exec_mod.no_window_kwargs is procutil.no_window_kwargs
-    assert usage_base.no_window_kwargs is procutil.no_window_kwargs
 
 
 # --- 5. Window-suppression invariant -----------------------------------------
@@ -197,8 +194,7 @@ def _spawn_aliases(scope: ast.AST, module_names: frozenset[str] | None = None) -
     convention is an injected test seam -- ``run: Callable[...] = subprocess.run``
     as a keyword-only parameter, invoked as a bare ``run(...)`` -- and a scan
     that only recognised the literal attribute form would silently skip
-    ``catalog.py``, both executors, ``service/lifecycle.py`` and the usage
-    collectors. That is worse than no test: it reports green while the
+    the executor and every other seam written that way. That is worse than no test: it reports green while the
     invariant it claims to protect is unenforced. Verified by deleting the flag
     from one such call site and watching the attribute-only version still pass.
     """

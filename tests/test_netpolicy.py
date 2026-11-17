@@ -76,20 +76,35 @@ def test_entry_points_install_the_guard():
     import inspect
 
     from modelquad import cli_entry
-    from modelquad.jobs import runner
     from modelquad.mcp import server
 
-    for function in (cli_entry.main, server.main, runner.main):
+    for function in (cli_entry.main, server.main):
         assert "install_loopback_guard()" in inspect.getsource(function), function
 
 
-def test_an_api_execution_provider_is_refused_before_routing(monkeypatch):
-    from modelquad import registry
+def test_the_installed_commands_are_exactly_the_guarded_entry_points():
+    """A new console script is a new entry point: it must install the guard too."""
+    import tomllib
+    from pathlib import Path
 
-    monkeypatch.setattr(registry, "api_execution_providers", lambda registry=None: ("vendor",))
-    assert netpolicy.providers_refused_by_policy() == {"vendor": netpolicy.LOOPBACK_ONLY_REASON}
-    monkeypatch.setattr(registry, "api_execution_providers", lambda registry=None: ())
-    assert netpolicy.providers_refused_by_policy() == {}
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert project["scripts"] == {"modelquad": "modelquad.cli_entry:main",
+                                  "modelquad-mcp": "modelquad.mcp.server:main"}
+    assert "gui-scripts" not in project
+
+
+@pytest.mark.parametrize("argv", [["hook-gate"], ["hook-review", "claude", "extra"], ["--version"]])
+def test_the_command_turns_the_guard_on_before_it_does_anything(argv):
+    """Also for a hook that exits at once: the guard comes first, not after dispatch."""
+    from modelquad import cli_entry
+
+    assert netpolicy.guard_active is False
+    try:
+        cli_entry.main(argv)
+    except SystemExit:
+        pass
+    assert netpolicy.guard_active is True
 
 
 def test_modelquad_code_makes_none_of_the_calls_the_guard_cannot_see():
@@ -110,9 +125,5 @@ def test_modelquad_code_makes_none_of_the_calls_the_guard_cannot_see():
         for line in path.read_text(encoding="utf-8").splitlines():
             if unseen.search(line):
                 found.append(f"{path.relative_to(src).as_posix()}: {line.strip()}")
-    # The one outbound connect names the literal loopback address, so the
-    # lookup inside socket.create_connection makes no resolver query.
-    assert found == [
-        'service/listener.py: sock = socket.create_connection(("127.0.0.1", port),'
-        " timeout=_remaining(deadline, 0.75))"
-    ], found
+    # With the local service gone, ModelQuad's own code opens no connection at all.
+    assert found == [], found

@@ -271,34 +271,31 @@ def test_no_secret_survives_into_execution_result_metadata(execute, stream):
 
 
 @pytest.mark.parametrize("stream", [_hostile_stream, _clean_stream], ids=["hostile", "clean"])
-def test_secrets_do_not_reach_sqlite_history(tmp_path, execute, stream):
-    from modelquad.service import history as service_history
+def test_secrets_do_not_reach_the_reply_or_the_review_ledger(tmp_path, stream, synthetic_worker_binary,
+                                                             qualified_codex_inventory):
+    from modelquad import review, review_ledger
 
-    db = tmp_path / "history.db"
-    result = execute(_Run(stdout=stream(), stderr=STDERR_WITH_CREDS))
+    executor = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'),
+                             run=_Run(stdout=stream(), stderr=STDERR_WITH_CREDS),
+                             inventory=qualified_codex_inventory)
+    project = tmp_path / "project"
+    project.mkdir()
 
-    service_history.record_execution(
-        db, "review", result, duration_seconds=2.0, decision_id="d-1",
-        project=tmp_path.name,
-    )
-    # Directly against the raw stored row.
-    import sqlite3
+    reply = review.run(review.ReviewRequest("review", RAW_PROMPT, str(project)), executor)
 
-    conn = sqlite3.connect(str(db))
+    assert reply["metadata"]["worker_started"] is True
+    _assert_no_secrets(json.dumps(reply, default=str), where="the reply")
+    # Directly against the raw stored rows of the only file a run writes.
+    assert "findings_note" not in reply or "could not record" not in reply["findings_note"]
+    conn = review_ledger.connect()
     try:
-        rows = conn.execute("SELECT * FROM execution_history").fetchall()
+        tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        rows = {table: [list(map(str, row)) for row in conn.execute(f"SELECT * FROM {table}")]
+                for table in tables}
     finally:
         conn.close()
-    _assert_no_secrets(json.dumps([list(map(str, row)) for row in rows]), where="SQLite row")
-
-
-def test_secrets_do_not_reach_outcome_evidence(tmp_path, execute):
-    from modelquad.outcome import finalize_execution_result
-
-    result = finalize_execution_result(execute(_Run(stdout=_clean_stream(), stderr=STDERR_WITH_CREDS)),
-                                       working_directory=tmp_path)
-    assert result.evidence is not None
-    _assert_no_secrets(json.dumps(result.evidence.to_dict(), default=str), where="OutcomeEvidence")
+    assert rows["runs"], "the run was not recorded, so the scan below proves nothing"
+    _assert_no_secrets(json.dumps(rows), where="review ledger rows")
 
 
 def test_secrets_do_not_reach_error_text_on_failure(execute):

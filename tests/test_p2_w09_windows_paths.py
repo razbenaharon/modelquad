@@ -15,7 +15,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tomllib
 
 import pytest
 
@@ -213,12 +212,13 @@ def test_installer_rendering_is_canonical(monkeypatch, tmp_path, folder, argumen
 
 @pytest.mark.parametrize("host", ["claude"], ids=["claude"])
 @pytest.mark.parametrize("folder", PATH_CASES)
-def test_adapter_install_repair_and_uninstall(monkeypatch, tmp_path, host, folder):
-    """A pinned launcher in any folder is ours, is replaced by the bare name, and is removed."""
+def test_adapter_install_removes_a_pinned_status_line_and_uninstall_keeps_the_rest(
+    monkeypatch, tmp_path, host, folder,
+):
+    """A status line an earlier build pinned in any folder is ours: install takes it back."""
     shim = tmp_path / folder / "modelquad.cmd"
     shim.parent.mkdir()
     shim.touch()
-    which = lambda _: str(shim)
     adapter, target, options, settings, mcp = _adapter_install(host, tmp_path)
     settings.parent.mkdir(parents=True, exist_ok=True)
     args = ("usage-hook", host)
@@ -228,72 +228,58 @@ def test_adapter_install_repair_and_uninstall(monkeypatch, tmp_path, host, folde
     assert owns_cli_command(old, args)
     first = adapter.install(target, **options)
     assert not any(action.kind is ActionKind.SKIPPED for action in first.actions)
+    assert any(action.path == settings and action.kind is ActionKind.REMOVED for action in first.actions)
     assert hostruntime.read_registered_command(host, target) == "modelquad-mcp"
     payload = json.loads(settings.read_text(encoding="utf-8"))
-    command = payload["statusLine"]["command"]
-    assert command == hostruntime.integration_command("usage-hook", "claude") == "modelquad usage-hook claude"
-    assert hostruntime.classify_cli_registration(command, which=which).canonical
-    assert payload["owner"] == "preserve"
+    assert payload == {"owner": "preserve"}
     # The advisory gate is no longer installed.
     assert wired_commands(settings, "PreToolUse") == ()
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     second = adapter.install(target, **options)
-    assert not any(action.kind is ActionKind.UPDATED for action in second.actions)
+    assert all(action.kind is ActionKind.UNCHANGED for action in second.actions)
     assert before == {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     adapter.uninstall(target, **options)
     payload = json.loads(settings.read_text(encoding="utf-8"))
-    assert "statusLine" not in payload
-    assert payload["owner"] == "preserve"
+    assert payload == {"owner": "preserve"}
     assert not wired_commands(settings, "PreToolUse")
 
 
 # Literal fixtures captured from the base's whitespace-only renderer. These
 # expected bytes do not call the renderer or derive from the new implementation.
-@pytest.mark.parametrize("cli,mcp,hook,status,toml_line,json_line", [
+@pytest.mark.parametrize("cli,mcp,hook,json_line", [
     pytest.param(
         r"C:\Users\example\AppData\Local\ModelQuad\bin\modelquad.cmd",
         r"C:\Users\example\AppData\Local\ModelQuad\bin\modelquad-mcp.cmd",
         b'C:/Users/example/AppData/Local/ModelQuad/bin/modelquad.cmd hook-gate',
-        b'{"command": "C:/Users/example/AppData/Local/ModelQuad/bin/modelquad.cmd usage-hook claude", "type": "command"}',
-        b"command = 'C:\\Users\\example\\AppData\\Local\\ModelQuad\\bin\\modelquad-mcp.cmd'",
         b'"command": "C:\\\\Users\\\\example\\\\AppData\\\\Local\\\\ModelQuad\\\\bin\\\\modelquad-mcp.cmd"',
         id="owner_plain",
     ),
     pytest.param(
         r"C:\Users\Example User\bin\modelquad.cmd", r"C:\Users\Example User\bin\modelquad-mcp.cmd",
         b'"C:/Users/Example User/bin/modelquad.cmd" hook-gate',
-        b'{"command": "\\"C:/Users/Example User/bin/modelquad.cmd\\" usage-hook claude", "type": "command"}',
-        b"command = 'C:\\Users\\Example User\\bin\\modelquad-mcp.cmd'",
         b'"command": "C:\\\\Users\\\\Example User\\\\bin\\\\modelquad-mcp.cmd"',
         id="space",
     ),
     pytest.param(
         "C:\\Users\\שלום\\bin\\modelquad.cmd", "C:\\Users\\שלום\\bin\\modelquad-mcp.cmd",
         'C:/Users/שלום/bin/modelquad.cmd hook-gate'.encode("utf-8"),
-        b'{"command": "C:/Users/\\u05e9\\u05dc\\u05d5\\u05dd/bin/modelquad.cmd usage-hook claude", "type": "command"}',
-        "command = 'C:\\Users\\שלום\\bin\\modelquad-mcp.cmd'".encode("utf-8"),
         # The host's own file keeps non-ASCII characters as written.
         '"command": "C:\\\\Users\\\\שלום\\\\bin\\\\modelquad-mcp.cmd"'.encode("utf-8"),
         id="unicode_letters",
     ),
 ])
 @pytest.mark.parametrize("host", ["claude"], ids=["claude"])
-def test_plain_path_output_is_unchanged(monkeypatch, tmp_path, host, cli, mcp, hook, status, toml_line, json_line):
+def test_plain_path_output_is_unchanged(monkeypatch, tmp_path, host, cli, mcp, hook, json_line):
     monkeypatch.setattr(hostruntime, "cli_launch_command", lambda: cli)
     monkeypatch.setattr(hostruntime, "mcp_launch_command", lambda: mcp)
     adapter, target, options, settings, mcp_path = _adapter_install(host, tmp_path)
     report = adapter.install(target, **options)
     assert not any(action.kind is ActionKind.SKIPPED for action in report.actions)
-    if host == "codex":
-        assert toml_line in mcp_path.read_bytes().splitlines()
-    else:
-        assert json_line in [line.strip().rstrip(b",") for line in mcp_path.read_bytes().splitlines()]
-        payload = json.loads(settings.read_text(encoding="utf-8"))
-        if host == "claude":
-            # The gate is no longer installed; its spelling rule still holds.
-            assert wired_commands(settings, "PreToolUse") == ()
-            assert hostruntime.integration_command("hook-gate").encode("utf-8") == hook
-            assert json.dumps(payload["statusLine"], sort_keys=True).encode("utf-8") == status
+    assert json_line in [line.strip().rstrip(b",") for line in mcp_path.read_bytes().splitlines()]
+    # Install writes neither the gate nor a status line, so settings.json is not created;
+    # the gate's spelling rule still holds for the CLI launcher.
+    assert not settings.exists()
+    assert hostruntime.integration_command("hook-gate").encode("utf-8") == hook
 
 
 @pytest.mark.parametrize("command", [

@@ -5,25 +5,22 @@
 The tree kill existed (`procutil.run_with_tree_kill`); what did not was any
 record of whether it worked. These tests pin the chain: the runner reports
 how the tree kill went and whether the direct child is confirmed dead, the
-executors carry that on the result, and the attempt row's detail says it in
+executor carries that on the result, and the reply's note says it in
 words -- "terminated (exit confirmed)" or "NOT confirmed dead -- unaccounted
 for" -- never rounding an attempted kill up to a finished one.
 """
 
 from __future__ import annotations
 
-import importlib
 import os
 import subprocess
 import sys
-import threading
 import time
 
 import pytest
 
-from modelquad import procutil
+from modelquad import procutil, review
 from modelquad.executable_resolution import Resolution
-from modelquad.execution import ExecutionManager
 from modelquad.execution.base import (
     ExecutionRequest,
     ExecutionResult,
@@ -36,38 +33,8 @@ from modelquad.execution.base import (
 from modelquad.execution.codex import CodexExecutor
 from modelquad.models import TaskType
 from modelquad.procutil import run_with_tree_kill
-from modelquad.service import db as service_db
-from modelquad.service import history as service_history
-
-from conftest import tool_payload
-
-
-def _tool_payload(name, arguments):
-    import asyncio
-
-    from modelquad.mcp.server import server
-
-    return tool_payload(asyncio.run(server.call_tool(name, arguments)))
-
-
-def write_usage_fixtures(path):
-    (path / "usage-claude.json").write_text('{"five_hour_used_percentage": 10}', encoding="utf-8")
-    (path / "usage-codex.json").write_text('{"available": true, "five_hour_remaining_percentage": 80}', encoding="utf-8")
 
 from conftest import no_window_kwargs
-
-
-@pytest.fixture(autouse=True)
-def _tool_usage_directory(tmp_path, monkeypatch):
-    """The MCP tools read quota snapshots from `server.USAGE_DIRECTORY`, never
-    from a tool argument. This module's snapshots live in the
-    test's tmp_path, which every call here used to pass as `usage_directory`."""
-    from modelquad.mcp import server as mcp_server_module
-
-    monkeypatch.setattr(mcp_server_module, "USAGE_DIRECTORY", str(tmp_path))
-
-
-mcp_server = importlib.import_module("modelquad.mcp.server")
 
 
 def _pid_alive(pid: int) -> bool:
@@ -244,7 +211,7 @@ def test_the_row_never_rounds_an_attempted_kill_up_to_a_finished_one():
     assert "NOT confirmed" in describe_worker_termination({"worker_termination": {"pid": 7}})
 
 
-# -- the closed-vocabulary outcome (what part 4 reads instead of the words) ------------
+# -- the closed-vocabulary outcome ------------------------------------------------------
 
 
 def _timed_out_result(facts):
@@ -260,7 +227,6 @@ def test_only_a_confirmed_death_earns_the_terminated_failure_kind():
     """`terminated` is the third worker fate, and it is spelled only
     from the process table -- never from a kill having merely been asked for."""
 
-    assert "terminated" in service_history.DELEGATION_FAILURE_KINDS
     assert attempt_resolution(_timed_out_result({"pid": 7, "tree_kill": "ok", "confirmed_dead": True})) == (
         "failed", "terminated")
     assert attempt_resolution(_timed_out_result({"pid": 7, "tree_kill": "timed_out", "confirmed_dead": False})) == (
@@ -289,7 +255,7 @@ def test_a_dead_direct_child_is_not_a_dead_tree():
         assert "terminated (" not in sentence
 
 
-# -- the row, end to end ------------------------------------------------------------------
+# -- the reply, end to end ------------------------------------------------------------------
 
 
 class _WorkerThatIsKilled:
@@ -299,11 +265,8 @@ class _WorkerThatIsKilled:
     def __init__(self, facts):
         self.facts = facts
 
-    def is_available(self):
-        return True
-
     def execute(self, request):
-        metadata = {"timed_out": True, "command": ["codex"]}
+        metadata = {"timed_out": True, "worker_started": True, "command": ["codex"]}
         if self.facts is not None:
             metadata["worker_termination"] = dict(self.facts)
         return ExecutionResult(provider=request.provider, success=False, output="", exit_code=None,
@@ -311,65 +274,42 @@ class _WorkerThatIsKilled:
                                task_status=WorkerTaskStatus.FAILED, task_status_reason="timed_out")
 
 
-@pytest.fixture
-def delegation(tmp_path, monkeypatch):
-    write_usage_fixtures(tmp_path)
-    db_path = tmp_path / "modelquad.db"
+def _review(tmp_path, facts):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    original = service_db.DEFAULT_DB_PATH
-    service_db.DEFAULT_DB_PATH = db_path
-    holder = {"worker": None}
-    real_init = ExecutionManager.__init__
-
-    def _patched_init(self, config, **kwargs):
-        kwargs.pop("executors", None)
-        real_init(self, config, executors={"codex": holder["worker"]}, **kwargs)
-
-    monkeypatch.setattr(ExecutionManager, "__init__", _patched_init)
-    monkeypatch.setenv("MCP_TOOL_TIMEOUT", "900000")
-    try:
-        yield {"db_path": db_path, "workspace": workspace, "usage": str(tmp_path), "holder": holder}
-    finally:
-        service_db.DEFAULT_DB_PATH = original
+    reply = review.run(review.ReviewRequest("review", "do the thing", str(workspace), timeout=5.0),
+                       _WorkerThatIsKilled(facts))
+    assert reply["success"] is False
+    assert reply["reason"] == "timed_out"
+    return reply
 
 
-def _delegate(delegation):
-    return _tool_payload("modelquad_delegate", {
-        "task_type": "review", "prompt": "do the thing",
-        "working_directory": str(delegation["workspace"]), "provider": "codex", "timeout": 5.0,
-    })
+def test_a_confirmed_termination_is_in_the_reply(tmp_path):
+    reply = _review(tmp_path, {"pid": 4242, "tree_kill": "ok", "confirmed_dead": True})
+    note = reply["worker_note"]
+    assert "worker pid 4242 terminated (tree kill ok; exit confirmed)" in note["worker_fate"]
+    assert note["this_worker_may_still_be_running"] is False
+    assert "warning" not in note
 
 
-def test_a_confirmed_termination_is_on_the_attempt_row(delegation):
-    delegation["holder"]["worker"] = _WorkerThatIsKilled({"pid": 4242, "tree_kill": "ok", "confirmed_dead": True})
-    payload = _delegate(delegation)
-    assert payload["success"] is False
-    [row] = service_history.fetch_delegation_attempts(delegation["db_path"])
-    assert (row["status"], row["failure_kind"]) == ("failed", "terminated")
-    assert "worker pid 4242 terminated (tree kill ok; exit confirmed)" in str(row["detail"])
+def test_an_unconfirmed_kill_reads_as_unaccounted_not_as_terminated(tmp_path):
+    reply = _review(tmp_path, {"pid": 4242, "tree_kill": "timed_out", "confirmed_dead": False})
+    note = reply["worker_note"]
+    assert "NOT confirmed dead" in note["worker_fate"] and "unaccounted" in note["worker_fate"]
+    assert "terminated (" not in note["worker_fate"]
+    assert note["this_worker_may_still_be_running"] is True
+    assert "may still be running" in note["warning"]
 
 
-def test_an_unconfirmed_kill_reads_as_unaccounted_not_as_terminated(delegation):
-    delegation["holder"]["worker"] = _WorkerThatIsKilled({"pid": 4242, "tree_kill": "timed_out", "confirmed_dead": False})
-    _delegate(delegation)
-    [row] = service_history.fetch_delegation_attempts(delegation["db_path"])
-    assert row["status"] == "failed"
-    # The kind stays `timeout`, so part 4 renders it UNKNOWN rather than dead.
-    assert row["failure_kind"] == "timeout"
-    assert "NOT confirmed dead" in str(row["detail"]) and "unaccounted" in str(row["detail"])
-    assert "terminated (" not in str(row["detail"])
+def test_a_worker_the_runner_said_nothing_about_adds_nothing_to_the_reply(tmp_path):
+    reply = _review(tmp_path, None)
+    assert "worker_termination" not in reply["metadata"]
+    note = reply["worker_note"]
+    assert "worker pid" not in note["worker_fate"]
+    assert note["this_worker_may_still_be_running"] is True
 
 
-def test_a_worker_the_runner_said_nothing_about_adds_nothing_to_the_row(delegation):
-    delegation["holder"]["worker"] = _WorkerThatIsKilled(None)
-    _delegate(delegation)
-    [row] = service_history.fetch_delegation_attempts(delegation["db_path"])
-    assert "worker pid" not in str(row["detail"])
-    assert row["failure_kind"] == "timeout"
-
-
-# -- the caller already left: account for the worker, do not assume its fate ----------
+# -- the tri-state probe ------------------------------------------------------------------
 
 
 #: Exited children kept referenced, so Windows does not hand their pid to a
@@ -384,216 +324,6 @@ def _dead_pid():
     proc.wait()
     _EXITED.append(proc)
     return proc.pid
-
-
-def _abandoned_attempt(db_path, decision_id, pid=None):
-    attempt_id = service_history.record_delegation_attempt(
-        db_path, task_type="implementation", decision_id=decision_id
-    )
-    if pid is not None:
-        service_history.record_worker_pid(db_path, attempt_id, pid)
-    assert service_history.record_caller_abandonment(db_path, attempt_id, reason="transport_cancelled")
-    return attempt_id
-
-
-def _row(db_path, attempt_id):
-    return [r for r in service_history.fetch_delegation_attempts(db_path) if r["id"] == attempt_id][0]
-
-
-def test_an_abandoned_caller_whose_worker_is_dead_is_accounted_for_not_left_open(tmp_path):
-    """The dead worker of a departed caller becomes terminal -- as `orphaned`,
-    the kind reconciliation already uses for a dead pid. Nothing killed it
-    here, so it is not `terminated`."""
-
-    db_path = tmp_path / "history.db"
-    attempt_id = _abandoned_attempt(db_path, "gone-and-dead", pid=_dead_pid())
-
-    [reported] = service_history.reconcile_abandoned_attempts(db_path)
-
-    assert reported["id"] == attempt_id and reported["reconciled"] is True
-    row = _row(db_path, attempt_id)
-    assert (row["status"], row["failure_kind"]) == ("failed", "orphaned")
-    assert "the caller had abandoned this attempt at" in str(row["detail"])
-    assert "was found dead at reconcile time" in str(row["detail"])
-    assert row["unresolved"] is False
-    # The departure itself is never rewritten by the accounting for the worker.
-    assert row["caller_abandoned_at"] is not None
-
-
-def test_an_abandoned_caller_whose_worker_still_runs_stays_open_and_is_reported(tmp_path):
-    """The caller leaving is not a verdict about the worker: a live pid keeps
-    the row `started`, and the pass reports it instead of closing it."""
-
-    db_path = tmp_path / "history.db"
-    attempt_id = _abandoned_attempt(db_path, "gone-but-alive", pid=os.getpid())
-    before = _row(db_path, attempt_id)["caller_abandoned_at"]
-
-    [reported] = service_history.reconcile_abandoned_attempts(db_path)
-
-    assert reported["reconciled"] is False and reported["liveness"] == "in_flight"
-    assert reported["caller_abandoned"] is True
-    row = _row(db_path, attempt_id)
-    assert row["status"] == "started" and row["resolved_at"] is None
-    assert row["failure_kind"] is None
-    assert row["caller_abandoned_at"] == before
-    # And the live worker still blocks a second worker for the same request.
-    key = service_history.request_fingerprint("implementation", str(tmp_path), "do the thing")
-    dup_id = service_history.record_delegation_attempt(
-        db_path, task_type="implementation", decision_id="dup", request_key=key
-    )
-    service_history.record_worker_pid(db_path, dup_id, os.getpid())
-    assert service_history.record_caller_abandonment(db_path, dup_id, reason="transport_closed")
-    service_history.reconcile_abandoned_attempts(db_path)
-    duplicate = service_history.find_in_flight_duplicate(db_path, key)
-    assert duplicate is not None and duplicate["id"] == dup_id
-
-
-def test_the_pass_never_touches_a_row_whose_caller_is_still_waiting(tmp_path):
-    """Only rows part 2 marked as abandoned are in this pass's population --
-    a caller who never left keeps its row entirely, dead pid or not."""
-
-    db_path = tmp_path / "history.db"
-    waiting = service_history.record_delegation_attempt(
-        db_path, task_type="implementation", decision_id="still-waiting"
-    )
-    service_history.record_worker_pid(db_path, waiting, _dead_pid())
-
-    assert service_history.reconcile_abandoned_attempts(db_path) == []
-
-    row = _row(db_path, waiting)
-    assert row["status"] == "started" and row["resolved_at"] is None
-    assert row["caller_abandoned_at"] is None
-
-
-def test_the_pass_is_bounded_and_reads_only_open_abandoned_rows(tmp_path):
-    """Bounded by `limit`, and a row it already closed does not come back:
-    the pass is per-call work, not a queue that grows."""
-
-    db_path = tmp_path / "history.db"
-    for index in range(3):
-        _abandoned_attempt(db_path, f"dead-{index}", pid=_dead_pid())
-
-    first = service_history.reconcile_abandoned_attempts(db_path, limit=2)
-    assert len(first) == 2 and all(entry["reconciled"] for entry in first)
-    second = service_history.reconcile_abandoned_attempts(db_path)
-    assert len(second) == 1 and second[0]["reconciled"] is True
-    assert service_history.reconcile_abandoned_attempts(db_path) == []
-
-
-def test_a_row_resolved_between_the_probe_and_the_write_keeps_its_real_outcome(tmp_path, monkeypatch):
-    """The pass observes, then writes, and the worker's own thread may resolve
-    the row in between. A guess must never overwrite a fact: `orphaned` is what
-    reconciliation believes, `completed` is what actually happened."""
-
-    db_path = tmp_path / "history.db"
-    attempt_id = _abandoned_attempt(db_path, "resolved-mid-pass", pid=_dead_pid())
-
-    def _the_worker_finishes_while_we_probe(pid):
-        service_history.resolve_delegation_attempt(
-            db_path,
-            attempt_id,
-            status="completed",
-            routed_provider="codex",
-            outcome="success",
-            detail="the worker came back while the pass was probing",
-        )
-        return "dead"
-
-    monkeypatch.setattr(procutil, "pid_state", _the_worker_finishes_while_we_probe)
-
-    [reported] = service_history.reconcile_abandoned_attempts(db_path)
-
-    assert reported["reconciled"] is False, "nothing was written, so nothing may be claimed"
-    row = _row(db_path, attempt_id)
-    assert (row["status"], row["outcome"]) == ("completed", "success")
-    assert row["failure_kind"] is None
-    assert "orphaned" not in str(row["detail"])
-    assert "the worker came back while the pass was probing" in str(row["detail"])
-
-
-def test_a_worker_pid_that_is_not_an_integer_is_skipped_and_reported(tmp_path):
-    """A malformed row is UNKNOWN, like a pid-less one. This pass runs on the
-    delegation path, so it reports the row instead of raising on it."""
-
-    db_path = tmp_path / "history.db"
-    attempt_id = _abandoned_attempt(db_path, "unreadable-pid", pid=_dead_pid())
-    conn = service_db.connect_and_init(db_path)
-    try:
-        conn.execute("UPDATE delegation_attempts SET worker_pid = ? WHERE id = ?", ("not-a-pid", attempt_id))
-        conn.commit()
-    finally:
-        conn.close()
-
-    [reported] = service_history.reconcile_abandoned_attempts(db_path)
-
-    assert reported["reconciled"] is False
-    assert "not an integer" in str(reported.get("reconcile_skipped"))
-    row = _row(db_path, attempt_id)
-    assert row["status"] == "started" and row["resolved_at"] is None
-
-
-# -- a probe that cannot answer is not a death -----------------------
-
-
-def _abandoned_with_key(db_path, decision_id, key, pid):
-    attempt_id = service_history.record_delegation_attempt(
-        db_path, task_type="implementation", decision_id=decision_id, request_key=key
-    )
-    service_history.record_worker_pid(db_path, attempt_id, pid)
-    assert service_history.record_caller_abandonment(db_path, attempt_id, reason="transport_cancelled")
-    return attempt_id
-
-
-def test_an_unanswerable_probe_keeps_the_row_open_and_keeps_guarding_the_request(tmp_path, monkeypatch):
-    """A pid probe that cannot answer -- Windows `OpenProcess` handing back no
-    handle -- used to read as "dead", which closed a LIVE worker's attempt and
-    released the duplicate guard with it. UNKNOWN stays UNKNOWN: the row stays
-    `started` and still refuses a second worker."""
-
-    db_path = tmp_path / "history.db"
-    key = service_history.request_fingerprint("implementation", str(tmp_path), "do the thing")
-    attempt_id = _abandoned_with_key(db_path, "probe-cannot-answer", key, pid=os.getpid())
-
-    monkeypatch.setattr(procutil, "pid_state", lambda pid: "unknown")
-
-    [reported] = service_history.reconcile_abandoned_attempts(db_path)
-
-    assert reported["id"] == attempt_id and reported["reconciled"] is False
-    assert reported["liveness"] == "unknown", "annotation may not call an unreadable probe `abandoned`"
-    assert "could not be probed" in str(reported.get("reconcile_skipped"))
-    row = _row(db_path, attempt_id)
-    assert row["status"] == "started" and row["resolved_at"] is None
-    assert row["failure_kind"] is None
-
-    # The still-open row is still the guard: a second worker for the same
-    # logical request is refused, which is what closing it used to release.
-    with pytest.raises(service_history.DuplicateActiveAttempt):
-        service_history.record_delegation_attempt(
-            db_path, task_type="implementation", decision_id="second-worker", request_key=key
-        )
-    assert service_history.find_in_flight_duplicate(db_path, key) is not None
-
-    # The age-based stale pass must not close it either.
-    assert service_history.reconcile_stale_attempts(db_path) == 0
-    assert _row(db_path, attempt_id)["status"] == "started"
-
-
-def test_a_probe_that_answers_dead_still_closes_the_row(tmp_path, monkeypatch):
-    """The other half of the tri-state: `unknown` blocking the close must not
-    have cost the pass its actual job."""
-
-    db_path = tmp_path / "history.db"
-    key = service_history.request_fingerprint("implementation", str(tmp_path), "do the other thing")
-    attempt_id = _abandoned_with_key(db_path, "probe-says-dead", key, pid=os.getpid())
-
-    monkeypatch.setattr(procutil, "pid_state", lambda pid: "dead")
-
-    [reported] = service_history.reconcile_abandoned_attempts(db_path)
-
-    assert reported["reconciled"] is True
-    row = _row(db_path, attempt_id)
-    assert (row["status"], row["failure_kind"]) == ("failed", "orphaned")
-    assert row["resolved_at"] is not None
 
 
 @pytest.mark.skipif(os.name != "nt", reason="access-denied without a handle is the Windows probe")
@@ -675,7 +405,7 @@ def test_a_sweep_that_cannot_launch_still_kills_the_worker_and_still_records_it(
 
 @pytest.mark.skipif(os.name != "nt", reason="the taskkill sweep exists only on Windows")
 def test_the_executor_calls_a_failed_sweep_a_timeout_never_a_failed_start(tmp_path, monkeypatch, *, synthetic_worker_binary):
-    """The classification the review reproduced: the worker started, so the row
+    """The classification the review reproduced: the worker started, so the result
     may not say `failed_to_start`."""
 
     _refuse_to_launch_taskkill(tmp_path, monkeypatch)
@@ -700,7 +430,7 @@ def test_the_executor_calls_a_failed_sweep_a_timeout_never_a_failed_start(tmp_pa
 @pytest.mark.skipif(os.name != "nt", reason="the Job Object census exists only on Windows")
 def test_an_unreadable_census_after_the_stop_reads_as_an_unaccounted_timeout(tmp_path, monkeypatch, *, synthetic_worker_binary):
     """What `terminated` now rests on is the census. When it cannot be read the
-    row stays a timeout and says the worker is unaccounted for."""
+    result stays a timeout and says the worker is unaccounted for."""
 
     monkeypatch.setattr(procutil, "_census_job_pids", lambda handle: None)
     seen = {}
@@ -721,18 +451,16 @@ def test_an_unreadable_census_after_the_stop_reads_as_an_unaccounted_timeout(tmp
         _reap(seen.get("pid"))
 
 
-def test_a_failed_tree_walk_reaches_the_row_as_an_unaccounted_timeout(delegation):
-    """End to end, on either platform: the row carries a closed census error and
-    stays a timeout, never `terminated` and never a failed start."""
+def test_a_failed_tree_walk_reaches_the_reply_as_an_unaccounted_timeout(tmp_path):
+    """End to end, on either platform: the reply carries a closed census error and
+    stays unaccounted for, never `terminated`."""
 
-    delegation["holder"]["worker"] = _WorkerThatIsKilled(
-        {"pid": 4242, "tree_kill": "launch_error: FileNotFoundError", "confirmed_dead": True}
-    )
-    _delegate(delegation)
-    [row] = service_history.fetch_delegation_attempts(delegation["db_path"])
-    assert (row["status"], row["failure_kind"]) == ("failed", "timeout")
-    detail = str(row["detail"])
+    reply = _review(tmp_path, {"pid": 4242, "tree_kill": "launch_error: FileNotFoundError",
+                               "confirmed_dead": True})
+    assert reply["metadata"]["worker_termination"]["tree_kill"] == "census_unknown"
+    detail = reply["worker_note"]["worker_fate"]
     assert "NOT confirmed dead" in detail and "unaccounted for" in detail
     assert "census_unknown" in detail
     assert "launch_error: FileNotFoundError" not in detail
     assert "terminated (" not in detail
+    assert reply["worker_note"]["this_worker_may_still_be_running"] is True

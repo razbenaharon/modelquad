@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Absolute paths, including ones with spaces, do not reach stored history."""
+"""Absolute paths, including ones with spaces, do not reach what ModelQuad stores."""
 
 from __future__ import annotations
 
@@ -10,11 +10,6 @@ import sqlite3
 import pytest
 
 from modelquad import privacy
-from modelquad.config import Config
-from modelquad.models import TaskType
-from modelquad.providers import CodexProvider
-from modelquad.router import Router
-from modelquad.service import history
 
 HOME = r"C:\Users\John Smith"
 ONEDRIVE = HOME + r"\OneDrive - Contoso Ltd"
@@ -73,59 +68,6 @@ def test_prose_and_bare_drive_roots_are_left_alone(roots):
     assert privacy.redact_paths("n/a ~ok") == "n/a ~ok"
 
 
-def _strings(value):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for item in value.values():
-            yield from _strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _strings(item)
-
-
-def test_no_absolute_path_reaches_routing_decisions(tmp_path, monkeypatch):
-    """Provider metadata, the router's reason and the evidence go through the sanitizer.
-
-    The usage folder sits under a home folder whose name has a space, the
-    shape that used to leak the second half of the user's name.
-    """
-
-    home = tmp_path / "John Smith"
-    monkeypatch.setenv("USERPROFILE", str(home))
-    monkeypatch.setenv("HOME", str(home))
-    usage = home / ".modelquad" / "usage"
-    provider = CodexProvider(usage_directory=usage)
-    status = provider.get_status()
-    assert str(usage) in (status.reason or "") + json.dumps(status.metadata, default=str)
-    result = Router(Config()).route(TaskType.REVIEW.value, (status,))
-    evidence = json.dumps({"statuses": [status.to_dict()], "note": f"read {usage}"}, default=str)
-    db_path = tmp_path / "history.db"
-
-    assert history.record_routing_decision(
-        db_path, TaskType.REVIEW, result, source="mcp", decision_id="d-paths",
-        evidence_json=evidence, override_reason=f"override at {usage}",
-    ) is True
-
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        row = dict(conn.execute("SELECT * FROM routing_decisions").fetchone())
-    finally:
-        conn.close()
-    texts = []
-    for column, value in row.items():
-        if column in ("providers_json", "evidence_json"):
-            texts.extend(_strings(json.loads(value)))
-        elif isinstance(value, str):
-            texts.append(value)
-    assert any("<path>" in text for text in texts)
-    for text in texts:
-        assert "John" not in text and "Smith" not in text, text
-        assert str(tmp_path) not in text, text
-        assert not privacy.contains_absolute_path(text), text
-
-
 @pytest.mark.parametrize("text", [
     r"open //fileserver/clients/acme/x.py failed",
     r"open /c/Users/dana/proj/x.py failed",
@@ -158,36 +100,37 @@ def test_metadata_keys_are_redacted_too():
 FOLDER_WITH_SPACES = r"D:\Client Work\Acme Corp"
 
 
-def test_a_background_writer_removes_the_named_working_folder_whole(tmp_path, monkeypatch):
-    """The runner and the service run elsewhere, so the writer names the folder."""
+def test_the_ledger_writer_removes_the_named_working_folder_whole(tmp_path, monkeypatch):
+    """The MCP server's folder is not the project's, so the writer names the folder."""
 
-    from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+    from modelquad import review_ledger
 
-    monkeypatch.chdir(tmp_path)  # not the working folder, as for the runner
+    monkeypatch.chdir(tmp_path)  # not the working folder
     error = rf"FileNotFoundError: {FOLDER_WITH_SPACES}\src\billing.py"
-    db_path = tmp_path / "history.db"
-    result = ExecutionResult(
-        provider="codex", success=False, output="", exit_code=1, error=error,
-        task_status=WorkerTaskStatus.FAILED, task_status_reason=error,
-        metadata={"note": error, error: 1},
-    )
-    history.record_execution(db_path, TaskType.REVIEW, result, roots=(FOLDER_WITH_SPACES,))
-    attempt = history.record_delegation_attempt(
-        db_path, task_type=TaskType.REVIEW, detail=error, working_directory=FOLDER_WITH_SPACES)
-    history.resolve_delegation_attempt(db_path, attempt, status="failed", failure_kind="exception",
-                                       detail=error, roots=(FOLDER_WITH_SPACES,))
+    ledger = tmp_path / "review-ledger.db"
+    output = (f"FINDING F1 | high | src/billing.py:3 | correctness | "
+              f"confidence low: seen in {FOLDER_WITH_SPACES}\\notes only | {error} | "
+              f"because {FOLDER_WITH_SPACES}\\src is read\n")
+    review_ledger.record_run({"decision_id": "d-paths", "output": output},
+                             working_directory=FOLDER_WITH_SPACES, task_type="review",
+                             trigger="claude", path=ledger)
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(ledger)
     try:
-        stored = [
-            *conn.execute("SELECT error, task_status_reason, metadata_json FROM execution_history").fetchone(),
-            *conn.execute("SELECT detail FROM delegation_attempts").fetchone(),
-        ]
+        tables = [name for (name,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+        stored = [value for table in tables for row in conn.execute(f"SELECT * FROM {table}")
+                  for value in row if isinstance(value, str)]
+        (claim,) = conn.execute("SELECT claim FROM findings").fetchone()
+        note, reasoning = conn.execute("SELECT confidence_note, reasoning FROM findings").fetchone()
     finally:
         conn.close()
+    assert claim == "FileNotFoundError: <path>"
+    assert "<path>" in note and "<path>" in reasoning
     for text in stored:
         assert "Client" not in text and "Acme" not in text, text
-        assert "<path>" in text, text
+        assert str(tmp_path) not in text, text
+        assert not privacy.contains_absolute_path(text), text
 
 
 def test_without_the_named_folder_the_tail_would_remain(tmp_path, monkeypatch):

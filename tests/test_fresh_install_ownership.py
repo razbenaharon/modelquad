@@ -35,18 +35,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from modelquad import cli
-from modelquad.adapters.registration import RestoreStatus, recorded_replacement
-from modelquad.onboarding import install_detected_hosts
+from modelquad.adapters.registration import recorded_replacement
 
 from test_host_registration_transaction import (  # noqa: F401 -- fixtures + helpers
     HOST_ID,
     _read_registration,
-    _registry,
     _write_registration,
     claude_home,
+    install_host,
     state_root,
 )
 
@@ -55,7 +52,8 @@ ENV_VALUE_SENTINEL = "modelquad-test-sentinel-ownership-must-not-print"
 
 
 def _install(home: Path):
-    return install_detected_hosts([HOST_ID], dry_run=False, registry=_registry(home))[0]
+    """``modelquad install claude``'s path: the real adapter inside the registration transaction."""
+    return install_host(home)
 
 
 def _uninstall(home: Path, *, as_json: bool = False) -> int:

@@ -6,7 +6,8 @@
   moment still read as the stored settings.
 * A setting change after a failed read refuses, with a plain message, and
   leaves the file as it was: writing a fresh file would erase the user's
-  per-repository choices, plans and every other setting.
+  per-repository choices, the standing grant, the on/off switch and every
+  other setting.
 * ``install claude --plugin`` reports a choice it could not save instead of
   failing after the adapter already changed files.
 """
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from modelquad import cli, plans, repo_settings as rs
+from modelquad import cli, grant, switch, repo_settings as rs
 from modelquad.adapters import server_instructions as si
 
 KEY = "0123456789abcdef0123456789abcdef"  # gitleaks:allow (synthetic installation id)
@@ -34,6 +35,14 @@ def test_a_byte_order_mark_still_reads(prefs):
     prefs.write_bytes(b"\xef\xbb\xbf" + json.dumps({"proactive": True, "repos": {"a" * 32: "off"}}).encode())
     assert si.read_proactive(prefs) is True
     assert rs.read_modes(prefs) == {"a" * 32: "off"}
+
+
+def test_a_byte_order_mark_still_reads_the_grant_and_the_switch(prefs):
+    grant.write(True, everywhere=True, path=prefs)
+    switch.write(False, prefs)
+    prefs.write_bytes(b"\xef\xbb\xbf" + prefs.read_bytes())
+    assert grant.granted(None, path=prefs) is True
+    assert switch.enabled(prefs) is False
 
 
 def test_a_briefly_locked_file_is_read_again(prefs, monkeypatch):
@@ -53,7 +62,7 @@ def test_a_briefly_locked_file_is_read_again(prefs, monkeypatch):
 
 
 @pytest.mark.parametrize("broken", [b"{not json", b"[1, 2]", b"\xff\xfe\x00garbage"])
-@pytest.mark.parametrize("write", ["proactive", "plugin", "plan", "repo"])
+@pytest.mark.parametrize("write", ["proactive", "plugin", "repo", "auto", "auto-global", "switch"])
 def test_a_write_after_a_failed_read_changes_nothing(prefs, tmp_path, broken, write):
     prefs.write_bytes(broken)
     folder = tmp_path / "project"
@@ -63,23 +72,27 @@ def test_a_write_after_a_failed_read_changes_nothing(prefs, tmp_path, broken, wr
             si.write_proactive(True, prefs)
         elif write == "plugin":
             si.write_claude_plugin(True, prefs)
-        elif write == "plan":
-            plans.write_declared("codex", "plus", prefs)
-        else:
+        elif write == "repo":
             rs.write_mode(folder, "off", path=prefs, installation_key=KEY)
+        elif write == "auto":
+            grant.write(True, directory=folder, path=prefs)
+        elif write == "auto-global":
+            grant.write(True, everywhere=True, path=prefs)
+        else:
+            switch.write(False, prefs)
     assert "changed nothing" in str(caught.value)
     assert prefs.read_bytes() == broken
 
 
 def test_a_write_keeps_every_other_setting(prefs, tmp_path):
-    stored = {"proactive": True, "plans": {"codex": "team"}, "claude_plugin": True,
+    stored = {"proactive": True, "codex_enabled": False, "claude_plugin": True,
               "repos": {"b" * 32: "offer-only"}}
     prefs.write_bytes(b"\xef\xbb\xbf" + json.dumps(stored).encode())
     folder = tmp_path / "project"
     folder.mkdir()
     rs.write_mode(folder, "off", path=prefs, installation_key=KEY)
     after = json.loads(prefs.read_text(encoding="utf-8"))
-    assert after["proactive"] is True and after["plans"] == {"codex": "team"}
+    assert after["proactive"] is True and after["codex_enabled"] is False
     assert after["claude_plugin"] is True and after["repos"]["b" * 32] == "offer-only"
     assert len(after["repos"]) == 2
 
@@ -111,7 +124,7 @@ def test_an_unsaved_plugin_choice_is_reported_not_raised(monkeypatch):
 def test_claude_decides_by_default_and_only_a_stored_false_turns_it_off(tmp_path):
     prefs = tmp_path / "preferences.json"
     assert si.read_proactive(prefs) is True  # no file: the default
-    prefs.write_text(json.dumps({"plans": {"codex": "plus"}}), encoding="utf-8")
+    prefs.write_text(json.dumps({"codex_enabled": True}), encoding="utf-8")
     assert si.read_proactive(prefs) is True  # other settings, none for this one
     si.write_proactive(False, prefs)
     assert si.read_proactive(prefs) is False

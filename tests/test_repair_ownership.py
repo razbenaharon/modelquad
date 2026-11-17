@@ -1,39 +1,27 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""What repair is allowed to touch, and what it must leave exactly as it found it.
+"""What a repairing install is allowed to touch, and what it must leave as it found it.
 
-``tests/test_repair.py`` covers the orchestration -- which doctor findings map
-to which host, what gets skipped, what the dry run does. This file covers the
-harder promise underneath it: repair edits **only the entry ModelQuad owns**,
-in a file that belongs to somebody else.
+A stale registration is repaired by installing again. This file covers the
+promise underneath that: the install edits **only the entry ModelQuad owns**,
+in a file that belongs to somebody else. If repairing ModelQuad could disturb
+an unrelated MCP server, a hook the user wrote, or a development checkout, it
+would be a destructive action wearing a friendly label.
 
-That promise is why repair can be offered to a normal user as a button. If
-repairing ModelQuad could disturb an unrelated MCP server, a hook the user
-wrote, or a development checkout, "Repair" would be a destructive action
-wearing a friendly label.
-
-Every test here drives the **real** adapters against fixture configuration in
+Every test here drives the **real** adapter against fixture configuration in
 ``tmp_path``. Nothing in this file reads or writes the developer's own
-``~/.claude`` or ``~/.codex``.
+``~/.claude``.
 """
 
 from __future__ import annotations
 
 import json
-import tomllib
 from pathlib import Path
 
 import pytest
 
 from modelquad.adapters.claude_adapter import ClaudeAdapter
-from modelquad.adapters.report import ActionKind
-from modelquad.branding import (
-    MANAGED_BLOCK_TAG,
-    MCP_COMMAND,
-    MCP_SERVER_NAME,
-    MCP_SERVER_TOML_KEY,
-)
-from modelquad.hostruntime import read_registered_command
+from modelquad.branding import MCP_SERVER_NAME
 
 
 #: The absolute launcher an installed ModelQuad registers. Repair's whole job
@@ -201,10 +189,9 @@ def test_repair_never_touches_a_development_checkout_or_its_database(tmp_path, m
     """Repair rewrites host *registrations*. It does not delete anything.
 
     A developer's machine legitimately carries a second, development state
-    store; ``statediag`` reports the split and deliberately refuses to
-    reconcile it, because "copying either direction destroys real settings".
-    Repair inherits that rule. This pins it: after a repair, the development
-    checkout and its database are still there, untouched.
+    store, and copying either direction would destroy real settings. This
+    pins it: after a repair, the development checkout and its database are
+    still there, untouched.
     """
 
     dev_root = tmp_path / "dev-state"
@@ -224,90 +211,3 @@ def test_repair_never_touches_a_development_checkout_or_its_database(tmp_path, m
     assert dev_db.read_bytes() == b"development database contents"
     assert (dev_checkout / "__init__.py").read_text(encoding="utf-8") == "# dev checkout"
     assert _claude_servers(tmp_path)[MCP_SERVER_NAME]["command"] == INSTALLED_SHIM
-
-
-# --------------------------------------------------------------------------
-# Repair, run twice, at the orchestration level
-# --------------------------------------------------------------------------
-
-
-def test_running_repair_twice_repairs_nothing_the_second_time(tmp_path, monkeypatch):
-    """The second run is a no-op because the first one actually fixed it.
-
-    Idempotency here is not "running it twice is harmless"; it is "the second
-    run has nothing to do". A repair that keeps finding the same fault every
-    time it runs has not repaired anything -- it has just stopped complaining
-    for one doctor invocation.
-    """
-
-    from modelquad.config import Config
-    from modelquad.doctor import CheckStatus, DoctorCheck, DoctorReport
-    from modelquad.registry import (
-        HostAdapterDescriptor,
-        ProviderCapabilities,
-        ProviderPlugin,
-        ProviderRegistry,
-        UsageSourceKind,
-    )
-    from modelquad.repair import run_repair
-
-    repaired: list[Path] = []
-    state = {"canonical": False}
-
-    class Adapter:
-        def is_installed(self, target_dir: Path) -> bool:
-            return state["canonical"]
-
-        def install(self, target_dir: Path, *, dry_run: bool = False):
-            from modelquad.adapters import ActionKind, FileAction, InstallReport
-
-            if not dry_run:
-                repaired.append(target_dir)
-                state["canonical"] = True
-                # A real install leaves a registration that repair reads back.
-                (target_dir.parent / f"{target_dir.name}.json").write_text(
-                    '{"mcpServers": {"modelquad": {"command": "modelquad-mcp"}}}', encoding="utf-8"
-                )
-            return InstallReport(
-                client="claude",
-                dry_run=dry_run,
-                actions=(FileAction(path=target_dir / "config.json", kind=ActionKind.UPDATED),),
-            )
-
-    registry = ProviderRegistry(
-        (
-            ProviderPlugin(
-                id="claude",
-                display_name="Claude Code",
-                capabilities=ProviderCapabilities(coding=True),
-                usage_source_kind=UsageSourceKind.LOCAL_LOGS,
-                cli_executable="claude",
-                host_adapters=(
-                    HostAdapterDescriptor(
-                        id="claude",
-                        display_name="Claude Code",
-                        provider_id="claude",
-                        adapter_cls=Adapter,
-                        default_target_dir=lambda: tmp_path / "claude",
-                        detect=lambda: True,
-                    ),
-                ),
-            ),
-        )
-    )
-
-    def fake_doctor(config, **kwargs):
-        # The finding disappears once the registration names this installation.
-        status = CheckStatus.OK if state["canonical"] else CheckStatus.WARN
-        return DoctorReport((DoctorCheck("claude MCP runtime", status, "detail"),))
-
-    monkeypatch.setattr("modelquad.repair.run_doctor", fake_doctor)
-
-    first = run_repair(registry=registry, print_fn=lambda *a, **k: None, config=Config())
-    assert first["repaired_hosts"] == ["claude"]
-    assert first["after_warn_count"] == 0
-
-    second = run_repair(registry=registry, print_fn=lambda *a, **k: None, config=Config())
-    assert second["repaired_hosts"] == []
-    assert second["before_warn_count"] == 0
-    assert len(repaired) == 1, "the second repair must not rewrite an already-correct host"

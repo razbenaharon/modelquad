@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """``modelquad install claude --plugin``: the plugin's copies are the only ones.
 
-The ModelQuad plugin carries the server, the commands and the reminder. With
+The ModelQuad plugin carries the server, the commands and the hooks. With
 the regular install beside it Claude Code would run each twice, so install
-for the plugin keeps only the status line and takes back ModelQuad's own
-copies -- and only what is provably ModelQuad's, with a backup.
+for the plugin takes back ModelQuad's own copies, and the status line and
+SessionStart reminder earlier builds wrote -- and only what is provably
+ModelQuad's, with a backup.
 """
 
 from __future__ import annotations
@@ -15,16 +16,21 @@ from pathlib import Path
 
 import pytest
 
-from modelquad import __version__, cli, doctor
-from modelquad.adapters.claude_adapter import ClaudeAdapter, plugin_recorded
-from modelquad.adapters.registration import install_with_registration
+from modelquad import __version__, cli
+from modelquad.adapters.claude_adapter import (
+    ClaudeAdapter, _STATUS_LINE_ARGUMENTS, _status_line_command, plugin_recorded,
+)
+from modelquad.adapters.cliintegration import upsert_owned_status_line
+from modelquad.adapters.codex_hooks import manage_pending_hook
+from modelquad.adapters.registration import install_with_registration, read_owned_settings
 from modelquad.adapters.report import ActionKind
 from modelquad.adapters.server_instructions import read_claude_plugin, write_claude_plugin
 
 from test_host_registration_transaction import claude_home, state_root  # noqa: F401 -- fixtures
 
-_SKILLS = ("modelquad", "modelquad-review", "modelquad-handoff", "modelquad-quota", "modelquad-setup",
-           "modelquad-split", "modelquad-settings")
+_SKILLS = ("modelquad", "modelquad-review", "modelquad-setup", "modelquad-settings")
+#: Command skills earlier builds installed for features this build no longer has.
+_RETIRED_SKILLS = ("modelquad-handoff", "modelquad-quota", "modelquad-split")
 
 
 @pytest.fixture(autouse=True)
@@ -61,21 +67,59 @@ def _regular_install(home: Path) -> None:
     assert all((home / "skills" / name / "SKILL.md").is_file() for name in _SKILLS)
 
 
+def _seed_what_an_earlier_install_wrote(home: Path) -> None:
+    """The status line and the SessionStart reminder, each with its ownership evidence,
+    and the retired command skills, each with ModelQuad's mark."""
+    for name in _RETIRED_SKILLS:
+        skill = home / "skills" / name / "SKILL.md"
+        skill.parent.mkdir(parents=True, exist_ok=True)
+        skill.write_text(f"---\nname: {name}\nmetadata:\n  managed-by: modelquad\n---\nearlier\n",
+                         encoding="utf-8")
+    settings = home / "settings.json"
+    assert upsert_owned_status_line(
+        settings, _STATUS_LINE_ARGUMENTS, _status_line_command(), dry_run=False, status_type="command",
+    ).kind is ActionKind.CREATED
+    assert manage_pending_hook(settings, "claude").kind is ActionKind.UPDATED
+    seeded = _settings(home)
+    assert "usage-hook claude" in seeded["statusLine"]["command"]
+    assert "hook-pending" in json.dumps(seeded["hooks"])
+
+
 def test_installing_for_the_plugin_takes_back_the_regular_copies(state_root, claude_home):
     _regular_install(claude_home)
+    _seed_what_an_earlier_install_wrote(claude_home)
 
     report = install_with_registration("claude", claude_home, ClaudeAdapter(via_plugin=True))
 
     assert "modelquad" not in _servers(claude_home)
     # Each folder keeps only the backup of the removed copy.
-    assert not any((claude_home / "skills" / name / "SKILL.md").exists() for name in _SKILLS)
-    settings = _settings(claude_home)
-    assert "usage-hook claude" in settings["statusLine"]["command"]
-    assert "hook-pending" not in json.dumps(settings.get("hooks", {}))
+    assert not any((claude_home / "skills" / name / "SKILL.md").exists()
+                   for name in (*_SKILLS, *_RETIRED_SKILLS))
+    # The plugin has no status line and runs its own hooks: ModelQuad's earlier ones go.
+    assert _settings(claude_home) == {}
     removed = [action for action in report.actions if action.kind is ActionKind.REMOVED]
     assert removed and all(action.backup_path is not None for action in removed)
     assert any("plugin supplies the server" in (action.detail or "") for action in report.actions)
-    assert any("plugin runs it" in (action.detail or "") for action in report.actions)
+    assert any("this version has none" in (action.detail or "") for action in report.actions)
+    assert not any("pending_hook" in key for key in read_owned_settings())
+
+
+def test_installing_for_the_plugin_keeps_a_status_line_and_a_hook_that_are_the_users(
+    state_root, claude_home
+):
+    settings = claude_home / "settings.json"
+    users = {
+        "statusLine": {"type": "command", "command": "my-line; modelquad usage-hook claude --segment"},
+        "hooks": {"SessionStart": [{"matcher": "", "hooks": [
+            {"type": "command", "command": "my-tool hook-pending claude"}]}]},
+    }
+    settings.write_text(json.dumps(users), encoding="utf-8")
+    untouched = settings.read_bytes()
+
+    report = install_with_registration("claude", claude_home, ClaudeAdapter(via_plugin=True))
+
+    assert settings.read_bytes() == untouched
+    assert all(a.kind is ActionKind.UNCHANGED for a in report.actions if a.path == settings)
 
 
 def test_a_server_entry_install_did_not_write_stays_and_is_reported(state_root, claude_home):
@@ -126,71 +170,14 @@ def test_the_plugin_record_is_evidence_and_unknown_stays_unknown(claude_home):
     assert plugin_recorded(claude_home) is None
 
 
-def test_doctor_names_a_double_install(state_root, claude_home):
-    _regular_install(claude_home)
-    assert doctor._claude_duplicates_check(claude_home) is None
-    _record_plugin(claude_home)
-
-    check = doctor._claude_duplicates_check(claude_home)
-
-    assert check is not None and check.status is doctor.CheckStatus.WARN
-    assert "--plugin" in check.detail
-
-
-def test_doctor_accepts_the_plugins_registration(state_root, claude_home):
+def test_beside_the_plugin_only_claude_codes_own_record_counts_as_installed(state_root, claude_home):
     write_claude_plugin(True)
     ClaudeAdapter().install(claude_home)
 
-    unknown = doctor._mcp_registration_check("claude", claude_home)
-    assert unknown.status is doctor.CheckStatus.WARN and "unknown" in unknown.detail
+    # No plugin record: unknown, and unknown is not "installed".
+    assert plugin_recorded(claude_home) is None
+    assert ClaudeAdapter().is_installed(claude_home) is False
+    _record_plugin(claude_home, "frontend-design@claude-plugins-official")
+    assert ClaudeAdapter().is_installed(claude_home) is False
     _record_plugin(claude_home)
-    assert doctor._mcp_registration_check("claude", claude_home).status is doctor.CheckStatus.OK
-    assert doctor._claude_duplicates_check(claude_home) is None
-
-
-def _plugin_cache(home: Path, skills) -> str:
-    folder = home / "plugins" / "cache" / "modelquad" / "modelquad" / __version__
-    for skill in skills:
-        (folder / "skills" / skill).mkdir(parents=True, exist_ok=True)
-        (folder / "skills" / skill / "SKILL.md").write_text("x", encoding="utf-8")
-    return str(folder)
-
-
-_PLUGIN_SKILLS = ("guide", "review", "handoff", "quota", "setup", "split", "settings")
-
-
-def test_doctor_checks_the_plugins_version_and_files(state_root, claude_home):
-    def check():
-        return doctor._claude_plugin_check("mcp", claude_home)
-
-    fresh = _plugin_cache(claude_home, _PLUGIN_SKILLS)
-    _record_plugin(claude_home, value=[{"version": __version__, "installPath": fresh}])
-    assert check().status is doctor.CheckStatus.OK
-
-    _record_plugin(claude_home, value=[{"version": "0.0.1", "installPath": fresh}])
-    older = check()
-    assert older.status is doctor.CheckStatus.WARN and "0.0.1" in older.detail
-    assert "claude plugin uninstall modelquad@modelquad" in older.detail
-    assert "claude plugin install modelquad@modelquad" in older.detail
-
-    _record_plugin(claude_home, value=[{"installPath": fresh}])
-    unknown = check()
-    assert unknown.status is doctor.CheckStatus.WARN and "unknown" in unknown.detail
-
-    # Same version, stale cached files: a skill the package ships is missing.
-    stale = claude_home / "stale"
-    (stale / "skills" / "guide").mkdir(parents=True)
-    _record_plugin(claude_home, value=[{"version": __version__, "installPath": str(stale)}])
-    missing = check()
-    assert missing.status is doctor.CheckStatus.WARN and "settings" in missing.detail
-    assert "claude plugin uninstall modelquad@modelquad" in missing.detail
-
-
-def test_the_plugin_skills_doctor_expects_are_the_ones_the_plugin_ships():
-    import importlib.util
-
-    root = Path(__file__).resolve().parents[1]
-    spec = importlib.util.spec_from_file_location("sync_plugin", root / "scripts" / "sync_plugin.py")
-    sync = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(sync)
-    assert doctor._packaged_plugin_skills() == set(sync.SKILLS.values()) == set(_PLUGIN_SKILLS)
+    assert ClaudeAdapter().is_installed(claude_home) is True

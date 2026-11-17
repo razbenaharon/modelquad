@@ -22,7 +22,7 @@ from modelquad import disclosure, grant, repo_settings, review, review_ledger, s
 from modelquad.adapters.server_instructions import preferences_path
 from modelquad.execution import noshell
 from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
-from modelquad.mcp import review_server, worker_guard
+from modelquad.mcp import server as review_server, worker_guard
 
 ENVELOPE = '\n```json\n{"task_status": "completed", "reason": null, "limitations": [], ' \
            '"files_needed": %s, "evidence": {"summary": "read it"}}\n```\n'

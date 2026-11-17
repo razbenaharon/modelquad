@@ -2,21 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """The data-flow notice reaches a user before Codex receives anything.
 
-``modelquad onboard`` and ``modelquad install`` print it. The plugin can put
-ModelQuad in front of someone who ran neither, so their first call that would
-start Codex returns the notice instead, once, and the background quota probe
-the notice describes waits for it too.
+``modelquad install`` prints it. The plugin can put ModelQuad in front of
+someone who never ran it, so their first call that would start Codex returns
+the notice instead, once. Showing a package starts nothing and does not spend
+the notice.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-
+import anyio
 import pytest
 
-from modelquad import cli, disclosure, paths
-from modelquad.mcp import server
+from modelquad import cli, disclosure, paths, review
+from modelquad.mcp import server, worker_guard
 
 # Captured at collection, before conftest treats the notice as shown.
 REAL_NOTICE_SHOWN = disclosure.notice_shown
@@ -35,25 +33,63 @@ def _payload(result) -> dict:
     return result.structured_content
 
 
-def test_the_first_codex_call_returns_the_notice_and_starts_nothing(fresh_install, monkeypatch, tmp_path):
-    started = []
-    monkeypatch.setattr(server, "_delegate_observing_the_caller",
-                        lambda *args, **kwargs: started.append(True))
+class _Started:
+    """Stands in for Codex: notes each request that passed every gate."""
 
-    first = asyncio.run(server.modelquad_delegate("review", "Review it.", str(tmp_path), files=None))
+    def __init__(self):
+        self.requests = []
+
+    def execute(self, request):
+        from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+
+        self.requests.append(request)
+        return ExecutionResult(provider="codex", success=False, output="", exit_code=None,
+                               task_status=WorkerTaskStatus.BLOCKED,
+                               task_status_reason="codex_version_unsupported",
+                               metadata={"worker_started": False})
+
+
+def _delegate(folder):
+    async def invoke():
+        return await server.modelquad_delegate(task_type="review", prompt="Review it.",
+                                               working_directory=str(folder), timeout=60.0)
+
+    return anyio.run(invoke)
+
+
+def test_the_first_codex_call_returns_the_notice_and_starts_nothing(fresh_install, monkeypatch, tmp_path):
+    executor = _Started()
+    monkeypatch.setattr(server, "_executor", lambda: executor)
+    monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
+
+    first = _delegate(tmp_path)
 
     payload = _payload(first)
     assert payload["status"] == "notice_first" and payload["codex_started"] is False
     assert payload["notice"] == list(disclosure.DATA_FLOW)
     assert "Show the user the notice" in payload["next"]
-    assert started == []
+    # The person reads the notice itself, in full, right after the outcome line.
+    lines = first.content[0].text.splitlines()
+    assert lines[0].startswith("Codex was not started.")
+    assert lines[1:1 + len(disclosure.DATA_FLOW)] == list(disclosure.DATA_FLOW)
+    assert executor.requests == []
     assert disclosure.notice_shown() is True
-    assert server._notice_first() is None, "shown once, then calls run"
+    assert review.notice() is None, "shown once, then calls run"
+    second = _payload(_delegate(tmp_path))
+    assert second.get("status") != "notice_first" and len(executor.requests) == 1
 
 
-def test_the_handoff_shows_the_notice_first_too(fresh_install, tmp_path):
-    result = asyncio.run(server.modelquad_handoff("review", "Review it.", str(tmp_path)))
-    assert _payload(result)["status"] == "notice_first"
+def test_showing_a_package_neither_waits_for_the_notice_nor_spends_it(fresh_install, monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    async def invoke():
+        return await server.modelquad_review_package(task_type="review", prompt="Review it.",
+                                                     working_directory=str(tmp_path), files=["a.py"])
+
+    shown = _payload(anyio.run(invoke))
+    assert shown.get("status") != "notice_first" and shown["files"][0]["path"] == "a.py"
+    assert disclosure.notice_shown() is False, "the first Codex call still shows the notice"
 
 
 def test_an_install_that_printed_the_notice_counts(fresh_install, tmp_path):
@@ -86,20 +122,3 @@ def test_unreadable_state_reads_as_not_shown(monkeypatch):
 
     monkeypatch.setattr(disclosure, "_state_root", broken)
     assert disclosure.notice_shown() is False
-
-
-def test_the_quota_refresh_tool_waits_for_the_notice_before_asking_codex(fresh_install, monkeypatch):
-    from modelquad.usage import refresh
-
-    asked = []
-    real = refresh.refresh_all
-    monkeypatch.setattr(refresh, "refresh_all",
-                        lambda directory, **kwargs: asked.append(kwargs.get("providers")) or {})
-    payload = server.modelquad_usage_refresh()
-    assert asked == [["claude"]], "Codex's app-server waits for the notice"
-    assert payload["skipped"] == {"codex": "notice_not_shown"} and "notice" in payload["note"]
-    disclosure.record_notice_shown("first_call")
-    asked.clear()
-    payload = server.modelquad_usage_refresh()
-    assert sorted(asked[0]) == ["claude", "codex"] and "skipped" not in payload
-    assert real is not None

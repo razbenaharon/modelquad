@@ -27,8 +27,8 @@ def _repo(path: Path) -> Path:
     return path
 
 
-def _show(capsys, folder: Path, db: Path, *extra: str) -> str:
-    assert cli.main(["--history-db", str(db), "settings", *extra, "show", "--project", str(folder)]) == 0
+def _show(capsys, folder: Path, *extra: str) -> str:
+    assert cli.main(["settings", *extra, "show", "--project", str(folder)]) == 0
     return capsys.readouterr().out
 
 
@@ -60,14 +60,14 @@ def _snapshot() -> dict:
 def test_defaults_read_on_approve_each_call_and_no_history_yet(tmp_path, capsys, installed):
     repo = _repo(tmp_path / "r")
     before = _snapshot()
-    out = _show(capsys, repo, tmp_path / "history.db")
-    assert "1. ModelQuad in Claude Code: on (connected)." in out
+    out = _show(capsys, repo)
+    assert "1. ModelQuad in Claude Code: on." in out
     assert "2. Mode: approve each call." in out
     assert "excluded" not in out.split("To change them")[0]
     assert "3. History here: none yet" in out
     # Reading creates neither the preferences nor the ledger.
     assert _snapshot() == before
-    for command in ("modelquad host disconnect claude", "modelquad host connect claude",
+    for command in ("modelquad off", "modelquad on",
                     "modelquad settings auto on --global --yes", "modelquad settings auto off --global",
                     "modelquad review report", "modelquad settings repo off [--project DIR]"):
         assert command in out
@@ -77,31 +77,67 @@ def test_defaults_read_on_approve_each_call_and_no_history_yet(tmp_path, capsys,
 def test_settings_with_no_subcommand_shows_the_current_folder(tmp_path, capsys, monkeypatch):
     repo = _repo(tmp_path / "r")
     monkeypatch.chdir(repo)
-    assert cli.main(["--history-db", str(tmp_path / "history.db"), "settings"]) == 0
+    assert cli.main(["settings"]) == 0
     assert "2. Mode: approve each call." in capsys.readouterr().out
 
 
+OFF_LINE = "1. ModelQuad in Claude Code: off (you turned it off: no Codex call starts)."
+
+
 def test_off_in_claude_code_reads_off(tmp_path, capsys, installed):
-    db = tmp_path / "history.db"
     repo = _repo(tmp_path / "r")
-    assert cli.main(["--history-db", str(db), "host", "disconnect", "claude"]) == 0
+    assert cli.main(["off"]) == 0
     capsys.readouterr()
-    assert "1. ModelQuad in Claude Code: off (disconnected" in _show(capsys, repo, db)
-    assert cli.main(["--history-db", str(db), "host", "connect", "claude"]) == 0
+    assert OFF_LINE in _show(capsys, repo)
+    assert cli.main(["on"]) == 0
     capsys.readouterr()
-    assert "1. ModelQuad in Claude Code: on (connected)." in _show(capsys, repo, db)
+    assert "1. ModelQuad in Claude Code: on." in _show(capsys, repo)
 
 
-def test_unreadable_host_controls_read_unknown(tmp_path, capsys, installed):
-    db = tmp_path / "history.db"
-    db.write_bytes(b"not a database")
-    out = _show(capsys, _repo(tmp_path / "r"), db)
+def _legacy_database(disconnected: str) -> Path:
+    """An earlier build's history database, beside preferences.json in the state folder."""
+    target = preferences_path().parent / "modelquad.db"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(target)
+    try:
+        conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO settings VALUES ('disconnected_hosts', ?)", (disconnected,))
+        conn.commit()
+    finally:
+        conn.close()
+    return target
+
+
+def test_an_off_stored_by_an_earlier_build_reads_off(tmp_path, capsys, installed):
+    """An upgrade never turns Codex back on by itself."""
+    legacy = _legacy_database('["claude"]')
+    before = legacy.read_bytes()
+    repo = _repo(tmp_path / "r")
+    assert OFF_LINE in _show(capsys, repo)
+    assert legacy.read_bytes() == before
+    # The user's own switch, once set, is the setting.
+    assert cli.main(["on"]) == 0
+    capsys.readouterr()
+    assert "1. ModelQuad in Claude Code: on." in _show(capsys, repo)
+
+
+def test_an_earlier_build_that_was_connected_reads_on(tmp_path, capsys, installed):
+    _legacy_database("[]")
+    assert "1. ModelQuad in Claude Code: on." in _show(capsys, _repo(tmp_path / "r"))
+
+
+def test_unreadable_switch_reads_unknown(tmp_path, capsys, installed):
+    target = preferences_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("not json", encoding="utf-8")
+    out = _show(capsys, _repo(tmp_path / "r"))
     assert "1. ModelQuad in Claude Code: unknown" in out
+    assert target.read_text(encoding="utf-8") == "not json"
 
 
 def test_a_fresh_profile_reads_not_installed(tmp_path, capsys):
     """Nothing installed is not "on (connected)": unknown stays unknown."""
-    out = _show(capsys, _repo(tmp_path / "r"), tmp_path / "history.db")
+    out = _show(capsys, _repo(tmp_path / "r"))
     assert "1. ModelQuad in Claude Code: not installed" in out
     assert "on (connected)" not in out
 
@@ -114,61 +150,56 @@ def test_the_plugin_record_counts_as_installed(tmp_path, capsys):
     record = default_target_dir("claude") / "plugins" / "installed_plugins.json"
     record.parent.mkdir(parents=True)
     record.write_text(json.dumps({"plugins": {"other@market": []}}), encoding="utf-8")
-    db = tmp_path / "history.db"
-    assert "1. ModelQuad in Claude Code: not installed" in _show(capsys, _repo(tmp_path / "r"), db)
+    assert "1. ModelQuad in Claude Code: not installed" in _show(capsys, _repo(tmp_path / "r"))
     record.write_text(json.dumps({"plugins": {"modelquad@modelquad": []}}), encoding="utf-8")
-    assert "1. ModelQuad in Claude Code: on (connected)." in _show(capsys, tmp_path / "r", db)
+    assert "1. ModelQuad in Claude Code: on." in _show(capsys, tmp_path / "r")
     record.write_text("not json", encoding="utf-8")
-    assert "1. ModelQuad in Claude Code: unknown" in _show(capsys, tmp_path / "r", db)
+    assert "1. ModelQuad in Claude Code: unknown" in _show(capsys, tmp_path / "r")
 
 
 def test_automatic_global_versus_this_folder(tmp_path, capsys):
-    db = tmp_path / "history.db"
     repo, other = _repo(tmp_path / "r"), _repo(tmp_path / "other")
     grant.write(True, directory=repo)
-    out = _show(capsys, repo, db)
+    out = _show(capsys, repo)
     assert "2. Mode: automatic. The standing grant is on for this folder's repository" in out
     # This folder's own grant survives "auto off --global", so its own command is shown.
     assert f'modelquad settings auto off --project "{repo.resolve()}"' in out
-    assert "2. Mode: approve each call." in _show(capsys, other, db)
+    assert "2. Mode: approve each call." in _show(capsys, other)
 
     grant.write(True, everywhere=True)
-    out = _show(capsys, other, db)
+    out = _show(capsys, other)
     assert "2. Mode: automatic. The standing grant is on for every folder" in out
     assert "auto off --project" not in out
     grant.write(False, everywhere=True)
-    assert "2. Mode: approve each call." in _show(capsys, other, db)
+    assert "2. Mode: approve each call." in _show(capsys, other)
 
 
 def test_an_excluded_folder_says_so(tmp_path, capsys):
-    db = tmp_path / "history.db"
     repo = _repo(tmp_path / "r")
     grant.write(True, everywhere=True)
     repo_settings.write_mode(repo, "off")
-    out = _show(capsys, repo, db)
+    out = _show(capsys, repo)
     assert "2. Mode: automatic." in out
     assert "This folder is excluded: you turned Codex off here" in out
     repo_settings.write_mode(repo, "inherit")
     (repo / ".modelquad.toml").write_text('schema = 1\n[codex]\nallowed = false\n', encoding="utf-8")
-    assert "This folder is excluded: this repository's .modelquad.toml turns Codex off" in _show(
-        capsys, repo, db)
+    assert "This folder is excluded: this repository's .modelquad.toml turns Codex off" in _show(capsys, repo)
 
 
 def test_unreadable_preferences_read_unknown_not_approve(tmp_path, capsys):
     target = preferences_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("not json", encoding="utf-8")
-    out = _show(capsys, _repo(tmp_path / "r"), tmp_path / "history.db")
+    out = _show(capsys, _repo(tmp_path / "r"))
     assert "2. Mode: unknown" in out and "approve each call. Claude" not in out
     assert target.read_text(encoding="utf-8") == "not json"
 
 
 def test_history_line_counts_and_unknowns(tmp_path, capsys, monkeypatch):
-    db = tmp_path / "history.db"
     repo = _repo(tmp_path / "r")
     # A ledger with no calls here in the period: none, not a confident count of findings.
     review_ledger.connect().close()
-    assert "3. History here: no Codex calls in the last 30 days." in _show(capsys, repo, db)
+    assert "3. History here: no Codex calls in the last 30 days." in _show(capsys, repo)
 
     answer = "FINDING F1 | high | a.py:1 | bug | one\nFINDING F2 | low | b.py:2 | style | two\n"
     review_ledger.record_run({"decision_id": "d-1", "output": answer}, working_directory=repo,
@@ -178,19 +209,18 @@ def test_history_line_counts_and_unknowns(tmp_path, capsys, monkeypatch):
     review_ledger.record_verdicts("d-1", [{"finding": "F1", "verdict": "confirmed",
                                            "evidence": "code_reading", "action": "no_change"}],
                                   source="claude")
-    line = next(text for text in _show(capsys, repo, db).splitlines() if text.startswith("3."))
+    line = next(text for text in _show(capsys, repo).splitlines() if text.startswith("3."))
     assert "2 Codex call(s), 2 answered, 2 finding(s): 1 confirmed (1 by Claude's reading only, not proof)" in line
     assert "0 refuted" in line and "1 not judged yet" in line
     assert "findings unknown for 1 answer(s)" in line
     # Another project's history is not this one's.
-    assert "3. History here: no Codex calls in the last 30 days." in _show(
-        capsys, _repo(tmp_path / "other"), db)
+    assert "3. History here: no Codex calls in the last 30 days." in _show(capsys, _repo(tmp_path / "other"))
 
     def broken(**_):
         raise sqlite3.DatabaseError("broken")
 
     monkeypatch.setattr(review_ledger, "report", broken)
-    assert "3. History here: unknown" in _show(capsys, repo, db)
+    assert "3. History here: unknown" in _show(capsys, repo)
 
 
 def test_a_missing_or_remote_folder_is_refused(tmp_path, capsys):
@@ -207,7 +237,7 @@ def test_the_view_writes_nothing(tmp_path, monkeypatch):
 
     monkeypatch.setattr(atomicwrite, "atomic_write", refuse)
     grant_on = _repo(tmp_path / "r")
-    lines = settings_view.lines(grant_on, tmp_path / "history.db")
+    lines = settings_view.lines_from(settings_view.view(grant_on), grant_on)
     assert lines[0] == "ModelQuad settings" and lines[1].startswith("1. ")
 
 

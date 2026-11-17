@@ -3,9 +3,8 @@
 """The version flag.
 
 `--version` is the first thing anyone types at an unfamiliar CLI. It used to
-error out with `unrecognized arguments: --version` and a usage dump, leaving
-the version reachable only by reading the tail of `doctor` -- which a beta
-tester reporting a problem is unlikely to find.
+error out with `unrecognized arguments: --version` and a usage dump, which a
+beta tester reporting a problem cannot use.
 """
 
 from __future__ import annotations
@@ -49,8 +48,8 @@ def test_version_flag_names_the_product_a_user_recognizes(capsys):
 def test_version_flag_does_not_displace_subcommands():
     """The new top-level flag must not shadow normal parsing."""
 
-    args = build_parser().parse_args(["route", "trivial"])
-    assert args.command == "route"
+    args = build_parser().parse_args(["settings", "show"])
+    assert args.command == "settings"
 
 
 # ----------------------------------------------------------------
@@ -88,12 +87,5 @@ def test_other_commands_do_not_pay_for_the_build_identity(monkeypatch):
         raise AssertionError("git was run to build the parser")
 
     monkeypatch.setattr(subprocess, "run", refuse)
-    build_parser().parse_args(["route", "trivial"])
+    build_parser().parse_args(["settings", "show"])
 
-
-def test_advise_is_the_command_and_route_still_works_unlisted(capsys):
-    parser = build_parser()
-    assert parser.parse_args(["advise", "review"]).command == "advise"
-    assert parser.parse_args(["route", "review"]).command == "route"
-    text = parser.format_help()
-    assert "advise" in text and "route" not in text

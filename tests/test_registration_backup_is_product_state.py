@@ -77,21 +77,15 @@ def test_the_inventory_flags_it_as_possibly_sensitive():
 # ---------------------------------------------------------------------------
 
 
-def test_the_secret_never_reaches_doctor(state_root):
-    from modelquad.config import Config
-    from modelquad.service import control_plane as shell
-    from modelquad.doctor import run_doctor
+def test_the_secret_never_reaches_doctor(state_root, tmp_path, monkeypatch):
+    from modelquad import setupcheck
 
     _write_backup_with_a_secret(state_root)
-    report = run_doctor(
-        Config(),
-        usage_directory=state_root,
-        which=lambda _: "/fake/cli",
-        control_plane_probe=lambda port: shell.ControlPlaneVerdict(
-            shell.PROBE_ABSENT, "no listener"
-        ),
+    # The Codex check would run the machine's own Codex CLI; it reads no state.
+    monkeypatch.setattr(
+        setupcheck, "_codex", lambda: {"name": "codex", "ok": None, "detail": "not checked", "next": None}
     )
+    report = setupcheck.run(str(tmp_path))
 
-    assert ENV_VALUE_SENTINEL not in json.dumps(report.to_dict())
-
-
+    assert ENV_VALUE_SENTINEL not in json.dumps(report)
+    assert ENV_VALUE_SENTINEL not in " ".join(setupcheck.lines(report))

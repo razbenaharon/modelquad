@@ -195,7 +195,6 @@ def test_wheel_install_exposes_package_data_without_the_source_checkout(tmp_path
             (
                 "import importlib.resources\n"
                 "for package, name in (\n"
-                "    ('modelquad', 'default.yaml'),\n"
                 "    ('modelquad.adapters', 'templates/claude/mcp/mcp-servers.json'),\n"
                 "    ('modelquad.adapters', 'templates/claude/skills/modelquad/SKILL.md'),\n"
                 "):\n"

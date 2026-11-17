@@ -1,5 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
+"""The Codex executor seen from outside: argv, stdin, environment, the
+completion envelope, and the closed projection a result is reduced to."""
+
 from __future__ import annotations
 
 import json
@@ -9,19 +12,11 @@ import subprocess
 import sys
 import tempfile
 
-from dataclasses import replace
-from datetime import datetime, timedelta, timezone
-
 import pytest
 
-
-from pathlib import Path
-
-from modelquad.cli import build_providers
-from modelquad.config import Config, ProviderConfig, load_config
+from modelquad import review
 from modelquad.execution import (
     CodexExecutor,
-    ExecutionManager,
     ExecutionRequest,
     ExecutionResult,
     OutcomeEvidence,
@@ -29,38 +24,14 @@ from modelquad.execution import (
     no_window_kwargs,
 )
 from modelquad.execution.base import WORKER_ENV_VAR
-from modelquad.models import Freshness, ProviderStatus, TaskType
-from modelquad.quota_policy import QuotaRefusal, apply_refusal_overlay
-from modelquad.router import Router
+from modelquad.execution.closed import closed_result
+from modelquad.models import TaskType
 
 
 @pytest.fixture(autouse=True)
 def isolate_executor_tempfiles(tmp_path, monkeypatch):
     # Even a failed scoped-HOME cleanup stays within this test's fixture.
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-
-
-class _FakeExecutor:
-    """A minimal Executor test double that returns a pre-built ExecutionResult.
-
-    Used for ExecutionManager routed-dispatch tests, where the point is to
-    control `task_status`/`safe_to_retry` directly rather than drive them
-    through real subprocess classification. `available=False` stands for a
-    worker whose CLI is not installed: the manager cannot start it.
-    """
-
-    def __init__(self, name, result_factory, *, available=True):
-        self.name = name
-        self._result_factory = result_factory
-        self.available = available
-        self.calls = 0
-
-    def is_available(self):
-        return self.available
-
-    def execute(self, request):
-        self.calls += 1
-        return self._result_factory(self.name)
 
 
 @pytest.fixture(autouse=True)
@@ -99,28 +70,6 @@ def _request(tmp_path, *, provider="codex", task_type=TaskType.REVIEW, **kwargs)
         working_directory=tmp_path,
         **kwargs,
     )
-
-
-def _write_usage_fixtures(tmp_path):
-    (tmp_path / "usage-claude.json").write_text(
-        json.dumps({"five_hour_used_percentage": 10, "seven_day_used_percentage": 20}),
-        encoding="utf-8",
-    )
-    (tmp_path / "usage-codex.json").write_text(
-        json.dumps(
-            {
-                "available": True,
-                "five_hour_remaining_percentage": 80,
-                "seven_day_remaining_percentage": 70,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-
-def _statuses(config, tmp_path):
-    _write_usage_fixtures(tmp_path)
-    return tuple(provider.get_status() for provider in build_providers(config, tmp_path))
 
 
 def test_codex_fresh_run_command_construction(tmp_path, *, synthetic_worker_binary):
@@ -406,287 +355,23 @@ def test_delegated_workers_always_receive_recursion_guard_environment(
     assert child_env is not os.environ
 
 
-def test_execution_manager_routes_to_highest_scoring_available_provider(tmp_path, *, synthetic_worker_binary):
-    config = load_config()
+@pytest.mark.parametrize("kind, reason", [("missing", "working_directory_missing"),
+                                          ("file", "working_directory_not_a_folder")])
+def test_a_working_directory_that_is_not_a_folder_is_refused_before_any_process(
+        tmp_path, kind, reason, *, synthetic_worker_binary):
     codex_run = RecordingRun()
-    manager = ExecutionManager(
-        config,
-        executors={
-            "codex": CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=codex_run),
-        },
-    )
+    executor = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=codex_run)
+    target = tmp_path / ("does-not-exist" if kind == "missing" else "not_a_dir.txt")
+    if kind == "file":
+        target.write_text("not a directory", encoding="utf-8")
 
-    result = manager.delegate(
-        "architecture", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
-    )
+    reply = review.run(review.ReviewRequest("review", "do the thing", str(target)), executor)
 
-    # Claude is the host, never a worker: a read-only task the router would
-    # keep with the host still runs on the only executable worker, once.
-    assert result.provider == "codex"
-    assert len(codex_run.calls) == 1
-    assert result.metadata["recommended_provider"] in {"claude", "codex"}
-    assert "fallback_from" not in result.metadata
-
-
-def test_auto_routing_executes_router_recommendation_first_on_a_score_tie(tmp_path):
-    # Regression: when claude and codex share a task fit (0.90 on review here), and with
-    # both at unknown quota (neutral usage) their scores tie exactly. The router
-    # breaks the tie toward "codex" via max over (score, fit, provider). The
-    # ExecutionManager must rank candidates with the SAME key so ranked[0] equals
-    # the router's recommendation -- otherwise it would execute "claude" first
-    # (a divergent tie-break) and misapply codex's model prior to the wrong
-    # provider. Config() is used to keep the scores free of any session strategy.
-    config = Config()
-    config = replace(config, task_fit={**config.task_fit, "review": {"claude": 0.9, "codex": 0.9}})
-    statuses = (
-        ProviderStatus(name="claude", remaining_percentage=None, freshness=Freshness.UNKNOWN),
-        ProviderStatus(name="codex", remaining_percentage=None, freshness=Freshness.UNKNOWN),
-    )
-    route = Router(config).route("review", statuses)
-    assert route.recommendation == "codex"
-
-    def completed(name):
-        return ExecutionResult(
-            provider=name,
-            success=True,
-            output="ok",
-            exit_code=0,
-            task_status=WorkerTaskStatus.COMPLETED,
-        )
-
-    claude = _FakeExecutor("claude", completed)
-    codex = _FakeExecutor("codex", completed)
-    manager = ExecutionManager(config, executors={"claude": claude, "codex": codex})
-
-    result = manager.delegate("review", "do the thing", str(tmp_path), statuses=statuses)
-
-    assert result.provider == "codex"
-    assert codex.calls == 1
-    assert claude.calls == 0
-    assert result.metadata["recommended_provider"] == "codex"
-    assert result.metadata["fallback"] is False
-
-
-def test_execution_manager_delegate_threads_expected_consumption_to_router(tmp_path):
-    from modelquad.models import ConsumptionBucket, ConsumptionSource, ExpectedConsumption
-
-    config = Config()
-    captured: dict[str, object] = {}
-
-    class StubRouter(Router):
-        def route(self, task_type, statuses, expected_consumption=None, **kwargs):
-            captured["expected_consumption"] = expected_consumption
-            return super().route(
-                task_type, statuses, expected_consumption=expected_consumption, **kwargs
-            )
-
-    def completed(name):
-        return ExecutionResult(
-            provider=name,
-            success=True,
-            output="ok",
-            exit_code=0,
-            task_status=WorkerTaskStatus.COMPLETED,
-        )
-
-    codex = _FakeExecutor("codex", completed)
-    router = StubRouter(config)
-    manager = ExecutionManager(config, router=router, executors={"codex": codex})
-
-    evidence = ExpectedConsumption(
-        bucket=ConsumptionBucket.HIGH,
-        source=ConsumptionSource.HOST_SUPPLIED,
-        basis="test basis",
-    )
-    statuses = (
-        ProviderStatus(name="codex", remaining_percentage=80.0, freshness=Freshness.FRESH),
-    )
-
-    result = manager.delegate(
-        "review",
-        "do the thing",
-        str(tmp_path),
-        statuses=statuses,
-        expected_consumption=evidence,
-    )
-
-    assert result.provider == "codex"
-    assert captured["expected_consumption"] is evidence
-
-
-def test_execution_manager_unavailable_override_does_not_fall_back(tmp_path, *, synthetic_worker_binary):
-    config = load_config()
-    codex_run = RecordingRun()
-    manager = ExecutionManager(
-        config,
-        executors={
-            "codex": CodexExecutor(which=lambda _: None, run=codex_run),
-        },
-    )
-
-    result = manager.delegate(
-        "implementation", "do the thing", str(tmp_path), provider="codex"
-    )
-
-    assert result.success is False
-    assert "not available" in (result.error or "").lower()
-    assert codex_run.calls == []
-
-
-def test_an_uninstalled_default_worker_is_not_substituted(tmp_path, *, synthetic_worker_binary):
-    from modelquad.registry import (
-        ProviderCapabilities, ProviderPlugin, UsageSourceKind,
-        WORKSPACE_DEVELOPMENT_GRANT, default_registry,
-    )
-    registry = default_registry()
-    plugin = ProviderPlugin(
-        id="test_worker", display_name="Synthetic worker",
-        capabilities=ProviderCapabilities(coding=True, cli_execution=True),
-        usage_source_kind=UsageSourceKind.UNKNOWN,
-        capability_profile=dict(WORKSPACE_DEVELOPMENT_GRANT),
-    )
-    registry.register(plugin)
-    base = load_config()
-    config = replace(base, task_fit={
-        task: {**fits, plugin.id: 0.8} for task, fits in base.task_fit.items()
-    })
-    config.provider_capability_profiles[plugin.id] = plugin.capability_state()
-    config.provider_capabilities[plugin.id] = plugin.capability_state().operational_capabilities
-    codex_run = RecordingRun()
-    substitute = _FakeExecutor(plugin.id, _completed)
-    manager = ExecutionManager(
-        config,
-        registry=registry,
-        executors={
-            "codex": CodexExecutor(which=lambda _: None, run=codex_run),
-            plugin.id: substitute,
-        },
-    )
-
-    result = manager.delegate(
-        "review", "do the thing", str(tmp_path), statuses=(
-            *_statuses(config, tmp_path),
-            ProviderStatus(plugin.id, remaining_percentage=80, freshness=Freshness.FRESH),
-        )
-    )
-
-    # The default worker's CLI is missing: nothing starts, no other worker
-    # is tried, whatever its fit (OSS v1 step 5).
-    assert result.provider == "unknown" and result.task_status == WorkerTaskStatus.BLOCKED
-    assert result.task_status_reason == "no_viable_worker"
-    assert substitute.calls == 0
-    assert codex_run.calls == []
-    # Review advice stays with the host; only Codex is a worker.
-    assert result.metadata["recommended_provider"] == "claude"
-    assert result.metadata["attempted_providers"] == []
-    assert result.metadata["fallback"] is False
-
-
-def test_execution_manager_rejects_missing_working_directory(tmp_path, *, synthetic_worker_binary):
-    config = load_config()
-    codex_run = RecordingRun()
-    manager = ExecutionManager(
-        config,
-        executors={
-            "codex": CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=codex_run),
-        },
-    )
-
-    result = manager.delegate(
-        "review",
-        "do the thing",
-        tmp_path / "does-not-exist",
-        statuses=_statuses(config, tmp_path),
-    )
-
-    assert result.success is False
-    # A read-only result is a closed projection: the path never comes back.
-    assert result.error == "worker_error_reported"
-    assert codex_run.calls == []
-
-
-def test_default_execution_manager_uses_registry_and_respects_disabled_workers():
-    assert set(ExecutionManager(Config()).executors) == {"codex"}
-    disabled = ExecutionManager(
-        Config(
-            providers={
-                "codex": ProviderConfig(enabled=False),
-            }
-        )
-    )
-    assert disabled.executors == {}
-
-
-@pytest.mark.parametrize('task', ['review', 'exploration'], ids=['review', 'explore'])
-def test_delegation_skips_an_injected_claude_executor(tmp_path, task):
-    config = Config()
-    config = replace(config, task_fit={**config.task_fit,
-        task: {'claude': 1.0, 'codex': 0.8}})
-    def result(name):
-        return ExecutionResult(name, True, 'synthetic', 0,
-                               task_status=WorkerTaskStatus.COMPLETED)
-    claude_executor = _FakeExecutor('claude', result)
-    codex_worker = _FakeExecutor('codex', result)
-    manager = ExecutionManager(config, executors={'claude': claude_executor, 'codex': codex_worker})
-    assert claude_executor.is_available()
-    outcome = manager.delegate(task, 'synthetic', tmp_path,
-        statuses=_statuses_with_codex_at(80), now=_QUOTA_NOW, policy_excluded={})
-    assert outcome.metadata['recommended_provider'] == 'claude'
-    assert outcome.provider == 'codex' and codex_worker.calls == 1
-    assert claude_executor.calls == 0
-    # An explicit Claude choice is treated as an unregistered provider.
-    explicit = manager.delegate(task, 'synthetic', tmp_path, provider='claude')
-    assert explicit.task_status is WorkerTaskStatus.BLOCKED
-    assert explicit.task_status_reason == 'provider_not_registered'
-    assert claude_executor.calls == 0 and codex_worker.calls == 1
-
-
-@pytest.mark.parametrize('task', ['review', 'exploration'], ids=['review', 'explore'])
-def test_an_exhausted_codex_still_runs_when_a_delegation_was_asked_for(tmp_path, task):
-    config = Config()
-    config = replace(config, task_fit={**config.task_fit,
-        task: {'claude': 1.0, 'codex': 0.8}})
-    claude_executor = _FakeExecutor('claude', _completed)
-    codex_worker = _FakeExecutor('codex', _completed)
-    manager = ExecutionManager(config, executors={'claude': claude_executor, 'codex': codex_worker})
-
-    outcome = manager.delegate(task, 'synthetic', tmp_path,
-        statuses=_statuses_with_codex_at(0), now=_QUOTA_NOW, policy_excluded={})
-
-    # Quota is display-only: Codex at 0% is still the worker the caller
-    # asked for; the host-only Claude advice never runs anything.
-    assert manager.routed_result.recommendation == 'claude'
-    assert outcome.metadata['recommended_provider'] == 'claude'
-    assert outcome.provider == 'codex'
-    assert claude_executor.calls == 0 and codex_worker.calls == 1
-    assert outcome.metadata['attempted_providers'] == ['codex']
-    assert 'skipped_providers' not in outcome.metadata
-    assert outcome.metadata['fallback'] is False
-    assert 'fallback_from' not in outcome.metadata
-
-
-def test_execution_manager_rejects_file_as_working_directory(tmp_path, *, synthetic_worker_binary):
-    config = load_config()
-    codex_run = RecordingRun()
-    manager = ExecutionManager(
-        config,
-        executors={
-            "codex": CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=codex_run),
-        },
-    )
-    working_file = tmp_path / "not_a_dir.txt"
-    working_file.write_text("not a directory", encoding="utf-8")
-
-    result = manager.delegate(
-        "review",
-        "do the thing",
-        working_file,
-        statuses=_statuses(config, tmp_path),
-    )
-
-    assert result.success is False
-    # A read-only result is a closed projection: the path never comes back.
-    assert result.error == "worker_error_reported"
+    assert reply["refused"] is True
+    assert reply["started"] is False and reply["executed"] is False
+    assert reply["reason"] == reason
+    # The refusal is a closed reply: the path never comes back.
+    assert target.name not in json.dumps(reply)
     assert codex_run.calls == []
 
 
@@ -777,190 +462,6 @@ def test_codex_strips_store_package_windows_apps_dirs_too(tmp_path, monkeypatch,
     assert "WindowsApps" not in child_path
     assert r"C:\Windows\System32" in child_path
     assert r"C:\Windows\System32\WindowsPowerShell\v1.0" in child_path
-
-
-# --- ExecutionManager: a routed delegation starts at most one worker ---
-#
-# No automatic chain of alternative agents. Once a worker is
-# dispatched its result is the delegation's result, `safe_to_retry` included,
-# and the Host decides whether and where to retry.
-
-
-def test_execution_manager_returns_safe_to_retry_result_without_starting_another_worker(
-    tmp_path,
-):
-    """Was `..._falls_back_past_safe_to_retry_result`, which pinned the chain
-    (a second worker ran after Codex and its result replaced Codex's)."""
-
-    config = load_config()
-    codex_executor = _FakeExecutor(
-        "codex",
-        lambda name: ExecutionResult(
-            provider=name,
-            success=True,
-            output="",
-            exit_code=0,
-            task_status=WorkerTaskStatus.BLOCKED,
-            task_status_reason="sandbox_process_spawn_failed",
-            safe_to_retry=True,
-        ),
-    )
-    second_executor = _FakeExecutor(
-        "zeta",
-        lambda name: ExecutionResult(
-            provider=name,
-            success=True,
-            output="",
-            exit_code=0,
-            task_status=WorkerTaskStatus.COMPLETED,
-            safe_to_retry=False,
-        ),
-    )
-    manager = ExecutionManager(
-        config, executors={"codex": codex_executor, "zeta": second_executor}
-    )
-
-    result = manager.delegate(
-        "review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
-    )
-
-    assert codex_executor.calls == 1
-    assert second_executor.calls == 0
-    assert result.provider == "codex"
-    assert result.task_status == WorkerTaskStatus.BLOCKED
-    # A read-only result carries only closed reason labels.
-    assert result.task_status_reason == "worker_reported"
-    assert result.safe_to_retry is True
-    assert result.metadata["attempted_providers"] == ["codex"]
-    # Review advice stays with the host; Codex is the only worker.
-    assert result.metadata["recommended_provider"] == "claude"
-    assert result.metadata["fallback"] is False
-    assert "fallback_from" not in result.metadata
-
-
-def test_execution_manager_does_not_fall_back_past_failed_result(tmp_path):
-    config = load_config()
-    codex_executor = _FakeExecutor(
-        "codex",
-        lambda name: ExecutionResult(
-            provider=name,
-            success=False,
-            output="",
-            exit_code=1,
-            task_status=WorkerTaskStatus.FAILED,
-            task_status_reason="process_exit_1",
-            safe_to_retry=False,
-        ),
-    )
-    second_executor = _FakeExecutor(
-        "zeta",
-        lambda name: ExecutionResult(
-            provider=name, success=True, output="", exit_code=0, task_status=WorkerTaskStatus.COMPLETED
-        ),
-    )
-    manager = ExecutionManager(
-        config, executors={"codex": codex_executor, "zeta": second_executor}
-    )
-
-    result = manager.delegate(
-        "review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
-    )
-
-    assert codex_executor.calls == 1
-    assert second_executor.calls == 0
-    assert result.provider == "codex"
-    assert result.task_status == WorkerTaskStatus.FAILED
-
-
-def test_execution_manager_blocked_without_safe_to_retry_does_not_fall_back(tmp_path):
-    """A future BLOCKED case that forgets to prove safe_to_retry must fail closed."""
-
-    config = load_config()
-    codex_executor = _FakeExecutor(
-        "codex",
-        lambda name: ExecutionResult(
-            provider=name,
-            success=False,
-            output="",
-            exit_code=1,
-            task_status=WorkerTaskStatus.BLOCKED,
-            task_status_reason="unspecified",
-            # safe_to_retry deliberately left at its default (False).
-        ),
-    )
-    second_executor = _FakeExecutor(
-        "zeta",
-        lambda name: ExecutionResult(
-            provider=name, success=True, output="", exit_code=0, task_status=WorkerTaskStatus.COMPLETED
-        ),
-    )
-    manager = ExecutionManager(
-        config, executors={"codex": codex_executor, "zeta": second_executor}
-    )
-
-    result = manager.delegate(
-        "review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
-    )
-
-    assert codex_executor.calls == 1
-    assert second_executor.calls == 0
-    assert result.provider == "codex"
-    assert result.task_status == WorkerTaskStatus.BLOCKED
-
-
-def test_execution_manager_safe_to_retry_result_is_not_replaced_by_no_viable_worker(
-    tmp_path,
-):
-    """Was `..._all_candidates_blocked_returns_honest_no_viable_worker`.
-
-    The chain ran both workers and then threw the real result away for a
-    synthetic `no_viable_worker` naming `unknown`. The honest outcome is the
-    dispatched worker's own: it is still not a completed task, and it still
-    says it is safe to retry.
-    """
-
-    config = load_config()
-    codex_executor = _FakeExecutor(
-        "codex",
-        lambda name: ExecutionResult(
-            provider=name,
-            success=False,
-            output="",
-            exit_code=None,
-            task_status=WorkerTaskStatus.BLOCKED,
-            task_status_reason="sandbox_process_spawn_failed",
-            safe_to_retry=True,
-        ),
-    )
-    second_executor = _FakeExecutor(
-        "zeta",
-        lambda name: ExecutionResult(
-            provider=name,
-            success=False,
-            output="",
-            exit_code=None,
-            task_status=WorkerTaskStatus.BLOCKED,
-            task_status_reason="permission_required",
-            safe_to_retry=True,
-        ),
-    )
-    manager = ExecutionManager(
-        config, executors={"codex": codex_executor, "zeta": second_executor}
-    )
-
-    result = manager.delegate(
-        "review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path)
-    )
-
-    assert codex_executor.calls == 1
-    assert second_executor.calls == 0
-    assert result.provider == "codex"
-    assert result.task_status == WorkerTaskStatus.BLOCKED
-    # A read-only result carries only closed reason labels.
-    assert result.task_status_reason == "worker_reported"
-    assert result.safe_to_retry is True
-    assert result.task_completed is False
-    assert "No viable delegated worker" not in (result.error or "")
 
 
 def test_outcome_evidence_validation_and_roundtrip():
@@ -1099,13 +600,11 @@ def test_no_window_kwargs_fallback_when_attribute_missing(monkeypatch):
 
 
 def test_no_window_kwargs_reexports_canonical():
-    """Assert execution.base and usage.base re-export the exact canonical object."""
+    """Assert execution.base re-exports the exact canonical object."""
     import modelquad.execution.base as exec_base
     import modelquad.procutil as procutil_module
-    import modelquad.usage.base as usage_base
 
     assert exec_base.no_window_kwargs is procutil_module.no_window_kwargs
-    assert usage_base.no_window_kwargs is procutil_module.no_window_kwargs
 
 
 def test_codex_executor_passes_create_no_window_on_windows(tmp_path, *, synthetic_worker_binary):
@@ -1161,8 +660,7 @@ def _codex_metadata_command(run, tmp_path, *, synthetic_worker_binary):
 def test_codex_failure_paths_persist_no_absolute_path(tmp_path, failure, synthetic_worker_binary):
     """AGENTS.md: "persisted argv carries no absolute path".
 
-    `metadata` is written straight into `execution_history.metadata_json`, so
-    this rule binds every exit from the executor -- not just the one that
+    The rule binds every exit from the executor -- not just the one that
     happened to build a redacted copy. The success path always redacted;
     timeout, missing-CLI and launch-failure stored `argv` raw, which is the
     resolved ABSOLUTE binary location.
@@ -1180,15 +678,11 @@ def test_codex_failure_paths_persist_no_absolute_path(tmp_path, failure, synthet
 
 
 @pytest.mark.parametrize("error_type", [TypeError, OSError, FileNotFoundError])
-def test_codex_stdin_writer_error_preserves_descendants_in_attempt(tmp_path, monkeypatch, error_type, *, synthetic_worker_binary, qualified_codex_inventory):
-    """The executor's error result reaches the real attempt/history writers."""
+def test_codex_stdin_writer_error_preserves_descendants_in_the_reply(tmp_path, error_type, *, synthetic_worker_binary, qualified_codex_inventory):
+    """The executor's error result reaches the reply closed: its facts, none of its text."""
 
-    import importlib
     from modelquad.execution.base import bound_descendant_facts
-    from modelquad.service import db as service_db
-    from modelquad.service import history as service_history
 
-    mcp_server = importlib.import_module("modelquad.mcp.server")
     failure = error_type("private writer output C:/private/project/file")
     failure.worker_descendants = _left(123, image="C:/private/tools/python.exe")
     expected = bound_descendant_facts(failure.worker_descendants)
@@ -1196,17 +690,11 @@ def test_codex_stdin_writer_error_preserves_descendants_in_attempt(tmp_path, mon
     # Read-only workers qualify a native binary, never an npm batch shim.
     executor = CodexExecutor(which=lambda _: synthetic_worker_binary('codex.exe'), run=run,
                              inventory=qualified_codex_inventory)
-    monkeypatch.setattr(
-        mcp_server, "_build_execution_manager",
-        lambda config: ExecutionManager(config, executors={"codex": executor}),
-    )
-    db_path = tmp_path / "history.db"
-    monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", db_path)
-    _write_usage_fixtures(tmp_path)
-    payload = mcp_server._delegate_payload(
-        "review", "do the thing", str(tmp_path),
-        provider="codex", usage_directory=str(tmp_path),
-    )
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+    payload = review.run(review.ReviewRequest("review", "do the thing", str(project), files=("app.py",)),
+                         executor)
     assert len(run.calls) == 1
     assert payload["task_status"] == "failed"
     assert payload["reason"] == "stdin_write_failed"
@@ -1220,21 +708,9 @@ def test_codex_stdin_writer_error_preserves_descendants_in_attempt(tmp_path, mon
     assert payload["metadata"]["noshell_violated"] is True
     assert "noshell_violated" in payload["limitations"]
     assert "worker_has_no_command_tools" not in payload["limitations"]
-    conn = service_db.connect_and_init(db_path)
-    try:
-        attempt, = conn.execute("SELECT * FROM delegation_attempts").fetchall()
-        execution, = conn.execute("SELECT * FROM execution_history").fetchall()
-    finally:
-        conn.close()
-    assert attempt["status"] == "completed"
-    assert attempt["outcome"] == "failed"
-    assert attempt["detail"] == "stdin_write_failed"
-    assert attempt["resolved_at"] is not None
-    assert json.loads(attempt["worker_descendants"]) == expected
-    assert json.loads(execution["metadata_json"])["worker_descendants"] == expected
-    persisted = json.dumps([dict(attempt), dict(execution)])
-    assert "private" not in persisted
-    assert "writer output" not in persisted
+    replied = json.dumps(payload)
+    assert "private" not in replied
+    assert "writer output" not in replied
 
 
 @pytest.mark.parametrize(
@@ -1247,10 +723,9 @@ def test_codex_stdin_writer_error_preserves_descendants_in_attempt(tmp_path, mon
         pytest.param(False, None, False, False, False, id="unavailable"),
     ],
 )
-def test_private_result_preserves_closed_noshell_evidence(
+def test_closed_result_preserves_closed_noshell_evidence(
     qualified, unified_exec, verified, violated, collaboration,
 ):
-    from modelquad import project_notes
     from modelquad.execution import noshell
 
     metadata = {
@@ -1268,7 +743,7 @@ def test_private_result_preserves_closed_noshell_evidence(
         metadata=metadata, limitations=(*labels, "private worker prose", "noshell_unknown", 1),
     )
 
-    clean = project_notes.private_result(result)
+    clean = closed_result(result)
 
     expected = {
         "noshell_qualified": qualified,
@@ -1293,16 +768,14 @@ def test_private_result_preserves_closed_noshell_evidence(
         pytest.param([True], id="list"),
     ],
 )
-def test_private_result_rejects_non_boolean_noshell_metadata(value):
-    from modelquad import project_notes
-
+def test_closed_result_rejects_non_boolean_noshell_metadata(value):
     metadata = dict.fromkeys((
         "noshell_qualified", "noshell_unified_exec_observed",
         "noshell_verified_by_event_stream", "noshell_violated", "noshell_collaboration_called",
     ), value)
     result = ExecutionResult(provider="codex", success=False, output="", exit_code=None, metadata=metadata)
 
-    assert project_notes.private_result(result).metadata == {}
+    assert closed_result(result).metadata == {}
 
 
 def test_codex_closes_unattributed_runner_errors_without_their_text(tmp_path, synthetic_worker_binary):
@@ -1328,249 +801,27 @@ def test_codex_success_path_still_persists_no_absolute_path(tmp_path, synthetic_
     assert not any(re.match(r"^[A-Za-z]:[\/]", str(token)) for token in command)
 
 
-# --- ExecutionManager: the pre-dispatch substitute is quota-aware ---
-#
-# `ProviderScore.quota_tier` is evidence-only, so nothing downstream of the
-# router enforced it. When the recommendation cannot be started here, the
-# manager picks the best-ranked candidate it can start instead -- and ranked
-# by score alone it would run a candidate the quota stage had just routed away
-# from, spending the very window the decision existed to protect. These four
-# cases pin the rule, its one exception ('spend'), and the two edges it must
-# not overreach past: TIGHT is not a substitution bar, and a refused provider
-# is never a candidate at all. With single dispatch a worker's result is
-# final, so the cases that exercise the substitution make the recommendation
-# unstartable rather than let it return `safe_to_retry`.
-
-
-_QUOTA_NOW = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
-
-
-def _fresh_status(name, remaining):
-    return ProviderStatus(
-        name=name,
-        available=True,
-        remaining_percentage=remaining,
-        observed_at=_QUOTA_NOW,
-        freshness=Freshness.FRESH,
-    )
-
-
-def _statuses_with_codex_at(remaining):
-    """Fresh statuses with Codex's binding window at `remaining` percent.
-
-    Built directly rather than through the usage fixtures: a tier is only ever
-    read off a FRESH observation, and the fixture files carry no timestamp.
-    """
-
-    return (
-        _fresh_status("claude", 80.0),
-        _fresh_status("codex", remaining),
-    )
-
-
-def _spawn_failed(name):
-    return ExecutionResult(
-        provider=name,
-        success=False,
-        output="",
-        exit_code=None,
-        task_status=WorkerTaskStatus.BLOCKED,
-        task_status_reason="sandbox_process_spawn_failed",
-        safe_to_retry=True,
-    )
-
-
-def _completed(name):
-    return ExecutionResult(
-        provider=name,
-        success=True,
-        output="",
-        exit_code=0,
-        task_status=WorkerTaskStatus.COMPLETED,
-        safe_to_retry=False,
-    )
-
-
-def test_an_exhausted_default_worker_is_not_skipped(tmp_path):
-    """Host-only Claude is the advice; Codex at 5% still runs when asked."""
-
-    config = load_config()
-    # Keep Claude recommended by a wide margin; Codex runs read-only tasks only.
-    config = replace(config, task_fit={**config.task_fit, "review": {
-        "claude": 1.0, "codex": 0.55,
-    }})
-    codex_executor = _FakeExecutor("codex", _completed)
-    manager = ExecutionManager(config, executors={"codex": codex_executor})
-
-    result = manager.delegate(
-        "review",
-        "do the thing",
-        str(tmp_path),
-        statuses=_statuses_with_codex_at(5.0),
-        now=_QUOTA_NOW,
-    )
-
-    assert codex_executor.calls == 1
-    assert result.provider == "codex"
-    assert result.task_status == WorkerTaskStatus.COMPLETED
-    assert result.metadata["recommended_provider"] == "claude"
-    assert result.metadata["attempted_providers"] == ["codex"]
-    assert "skipped_providers" not in result.metadata
-    assert result.metadata["fallback"] is False
-
-
-def test_a_tight_default_worker_runs_and_nothing_is_substituted(tmp_path):
-
-    config = load_config()
-    codex_executor = _FakeExecutor("codex", _completed)
-    second_executor = _FakeExecutor("zeta", _spawn_failed, available=False)
-    manager = ExecutionManager(
-        config, executors={"codex": codex_executor, "zeta": second_executor}
-    )
-
-    result = manager.delegate(
-        "architecture",
-        "do the thing",
-        str(tmp_path),
-        statuses=_statuses_with_codex_at(20.0),
-    )
-
-    assert second_executor.calls == 0
-    assert codex_executor.calls == 1
-    assert result.provider == "codex"
-    assert result.task_status == WorkerTaskStatus.COMPLETED
-    assert "skipped_providers" not in result.metadata
-    assert result.metadata["attempted_providers"] == ["codex"]
-    assert result.metadata["fallback"] is False
-    assert "fallback_from" not in result.metadata
-
-
-def test_fallback_never_reaches_a_refused_provider(tmp_path):
-    """Existing behaviour, asserted: a refusal removes the candidate entirely.
-
-    The overlay sets `available=False`, which makes the provider ineligible
-    before scoring -- so it is not in the loop at all, and is not merely
-    skipped inside it.
-    """
-
-    config = load_config()
-    statuses = apply_refusal_overlay(
-        _statuses_with_codex_at(80.0),
-        # The refusal must be NEWER than the snapshot it contradicts.
-        [QuotaRefusal(provider="codex", observed_at=_QUOTA_NOW + timedelta(seconds=60))],
-        _QUOTA_NOW + timedelta(seconds=120),
-    )
-    codex_executor = _FakeExecutor("codex", _completed)
-    second_executor = _FakeExecutor("zeta", _spawn_failed)
-    manager = ExecutionManager(
-        config, executors={"codex": codex_executor, "zeta": second_executor}
-    )
-
-    result = manager.delegate(
-        "implementation", "do the thing", str(tmp_path), statuses=statuses
-    )
-
-    assert codex_executor.calls == 0
-    assert "codex" not in result.metadata["attempted_providers"]
-    assert result.metadata.get("skipped_providers", []) == []
-    assert second_executor.calls == 0
-    assert result.metadata["attempted_providers"] == []
-    assert result.provider == "unknown"
-    assert result.task_status_reason == "no_viable_worker"
-    assert result.safe_to_retry is False
-
-
 def _left(pid, image="node.exe", created=1.0, enumerated=True, **extra):
     facts = {"enumerated": enumerated, "method": "toolhelp32", "observed_at": 2.0, "descendants": [{"pid": pid, "image": image, "created": created}]}
     facts.update(extra)
     return facts
 
 
-def test_a_routed_workers_leftovers_are_its_own_record_not_a_merge(tmp_path):
-    """Was `test_fallback_chain_accounts_for_every_workers_leftovers_not_only_the_last`.
-
-    An earlier change made one attempt's row carry every worker's leftovers because
-    the chain could run two. A routed delegation now runs one, so the row is
-    that worker's own record, unmerged -- and the worker that is never started
-    leaves nothing to account for. The merge itself is still pinned by
-    `tests/test_delegation_workspace_liveness.py::test_merge_descendant_facts_semantics`,
-    because a multi-step plan still uses it.
-    """
-
-    config = load_config()
-    codex_executor = _FakeExecutor(
-        "codex",
-        lambda name: ExecutionResult(
-            provider=name, success=True, output="", exit_code=0,
-            task_status=WorkerTaskStatus.BLOCKED, task_status_reason="sandbox_process_spawn_failed",
-            safe_to_retry=True, metadata={"worker_descendants": _left(111)},
-        ),
+def test_a_workers_leftovers_are_carried_closed_and_never_invented():
+    looked = ExecutionResult(
+        provider="codex", success=True, output="", exit_code=0,
+        task_status=WorkerTaskStatus.COMPLETED, metadata={"worker_descendants": _left(222)},
     )
-    second_executor = _FakeExecutor(
-        "zeta",
-        lambda name: ExecutionResult(
-            provider=name, success=True, output="", exit_code=0,
-            task_status=WorkerTaskStatus.COMPLETED, metadata={"worker_descendants": _left(222, image="python.exe")},
-        ),
+    # The closed projection states truncation and reason explicitly.
+    assert closed_result(looked).metadata["worker_descendants"] == {
+        **_left(222), "truncated": False, "reason": None}
+    # A runner that did not look attaches nothing, and nothing is invented for it.
+    did_not_look = ExecutionResult(
+        provider="codex", success=True, output="", exit_code=0,
+        task_status=WorkerTaskStatus.BLOCKED, task_status_reason="sandbox_process_spawn_failed",
+        safe_to_retry=True,
     )
-    manager = ExecutionManager(config, executors={"codex": codex_executor, "zeta": second_executor})
-
-    result = manager.delegate("review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path))
-
-    assert second_executor.calls == 0
-    # The closed read-only projection states truncation and reason explicitly.
-    assert result.metadata["worker_descendants"] == {**_left(111), "truncated": False, "reason": None}
-    assert result.metadata["worker_descendants"]["method"] != "merged"
-    assert [item["pid"] for item in result.metadata["worker_descendants"]["descendants"]] == [111]
-
-
-def test_a_routed_worker_that_did_not_look_gets_no_invented_record(tmp_path):
-    """Was `test_fallback_chain_with_an_unobserved_worker_is_not_an_enumeration`.
-
-    With one worker per routed delegation there is no union to have a hole in:
-    a worker that attached no facts leaves the row saying nothing, and no
-    other worker's enumeration is borrowed to stand in for it.
-    """
-
-    config = load_config()
-    codex_executor = _FakeExecutor(
-        "codex",
-        lambda name: ExecutionResult(
-            provider=name, success=True, output="", exit_code=0,
-            task_status=WorkerTaskStatus.BLOCKED, task_status_reason="sandbox_process_spawn_failed",
-            safe_to_retry=True,  # a runner that did not look attaches nothing
-        ),
-    )
-    second_executor = _FakeExecutor(
-        "zeta",
-        lambda name: ExecutionResult(
-            provider=name, success=True, output="", exit_code=0,
-            task_status=WorkerTaskStatus.COMPLETED, metadata={"worker_descendants": _left(222)},
-        ),
-    )
-    manager = ExecutionManager(config, executors={"codex": codex_executor, "zeta": second_executor})
-
-    result = manager.delegate("review", "do the thing", str(tmp_path), statuses=_statuses(config, tmp_path))
-
-    assert second_executor.calls == 0
-    assert result.provider == "codex"
-    assert "worker_descendants" not in result.metadata
-
-
-def test_a_single_worker_result_is_carried_as_is(tmp_path):
-    config = load_config()
-    codex_executor = _FakeExecutor(
-        "codex",
-        lambda name: ExecutionResult(
-            provider=name, success=True, output="", exit_code=0,
-            task_status=WorkerTaskStatus.COMPLETED, metadata={"worker_descendants": _left(222)},
-        ),
-    )
-    manager = ExecutionManager(config, executors={"codex": codex_executor})
-
-    result = manager.delegate("review", "do the thing", str(tmp_path), provider="codex", statuses=_statuses(config, tmp_path))
-
-    assert result.metadata["worker_descendants"] == {**_left(222), "truncated": False, "reason": None}
+    assert "worker_descendants" not in closed_result(did_not_look).metadata
 
 
 # --- The headline status answers one question --------------------------------

@@ -224,8 +224,6 @@ def test_verdict_before_the_fix_then_after_and_confidence_is_not_proof(tmp_path)
 def test_gate_events_store_an_installation_keyed_session_pseudonym(tmp_path):
     import hashlib
 
-    from modelquad import hostobs
-
     db = tmp_path / "ledger.db"
     rl.record_gate_event(tmp_path, "session-a", "blocked", 4, path=db)
     conn = sqlite3.connect(db)
@@ -233,39 +231,10 @@ def test_gate_events_store_an_installation_keyed_session_pseudonym(tmp_path):
         (stored,) = conn.execute("SELECT session FROM gate_events").fetchone()
     finally:
         conn.close()
+    # Keyed by this installation: not a plain digest anyone could recompute.
     assert stored != hashlib.sha256(b"session-a").hexdigest()[:16]
-    # The same derivation as the host-session fingerprint, without loading hostobs in a hook.
-    assert stored == hostobs.session_fingerprint("session-a")
-
-
-def test_a_split_quota_call_is_recorded_counted_and_reported(tmp_path):
-    """A call for a step modelquad_split moved because Claude was near its limit keeps that reason."""
-    import time
-
-    from modelquad import cli, split
-
-    assert split.QUOTA_TRIGGER in rl.TRIGGERS
-    db = tmp_path / "ledger.db"
-    rl.record_run(_payload("q-1"), working_directory=tmp_path, task_type="exploration",
-                  trigger="split_quota", path=db)
-    rl.record_run(_payload("q-2", output="", refused=True), working_directory=tmp_path,
-                  task_type="exploration", trigger="split_quota", path=db)
-    rl.record_run(_payload("c-1"), working_directory=tmp_path, task_type="review",
-                  trigger="claude", path=db)
-    rl.record_run(_payload("o-1"), working_directory=tmp_path / "other", task_type="review",
-                  trigger="split_quota", path=db)
-    data = rl.report(workspace=rl.workspace_id(tmp_path), path=db)
-    assert data["runs_by_trigger"] == {"split_quota": 2, "claude": 1}
-    assert "  Why: claude 1, split_quota 2" in cli.review_report_lines(data)
-    since = time.time() - 3600
-    assert rl.count_runs(trigger="split_quota", since=since, workspace=rl.workspace_id(tmp_path),
-                         path=db) == {"calls": 2, "by_outcome": {"answered": 1, "refused": 1}}
-    assert rl.count_runs(trigger="split_quota", since=since, path=db)["calls"] == 3
-    assert rl.count_runs(trigger="split_quota", since=time.time() + 60, path=db)["calls"] == 0
-    # No ledger yet: nothing was recorded, and nothing is created by reading.
-    missing = tmp_path / "none" / "ledger.db"
-    assert rl.count_runs(trigger="split_quota", since=since, path=missing) == {"calls": 0, "by_outcome": {}}
-    assert not missing.parent.exists()
+    assert "session-a" not in stored
+    assert stored == rl.session_pseudonym("session-a")
 
 
 def test_an_unreadable_ledger_counts_unknown_not_zero(tmp_path):
@@ -275,22 +244,82 @@ def test_an_unreadable_ledger_counts_unknown_not_zero(tmp_path):
     conn = sqlite3.connect(db)
     conn.execute(f"PRAGMA user_version = {rl.SCHEMA_VERSION + 1}")
     conn.close()
-    assert rl.count_runs(trigger="split_quota", since=time.time() - 60, path=db) is None
+    assert rl.count_runs(trigger="claude", since=time.time() - 60, path=db) is None
     db.write_bytes(b"not a database at all, just bytes")
-    assert rl.count_runs(trigger="split_quota", since=time.time() - 60, path=db) is None
+    assert rl.count_runs(trigger="claude", since=time.time() - 60, path=db) is None
 
 
-def test_the_delegate_tool_records_the_split_quota_trigger(tmp_path):
-    from modelquad.mcp import server as mcp
+def test_the_delegate_tool_records_its_trigger(tmp_path, monkeypatch):
+    import anyio
 
-    mcp._record_review(_payload("q-9"), str(tmp_path), "exploration", "split_quota", 3.0)
+    from modelquad.mcp import server as mcp, worker_guard
+    from test_review_flow import FakeExecutor
+
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(mcp, "_executor", FakeExecutor)
+    monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
+
+    def delegate(trigger, prompt):
+        async def invoke():
+            return await mcp.modelquad_delegate(task_type="review", prompt=prompt,
+                                                working_directory=str(tmp_path), files=["a.py"],
+                                                timeout=60.0, trigger=trigger)
+        return anyio.run(invoke)
+
+    delegate("review_gate", "Review it.")
     data = rl.report(workspace=rl.workspace_id(tmp_path))
-    assert data["runs_by_trigger"] == {"split_quota": 1}
+    assert data["runs_by_trigger"] == {"review_gate": 1}
     # An unknown word is still recorded as Claude's own call.
-    mcp._record_review(_payload("q-10"), str(tmp_path), "exploration", "made_up", 3.0)
+    delegate("made_up", "Review it again.")
     assert rl.report(workspace=rl.workspace_id(tmp_path))["runs_by_trigger"] == {
-        "split_quota": 1, "claude": 1}
-    assert "split_quota" in mcp.modelquad_delegate.__doc__
+        "review_gate": 1, "claude": 1}
+    assert "review_gate" in mcp.modelquad_delegate.__doc__
+
+
+# ------------------------------------------------------------ the package record
+
+
+def test_a_version_2_ledger_gains_the_packages_table(tmp_path):
+    db = tmp_path / "ledger.db"
+    conn = sqlite3.connect(db)
+    conn.executescript("""
+        CREATE TABLE findings (decision_id TEXT NOT NULL, ref TEXT NOT NULL, file TEXT, line INTEGER,
+            severity TEXT, category TEXT, claim TEXT, PRIMARY KEY (decision_id, ref));
+        PRAGMA user_version=2;""")
+    conn.close()
+    assert rl.SCHEMA_VERSION == 3
+    conn = rl.connect(db)
+    try:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "packages" in tables
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == rl.SCHEMA_VERSION
+    finally:
+        conn.close()
+
+
+def test_a_package_record_keeps_metadata_and_its_round_per_folder(tmp_path):
+    db = tmp_path / "ledger.db"
+    manifest = {"package_id": "p" * 32, "file_count": 1, "total_bytes": 6,
+                "files": [{"path": "a.py", "bytes": 6, "sha256": "ab12"}], "skipped": []}
+    rl.record_package("d-1", manifest, working_directory=tmp_path, round_number=1, follows="d-0",
+                      files_needed=["b.py"], usage={"model_calls": 1}, path=db)
+    assert rl.package_round("d-1", tmp_path, path=db) == 1
+    # Another folder does not see this folder's record, and an unknown id is None.
+    assert rl.package_round("d-1", tmp_path / "other", path=db) is None
+    assert rl.package_round("d-2", tmp_path, path=db) is None
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute("SELECT package_id, round, follows, file_count, total_bytes, files_needed "
+                           "FROM packages WHERE decision_id = 'd-1'").fetchone()
+    finally:
+        conn.close()
+    assert row == ("p" * 32, 1, "d-0", 1, 6, 1)
+
+
+def test_reading_a_round_creates_no_ledger(tmp_path):
+    missing = tmp_path / "none" / "ledger.db"
+    assert rl.package_round("d-1", tmp_path, path=missing) is None
+    assert not missing.parent.exists()
 
 
 # ------------------------------------------------- one definition of a call's outcome

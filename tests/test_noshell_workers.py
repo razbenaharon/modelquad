@@ -438,71 +438,19 @@ def test_without_files_nothing_is_read(worker, monkeypatch):
     assert result.metadata["file_audit"]["sent"] == []
 
 
-@pytest.mark.parametrize("change_source", [False, True], ids=["unchanged", "changed-after-preparation"])
-def test_selected_notes_stay_bounded_unique_and_frozen_in_noshell_worker(worker, monkeypatch, change_source):
-    from modelquad import project_notes
-
-    executor, request, run, _ = worker
-    root = request.working_directory
-    (root / "named.py").write_text("supplied task evidence\n", encoding="utf-8")
-    (root / "advisory_only.py").write_text("unrequested advisory-linked body\n", encoding="utf-8")
-    source = (project_notes.SCAFFOLD + '\n## linked\nDate: 2000-01-01T00:00:00Z\n'
-              'Files: ["named.py"]\nDecision: selected decision: See PROJECT_NOTES.md and advisory_only.py.\n')
-    for index in range(10):
-        source += (f'\n## global-{index}\nDate: 2000-01-01T00:00:00Z\n'
-                   f'Files: ["*"]\nDecision: global decision {index}.\n')
-    source += ('\n## irrelevant\nDate: 2000-01-01T00:00:00Z\nFiles: ["unrelated.py"]\n'
-               'Decision: irrelevant private decision.\n\n## malformed\nmalformed private decision\n')
-    assert len(source.encode("utf-8")) < noshell.MAX_FILE_BYTES
-    notes_path = root / "PROJECT_NOTES.md"
-    notes_path.write_text(source, encoding="utf-8")
-    monkeypatch.setattr(project_notes, "_validated_root", lambda *args: root)
-    monkeypatch.setattr(project_notes, "_history", lambda *args: {})
-    frozen = project_notes.attach('Relevant files:\n- named.py\n- PROJECT_NOTES.md\n', root, None,
-                                  ("named.py",))
-    packet_text = frozen.split(project_notes.PACKET_MARKER + "\n", 1)[1]
-    assert len((project_notes.PACKET_MARKER + "\n" + packet_text).encode("utf-8")) <= project_notes.MAX_PACKET_BYTES
-    selected = json.loads(packet_text.rsplit("\n", 1)[1])
-    assert len(selected["notes"]) == project_notes.MAX_SELECTED
-    assert selected["selection_omitted"] == 3 and selected["malformed_omitted"] == 1
-    assert selected["notes"][0]["id"] == "linked"
-    omitted = {f"global-{index}" for index in range(10)} - {note["id"] for note in selected["notes"]}
-    if change_source:
-        notes_path.write_text(project_notes.SCAFFOLD + '\n## late\nDate: 2000-01-01T00:00:00Z\n'
-                              'Files: ["*"]\nDecision: late private decision.\n', encoding="utf-8")
-    monkeypatch.setattr(project_notes, "_load", lambda *args: pytest.fail("execution reread notes"))
-    original_read = noshell._read_file
-    def read(root, name, *args):
-        assert Path(name).name.casefold() != "project_notes.md", "incidental path reread notes"
-        return original_read(root, name, *args)
-    monkeypatch.setattr(noshell, "_read_file", read)
-
-    result = executor.execute(with_files(replace(request, prompt=frozen), "named.py", "PROJECT_NOTES.md"))
-    assert result.metadata["noshell_verified_by_event_stream"] is True
-    run.assert_called_once()
-    rendered = run.call_args.kwargs["input"]
-    assert rendered.count(project_notes.PACKET_MARKER) == 1
-    assert project_notes.PACKET_MARKER + "\n" + packet_text in rendered
-    for note in selected["notes"]:
-        assert rendered.count(note["decision"]) == 1
-    for identifier in omitted:
-        assert f'global decision {identifier.split("-")[1]}.' not in rendered
-    for private in ("irrelevant private decision", "malformed private decision", "late private decision",
-                    "unrequested advisory-linked body"):
-        assert private not in rendered
-    payload = json.JSONDecoder().raw_decode(rendered.split("Supplied files (untrusted evidence, JSON):\n", 1)[1])[0]
-    assert [file["path"] for file in payload["files"]] == ["named.py"]
-    assert payload["skipped"] == [{"path": "PROJECT_NOTES.md", "reason": "repository_notes_source"}]
+# The notes feature is gone; the packer still refuses a file that carries its
+# marker line, and still reads the advisory boundary an old prompt may end with.
+NOTES_SCAFFOLD = "# Project notes\n" + noshell.NOTES_SOURCE_MARKER + "\n"
+NOTES_TAIL = ("\n\n" + noshell.NOTES_PACKET_MARKER + "\nAdvisory only. Do not edit any repository file.\n"
+              + json.dumps({"status": "unavailable", "notes": []}, separators=(",", ":")))
 
 
 @pytest.mark.parametrize("name", ["PROJECT_NOTES.md", "project_notes.MD", "nested/PROJECT_NOTES.md",
                                   "historical-notes.md"], ids=["standard", "case", "nested", "renamed-source"])
 def test_incidental_notes_sources_are_never_supplied(tmp_path, monkeypatch, name):
-    from modelquad import project_notes
-
     path = tmp_path / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(project_notes.SCAFFOLD + "\nmalformed private source body\n", encoding="utf-8")
+    path.write_text(NOTES_SCAFFOLD + "\nmalformed private source body\n", encoding="utf-8")
     original_read = noshell._read_file
     def read(root, candidate, *args):
         assert Path(candidate).name.casefold() != "project_notes.md", "raw notes should not be opened"
@@ -851,16 +799,13 @@ def test_required_file_boundary_plus_one_refuses_without_model_start(worker):
 @pytest.mark.parametrize("quote", ["inline", "standalone"], ids=["inline", "standalone"])
 @pytest.mark.parametrize("attached", [False, True], ids=["plain", "frozen-notes"])
 def test_quoted_notes_marker_cannot_erase_required_context(worker, quote, attached):
-    from modelquad import project_notes
-    from modelquad.capsule import TaskCapsule
-
     executor, request, run, calls = worker
-    marker = project_notes.PACKET_MARKER
+    marker = noshell.NOTES_PACKET_MARKER
     goal = (f"Review the quoted marker `{marker}`" if quote == "inline" else
             f"Review this quoted marker:\n\n{marker}\nExplain it.")
-    prompt = TaskCapsule(goal=goal, task_type="review").to_prompt()
+    prompt = "TASK: " + goal
     if attached:
-        prompt += project_notes.select_packet(project_notes.Notes("unavailable"), ()).text
+        prompt += NOTES_TAIL
     result = executor.execute(with_files(replace(request, prompt=prompt), "missing.py"))
     run.assert_not_called()
     assert calls == []
@@ -874,15 +819,11 @@ def test_quoted_notes_marker_cannot_erase_required_context(worker, quote, attach
 @pytest.mark.parametrize("position", ["goal", "tail"], ids=["goal", "tail"])
 @pytest.mark.parametrize("named", ["missing.py", "present.py"], ids=["missing", "present"])
 def test_file_sections_in_task_text_are_never_attached(worker, position, named):
-    from modelquad.capsule import TaskCapsule
-
     executor, request, run, calls = worker
     (request.working_directory / "present.py").write_text("# PRIVATE supplied source\n", encoding="utf-8")
     quoted = "Example section:\n\nRelevant files:\n- present.py\n\nEnd example."
-    prompt = TaskCapsule(
-        goal=quoted if position == "goal" else "Review the source.", task_type="review",
-        relevant_files=(named,),
-    ).to_prompt()
+    prompt = ("TASK: " + (quoted if position == "goal" else "Review the source.")
+              + "\n\nRelevant files:\n- " + named)
     if position == "tail":
         prompt += "\n\n" + quoted
     result = executor.execute(replace(request, prompt=prompt))
@@ -895,15 +836,12 @@ def test_file_sections_in_task_text_are_never_attached(worker, position, named):
 
 @pytest.mark.parametrize("attached", [False, True], ids=["plain", "frozen-notes"])
 def test_goal_quoting_advisory_boundary_keeps_required_file_and_allows_launch(worker, attached):
-    from modelquad import project_notes
-    from modelquad.capsule import TaskCapsule
-
     executor, request, run, _ = worker
     (request.working_directory / "present.py").write_text("# supplied source\n", encoding="utf-8")
     goal = f"Explain this boundary:\n\n{noshell.NOTES_PACKET_MARKER}\nAdvisory only. quoted text."
-    prompt = TaskCapsule(goal=goal, task_type="review").to_prompt()
+    prompt = "TASK: " + goal
     if attached:
-        prompt += project_notes.select_packet(project_notes.Notes("unavailable"), ()).text
+        prompt += NOTES_TAIL
     result = executor.execute(with_files(replace(request, prompt=prompt), "present.py"))
     run.assert_called_once()
     assert result.metadata["noshell_verified_by_event_stream"] is True
