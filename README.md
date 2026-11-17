@@ -300,7 +300,8 @@ its user configuration ignored.
   Codex CLI then sends the task and that text to OpenAI, under OpenAI's
   terms.
 - What ModelQuad returns to Claude Code becomes part of your conversation,
-  which Claude Code sends to Anthropic under Anthropic's terms: Codex's
+  which Claude Code sends to Anthropic, or to the cloud provider you set
+  Claude Code up to use, under that provider's terms: Codex's
   answer, the package manifest (file names and sizes) and the token counts
   Codex reported.
 - The review ledger stays on your computer until you delete it. It holds no

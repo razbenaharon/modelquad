@@ -34,7 +34,8 @@ sends anything to him or to any server he runs.
   Codex still lists a few built-in tools that ModelQuad cannot remove; see
   [SECURITY.md](SECURITY.md).
 - Everything ModelQuad returns to Claude Code becomes part of your
-  conversation, which Claude Code sends to Anthropic.
+  conversation, which Claude Code sends to Anthropic, or to the cloud
+  provider you set Claude Code up to use.
 - ModelQuad does not open conversation transcripts.
 - ModelQuad keeps no answers. The review ledger, which holds no task text, no
   file contents and no full answer, is kept until you delete it.
@@ -263,10 +264,12 @@ sends to Anthropic:
 
 ### Model training
 
-Each provider's terms forbid using its output to train models that compete
-with it, and ModelQuad passes text in both directions: text Claude wrote goes
-to OpenAI, and Codex's answers go to Anthropic. Turn off model training with
-both providers while you use ModelQuad, and do not use its answers or history
+OpenAI's terms forbid using its output to develop models that compete with
+it, and Anthropic's forbid using Claude's output to train any AI model
+without its permission. ModelQuad passes text in both directions: text Claude
+wrote goes to OpenAI, and Codex's answers go to Anthropic. Turn off model
+training with both providers while you use ModelQuad, and do not use its
+answers or history
 as training data:
 
 - ChatGPT data controls: <https://chatgpt.com/#settings/DataControls>

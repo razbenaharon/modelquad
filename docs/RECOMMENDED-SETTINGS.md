@@ -117,9 +117,10 @@ on. Only you turn it on again; Claude is told not to.
 
 ## Turn off model training in ChatGPT and Claude
 
-ModelQuad passes text between the two providers, and each provider's terms
-forbid using its output to train the other's models. Turn off model training
-with both while you use ModelQuad:
+ModelQuad passes text between the two providers. OpenAI's terms forbid using
+its output to develop models that compete with it, and Anthropic's forbid
+using Claude's output to train any AI model without its permission. Turn off
+model training with both while you use ModelQuad:
 
 - ChatGPT data controls: <https://chatgpt.com/#settings/DataControls>
 - Claude privacy settings: <https://claude.ai/settings/data-privacy-controls>
