@@ -4,7 +4,6 @@
 
 import importlib.util
 import json
-import re
 from pathlib import Path
 
 from modelquad import __version__

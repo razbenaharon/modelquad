@@ -11,9 +11,6 @@ import threading
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
-from typing import Literal
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 import math
 import uuid
 
@@ -21,30 +18,6 @@ from .executable_resolution import UnsafeExecutable, resolve_executable, system_
 
 
 default_kill_on_close: ContextVar[bool] = ContextVar("default_kill_on_close", default=False)
-
-
-@dataclass(frozen=True)
-class BootObservation:
-    session: str
-    uptime_ms: int
-    observed_at: datetime
-    boot_lower: datetime
-    boot_upper: datetime
-    qualified: bool
-
-
-@dataclass(frozen=True)
-class CodexProcess:
-    pid: int
-    created_at: str | None
-
-
-@dataclass(frozen=True)
-class CodexProcesses:
-    observed_at: str
-    status: Literal['complete', 'partial', 'unavailable']
-    processes: tuple[CodexProcess, ...]
-    reason: Literal['snapshot_unavailable', 'entries_unreadable_or_bounded'] | None = None
 
 
 _DEVNULL = subprocess.DEVNULL
@@ -284,67 +257,6 @@ def pid_state(pid: int) -> str:
         return "alive"  # it exists; it is simply not ours to signal
     except OSError:
         return "unknown"
-
-
-#: How long the tasklist/ps image-name probe may take before the image reads
-#: as unknown. Tests on a loaded machine raise it (tests/conftest.py).
-IMAGE_NAME_SECONDS = 15.0
-
-
-def process_image_name(pid: int, *, run=subprocess.run) -> str | None:
-    """The executable image name the OS reports for ``pid``, or None.
-
-    ``None`` means the question could not be answered -- the lookup tool is
-    missing, timed out, failed, or reported something other than exactly one
-    process -- and callers must treat it as "unknown", never as "matches" or
-    "does not match". The answer is the bare file name (``python.exe``,
-    ``modelquad.exe``), so it compares against the basename of a recorded
-    launch command. Windows asks ``tasklist``; POSIX asks ``ps``. Both are
-    spawned without a console and with stdin detached (the
-    identity half of "is the recorded service pid really that service?").
-    """
-
-    try:
-        numeric = int(pid)
-    except (TypeError, ValueError):
-        return None
-    if numeric <= 0:
-        return None
-    if os.name == "nt":
-        executable = system_executable("tasklist")
-        if executable.path is None:
-            return None
-        argv = [executable.path, "/FI", f"PID eq {numeric}", "/FO", "CSV", "/NH"]
-    else:
-        executable = resolve_executable("ps")
-        if executable.path is None:
-            return None
-        argv = [executable.path, "-p", str(numeric), "-o", "comm="]
-    try:
-        completed = run(
-            argv, capture_output=True, text=True, shell=False, timeout=IMAGE_NAME_SECONDS, **no_window_kwargs()
-        )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return None
-    if completed.returncode != 0:
-        return None
-    output = getattr(completed, "stdout", "") or ""
-    if os.name == "nt":
-        import csv
-
-        try:
-            rows = [row for row in csv.reader(output.splitlines()) if row]
-        except csv.Error:
-            return None
-        if len(rows) != 1 or len(rows[0]) < 2 or rows[0][1] != str(numeric):
-            return None
-        image = rows[0][0].strip()
-    else:
-        lines = [line.strip() for line in output.splitlines() if line.strip()]
-        if len(lines) != 1:
-            return None
-        image = os.path.basename(lines[0])
-    return image or None
 
 
 def process_creation_epoch(pid: int, *, run=subprocess.run, os_name: str | None = None) -> float | None:
@@ -1883,26 +1795,6 @@ def run_with_tree_kill(
                 'close_cleanup_members': len(members) if members is not None else None,
                 'close_cleanup_confirmed': dead,
             }
-
-
-def start_contained(argv, **popen_kwargs) -> "tuple[subprocess.Popen, int | None]":
-    """Start a long-lived helper inside a kill-on-close Job Object.
-
-    For a child that speaks a protocol over pipes rather than running to
-    completion (the Codex app-server). It is created suspended, assigned to
-    its job, then resumed, exactly like a worker; this process's death stops
-    the whole tree. Returns the process and its job (None off Windows). A
-    child that cannot be contained is stopped and
-    :class:`WorkerContainmentError` (an ``OSError``) is raised.
-    """
-    contained = os.name == "nt"
-    if "creationflags" not in popen_kwargs:
-        popen_kwargs["creationflags"] = no_window_kwargs().get("creationflags", 0)
-    if contained:
-        popen_kwargs["creationflags"] = int(popen_kwargs["creationflags"] or 0) | _CREATE_SUSPENDED
-    proc = subprocess.Popen(argv, **popen_kwargs)
-    job = _contain_suspended_worker(proc, kill_on_close=True) if contained else None
-    return proc, job
 
 
 def run_worker(argv, **kwargs) -> subprocess.CompletedProcess:

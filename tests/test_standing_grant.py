@@ -335,26 +335,14 @@ def test_turning_one_repository_off_under_the_global_grant_says_it_still_applies
     assert "Standing grant: off" in capsys.readouterr().out
 
 
-def test_under_the_grant_the_startup_line_does_not_contradict_the_guidance(tmp_path, capsys):
+def test_under_the_grant_settings_repo_says_the_grant_covers_the_folder(tmp_path, capsys):
     from modelquad.cli import main
 
     repo = _repo(tmp_path / "r")
     repo_settings.write_mode(repo, "offer-only")
-    assert repo_settings.advice_line(repo) == repo_settings.ADVICE[repo_settings.OFFER]
     grant.write(True, directory=repo)
-    assert repo_settings.advice_line(repo) is None
     assert main(["settings", "repo", "--project", str(repo)]) == 0
     assert "standing grant covers this folder" in capsys.readouterr().out
-    repo_settings.write_mode(repo, "inherit")
-    (repo / ".modelquad.toml").write_text('schema = 1\n[offers]\ncodex = "on_request"\n',
-                                          encoding="utf-8")
-    assert repo_settings.advice_line(repo) is None
-    grant.write(False, directory=repo)
-    assert repo_settings.advice_line(repo) == repo_settings.ADVICE[repo_settings.ON_REQUEST]
-    # Off still reaches Claude, grant or not.
-    grant.write(True, directory=repo)
-    repo_settings.write_mode(repo, "off")
-    assert repo_settings.advice_line(repo) == repo_settings.ADVICE[repo_settings.OFF]
 
 
 def test_without_the_prompt_a_call_stays_inside_the_sessions_folder(tmp_path, monkeypatch):

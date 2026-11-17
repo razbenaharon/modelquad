@@ -194,10 +194,10 @@ def _adapter_install(host, tmp_path):
     pytest.param(("usage-hook", "claude"), id="claude_status"),
 ])
 def test_installer_rendering_is_canonical(monkeypatch, tmp_path, folder, arguments):
-    """Classify the exact Host-specific string, including any temp ancestors.
+    """The exact host-specific string, including any temp ancestors.
 
-    Claude requires Bash escaping. It should not draw a repeated repair
-    finding for the command its own install just emitted.
+    Claude requires Bash escaping; the rendered command reads back to the
+    same launcher and arguments.
     """
     shim = tmp_path / folder / "modelquad.cmd"
     monkeypatch.setattr(hostruntime, "cli_launch_command", lambda: str(shim))
@@ -205,9 +205,6 @@ def test_installer_rendering_is_canonical(monkeypatch, tmp_path, folder, argumen
     command = rendered + " " + " ".join(arguments)
     assert command == hostruntime.integration_command(*arguments)
     assert hostruntime.split_command(command) == (shim.as_posix(), arguments)
-    verdict = hostruntime.classify_cli_registration(command, which=lambda _: str(shim))
-    # Correctly spelled for bash, so the only finding is that it is pinned.
-    assert verdict.explicit and "pinned" in verdict.reason, verdict.reason
 
 
 @pytest.mark.parametrize("host", ["claude"], ids=["claude"])
@@ -316,11 +313,9 @@ def test_unknown_shell_keeps_quoted_path_but_claude_preserves_literal_path(tmp_p
         compatible = hostruntime.render_launcher(str(shim))
         assert compatible == f'"{shim.as_posix()}"'
         assert hostruntime.split_command(compatible + " zeta-hook") == (shim.as_posix(), ("zeta-hook",))
-        assert not hostruntime.launcher_spelling_problem(compatible + " zeta-hook")
         rendered = hostruntime.render_launcher(str(shim), shell="bash")
         assert hostruntime.split_command(rendered + " hook-gate") == (shim.as_posix(), ("hook-gate",))
         assert owns_cli_command(rendered + " hook-gate", ("hook-gate",))
-        assert not hostruntime.launcher_spelling_problem(rendered + " hook-gate")
 
 
 @pytest.mark.parametrize("folder", [
@@ -333,5 +328,3 @@ def test_unknown_shell_keeps_quoted_path_but_claude_preserves_literal_path(tmp_p
 def test_safe_unicode_and_internal_punctuation_keep_original_spelling(folder, shell):
     launcher = f"C:/Users/{folder}/bin/modelquad.cmd"
     assert hostruntime.render_launcher(launcher, shell=shell) == launcher
-    assert not hostruntime.launcher_spelling_problem(launcher + " usage-hook claude")
-    assert not hostruntime.launcher_spelling_problem(launcher + " zeta-hook")

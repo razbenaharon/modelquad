@@ -17,9 +17,6 @@ from modelquad.adapters import registry
 from modelquad.statecontext import STATE_MODE_ENV_VAR, STATE_ROOT_ENV_VAR, StateMode
 
 
-win_only = pytest.mark.skipif(os.name != "nt", reason="Windows PATH/PATHEXT and batch-shim semantics")
-
-
 def _canonical(path):
     return os.path.normcase(os.path.realpath(path))
 
@@ -54,8 +51,8 @@ def isolated(
         assert list(directory.iterdir()) == []
     monkeypatch.delenv(STATE_MODE_ENV_VAR, raising=False)
     monkeypatch.delenv(STATE_ROOT_ENV_VAR, raising=False)
-    # Same state-identity fixture policy as test_state_identity: installed mode
-    # is explicit, rather than inherited from the runner's packaging shape.
+    # Installed mode is explicit, rather than inherited from the runner's
+    # packaging shape.
     monkeypatch.setattr(paths, "is_dev_checkout", lambda: False)
     monkeypatch.setattr(sys, "platform", "win32")
     from modelquad.statecontext import resolve_state_identity
@@ -111,72 +108,8 @@ def test_an_unadmitted_official_candidate_is_never_probed(monkeypatch):
     assert codexcli.which_codex() is None
 
 
-CLASSIFIERS = [
-    pytest.param(hostruntime.classify_registration, "modelquad-mcp", "", id="mcp"),
-    pytest.param(hostruntime.classify_cli_registration, "modelquad", " hook-gate", id="cli"),
-    pytest.param(hostruntime.classify_status_line_registration, "modelquad", " usage-hook claude", id="status-line"),
-]
-
-
-@pytest.mark.parametrize("classify,binary,suffix", CLASSIFIERS)
-@pytest.mark.parametrize("case", [
-    "bare-planted", "bare-admitted", "relative-dot", "relative-subdir", "explicit-absolute",
-    pytest.param("root-relative", marks=win_only),
-    pytest.param("drive-relative", marks=win_only),
-], ids=[
-    "bare-planted", "bare-admitted", "relative-dot", "relative-subdir", "explicit-absolute",
-    "root-relative", "drive-relative",
-])
-def test_host_registration_classification(classify, binary, suffix, case, tmp_path, monkeypatch, isolated):
-    _file(isolated, _name(binary))
-    _file(isolated, binary + ".cmd")
-    _file(isolated / "bin", _name(binary))
-    absent = classify(binary + suffix)
-    assert absent.explicit is False and absent.resolved is None
-    assert absent.canonical is False
-    if case == "bare-planted":
-        verdict = absent
-    elif case == "bare-admitted":
-        admitted = _file(tmp_path / "admitted host", _name(binary))
-        monkeypatch.setenv("PATH", str(admitted.parent))
-        verdict = classify(binary + suffix)
-        assert _canonical(verdict.resolved) == _canonical(admitted)
-        # The pip-installed command on PATH is the canonical registration.
-        assert verdict.canonical is True
-        return
-    elif case == "explicit-absolute":
-        explicit = str(tmp_path / "absolute host" / _name(binary))
-        # Absolute handling is structural and does not require an existing file.
-        command = explicit if not suffix else hostruntime.render_launcher(explicit, shell="bash") + suffix
-        verdict = classify(command)
-        expected = explicit if not suffix else hostruntime.split_command(command)[0]
-        assert verdict.explicit is True and verdict.resolved == expected
-    else:
-        relative = {
-            "relative-dot": ".\\" + _name(binary),
-            "relative-subdir": "bin/" + _name(binary),
-            "root-relative": "\\x\\modelquad.cmd",
-            "drive-relative": "C:modelquad.cmd",
-        }[case]
-
-        def unexpected_lookup(name):
-            pytest.fail("a relative registration must not reach an injected resolver")
-
-        verdict = classify(relative + suffix, which=unexpected_lookup)
-        assert verdict.explicit is False and verdict.resolved is None
-        assert "does not resolve on this PATH at all" in verdict.reason
-    assert verdict.canonical is False
-
-
-DEFAULTS = [
-    "classify_registration", "classify_cli_registration", "classify_status_line_registration",
-    "detect-claude",
-]
-
-
-@pytest.mark.parametrize("entry", DEFAULTS, ids=DEFAULTS)
-def test_defaults_resolve_at_call_time(entry, tmp_path, monkeypatch):
-    # All entry points were imported before the hook is patched.
+def test_defaults_resolve_at_call_time(tmp_path, monkeypatch):
+    # The entry point was imported before the hook is patched.
     calls = []
     for answer in (None, str(tmp_path / "call-time executable.exe")):
         calls.clear()
@@ -186,11 +119,7 @@ def test_defaults_resolve_at_call_time(entry, tmp_path, monkeypatch):
             return answer
 
         monkeypatch.setattr(hostruntime, "discovery_which", hook)
-        if entry.startswith("classify_"):
-            command = "modelquad-mcp" if entry == "classify_registration" else "modelquad usage-hook claude"
-            assert getattr(hostruntime, entry)(command).resolved == answer
-        else:
-            assert registry.get_host_descriptor(entry.removeprefix("detect-")).detect() is (answer is not None)
+        assert registry.get_host_descriptor("claude").detect() is (answer is not None)
         assert calls, "the entry point did not read the patched hook"
 
 

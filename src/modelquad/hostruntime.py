@@ -12,12 +12,8 @@ and its hooks all invoke them by name, so the copy the user
 installed is the copy the host launches, and an upgrade with pip needs no
 reinstall of the host wiring.
 
-The reverse direction (given a registration, what does it name?) is what
-``doctor`` uses. It is deliberately structural -- no subprocess is spawned to
-interrogate a registered command, matching the rest of ``doctor``'s host
-checks. A bare name is healthy when it resolves on PATH. An absolute path is
-judged without any lookup: it pins one copy regardless of PATH and upgrades,
-so it is reported, and ``repair`` rewrites it to the bare name.
+Reading a registration back (install, uninstall and their restore) is
+structural: no subprocess is spawned to interrogate a registered command.
 
 How the launcher is spelled
 ---------------------------
@@ -27,17 +23,15 @@ shell -- and on Windows, Claude Code hands them to **bash** (Git Bash), not
 cmd.exe. An unquoted backslash is an escape character to a POSIX shell, so a
 Windows path written without quotes loses its separators and the hook exits
 127. ``render_launcher`` therefore spells a path with POSIX separators and
-double-quotes it when it contains shell punctuation or whitespace, and
-``launcher_spelling_problem`` reports a recorded path that bash cannot run.
+double-quotes it when it contains shell punctuation or whitespace.
 """
 
 from __future__ import annotations
 
 import os
 import unicodedata
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from collections.abc import Mapping
+from pathlib import Path
 
 from .branding import CLI_COMMAND, MCP_COMMAND, MCP_SERVER_NAME
 from .executable_resolution import admit_executable, resolve_executable
@@ -108,27 +102,6 @@ def claude_config_dir_warning(environ: Mapping[str, str] | None = None) -> str |
         "does not support CLAUDE_CONFIG_DIR yet: remove the variable, or copy the "
         "ModelQuad entries into that folder yourself."
     )
-
-
-@dataclass(frozen=True)
-class RegistrationVerdict:
-    """What a host's recorded integration command names, and whether that is canonical.
-
-    Shared by every surface a host can be wired with -- the MCP server entry
-    and the CLI-invoking gate hook and status line alike -- because the
-    question each one answers is the same question.
-    """
-
-    #: The command string as written in the host's configuration.
-    command: str
-    #: True when the command names a runtime explicitly (an absolute path).
-    explicit: bool
-    #: Where the launcher resolves right now, if it resolves at all.
-    resolved: str | None
-    #: True when the registration launches the ModelQuad on this PATH.
-    canonical: bool
-    #: Short, user-facing reason. Empty when canonical.
-    reason: str
 
 
 def mcp_launch_command() -> str:
@@ -231,132 +204,6 @@ def _split_launcher(command: str) -> tuple[str, bool, tuple[str, ...]]:
     return parts[0], False, tuple(parts[1:])
 
 
-def launcher_spelling_problem(command: str) -> str:
-    """Why a recorded launcher cannot be executed by the host's shell, or "".
-
-    Judges the *spelling* the host will hand to its shell, not the path it
-    names: a correct path in a form bash strips to garbage is a dead
-    integration. An unquoted launcher carrying Windows separators loses them
-    in bash; unquoted punctuation and unescaped expansion characters break it
-    too. A bare name has no separator to lose.
-    """
-
-    executable, quoted, arguments = _split_launcher(command)
-    if not quoted and _WINDOWS_SEPARATOR in executable:
-        return (
-            "it is spelled with Windows separators and no quotes, which a POSIX shell "
-            "strips as escapes -- Claude Code runs hooks and status lines through bash, "
-            "where this exits 127 and the gate fails open"
-        )
-    if not quoted and _launcher_needs_quotes(executable):
-        return "the launcher contains unquoted shell punctuation; repair must quote the absolute path"
-    if quoted and any(character in executable for character in '$`"'):
-        # Only Claude's own surfaces are known to run under bash.
-        shell = "bash" if arguments in _CLAUDE_BASH_ARGUMENTS else "bash-and-cmd"
-        expected = render_launcher(executable, shell=shell)
-        if not command.strip().startswith(expected + " ") and command.strip() != expected:
-            return "the launcher contains shell expansion characters without the required bash escaping"
-    return ""
-
-
-def _bare_name(raw: str) -> str:
-    name = PureWindowsPath(raw).name.lower()
-    return name[:-4] if name.endswith((".exe", ".cmd", ".bat")) else name
-
-
-def _classify(
-    command: str,
-    launcher: str,
-    expected: str,
-    which: Callable[[str], str | None],
-    *,
-    what: str,
-    check_spelling: bool,
-) -> RegistrationVerdict:
-    raw = (launcher or "").strip()
-    if not raw:
-        return RegistrationVerdict(
-            command=command, explicit=False, resolved=None, canonical=False,
-            reason=f"No launch command is recorded for the ModelQuad {what}.",
-        )
-    explicit = Path(raw).is_absolute()
-    bare = not any(char in raw for char in ("/", "\\", ":", "\x00"))
-    if bare:
-        resolved = which(raw)
-        if _bare_name(raw) != expected:
-            return RegistrationVerdict(
-                command=command, explicit=False, resolved=resolved, canonical=False,
-                reason=f"The host launches {raw!r}, not ModelQuad's {expected!r} command.",
-            )
-        if resolved is None:
-            return RegistrationVerdict(
-                command=command, explicit=False, resolved=None, canonical=False,
-                reason=(
-                    f"The host launches {raw!r}, which is not on this PATH, so it cannot "
-                    "start ModelQuad. Reinstall ModelQuad with pip, or add its Scripts "
-                    "folder to PATH."
-                ),
-            )
-        return RegistrationVerdict(command, False, resolved, True, "")
-    if not explicit:
-        # A relative path depends on the host's working directory; it is
-        # never looked up, so a planted file cannot answer for it.
-        return RegistrationVerdict(
-            command=command, explicit=False, resolved=None, canonical=False,
-            reason=f"The host launches {raw!r}, a relative path that does not resolve on this PATH at all.",
-        )
-
-    # An absolute path is judged structurally, never by a PATH lookup: it
-    # pins one copy, whatever the user's PATH or a later upgrade says.
-    problem = launcher_spelling_problem(command) if check_spelling else ""
-    if problem:
-        reason = f"The host records the launcher as {raw!r}, but {problem}."
-    else:
-        reason = (
-            f"The host launches ModelQuad pinned to {raw}; ModelQuad registers the "
-            f"bare name {expected!r}, so the copy installed on PATH is the one launched."
-        )
-    return RegistrationVerdict(
-        command=command, explicit=True, resolved=raw, canonical=False, reason=reason,
-    )
-
-
-def classify_registration(
-    command: str, *, which: Callable[[str], str | None] | None = None,
-) -> RegistrationVerdict:
-    """Judge a recorded host MCP command against the ModelQuad on PATH.
-
-    ``which`` is injectable for the same reason ``doctor`` injects it: the
-    real PATH is a property of the developer's machine, not of the test.
-    """
-
-    which = which if which is not None else discovery_which
-    raw = (command or "").strip()
-    return _classify(raw, raw, MCP_COMMAND, which, what="MCP server", check_spelling=False)
-
-
-def classify_cli_registration(
-    command: str, *, which: Callable[[str], str | None] | None = None,
-) -> RegistrationVerdict:
-    """Judge a recorded host CLI integration command against the ModelQuad on PATH.
-
-    The verdict retains the full command while resolving only its launcher.
-    """
-
-    which = which if which is not None else discovery_which
-    launcher, _arguments = split_command(command)
-    return _classify(command, launcher, CLI_COMMAND, which, what="CLI integration",
-                     check_spelling=True)
-
-
-def classify_status_line_registration(
-    command: str, *, which: Callable[[str], str | None] | None = None,
-) -> RegistrationVerdict:
-    """Judge a status line; the same rule as every other CLI integration."""
-
-    return classify_cli_registration(command, which=which)
-
-
 def read_registered_command(host_id: str, target_dir: Path) -> str | None:
     """The launch command a host currently has recorded for ModelQuad.
 
@@ -439,7 +286,7 @@ def read_registered_entry(host_id: str, target_dir: Path) -> dict | None:
     """The WHOLE MCP entry a JSON host currently records for ModelQuad.
 
     ``read_registered_command`` answers "what runtime does this name?", which
-    is all ``doctor`` needs. Restoring a registration needs more than that: an
+    is all an ownership check needs. Restoring a registration needs more than that: an
     entry the user wrote may carry ``args``, ``env`` or a transport alongside
     ``command``, and putting back only the command string would quietly
     discard the rest. So the two readers share one interpretation of where the
@@ -464,15 +311,3 @@ def read_registered_entry(host_id: str, target_dir: Path) -> dict | None:
     servers = payload.get("mcpServers") if isinstance(payload, dict) else None
     entry = servers.get(MCP_SERVER_NAME) if isinstance(servers, dict) else None
     return dict(entry) if isinstance(entry, dict) else None
-
-
-def _same_path(left: Path, right: Path) -> bool:
-    """Compare two Windows-ish paths without requiring either to exist."""
-
-    def normalize(path: Path) -> str:
-        try:
-            return str(path.resolve()).casefold()
-        except OSError:
-            return str(path).casefold()
-
-    return normalize(left) == normalize(right)

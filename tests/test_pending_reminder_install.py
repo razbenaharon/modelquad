@@ -5,7 +5,6 @@ earlier one. Synthetic lifecycle and ownership; never user settings or trust."""
 
 import copy
 import json
-from pathlib import Path
 
 import pytest
 

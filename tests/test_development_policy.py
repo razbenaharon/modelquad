@@ -55,9 +55,9 @@ def test_relative_links_resolve(check):
 
 
 def test_agents_current_state_matches_the_code(check):
-    """`AGENTS.md` "Current state" states four numbers that live in code.
+    """`AGENTS.md` "Current state" states numbers that live in code.
 
-    It said DB schema `15` against a `SCHEMA_VERSION = 16`. A wrong number in
+    A wrong number in
     the file an arriving agent trusts first is worse than an absent one,
     because nothing downstream re-derives it.
     """

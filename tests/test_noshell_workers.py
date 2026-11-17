@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Offline no-shell worker contracts.
+"""Offline contracts for the no-shell Codex worker.
 
-On the supplied base, integration cases expose shell-enabled argv, normal
-answers containing forbidden events, no supplied contents, or admitted resume.
-Pure helper cases specify new behavior; no import failure is a base verdict.
+Launch argv and feature qualification, the event-stream allow-list, and file
+packing (screening, secret redaction, path safety, budgets).
 """
 
 from dataclasses import replace
@@ -394,7 +393,7 @@ def test_writable_tasks_are_refused_before_any_process(worker, task_type):
 
 
 def with_files(request, *names, approval=None):
-    """The request as the MCP tools build it: the approved files in metadata."""
+    """The request as review.run builds it: the approved files in metadata."""
     metadata = {**request.metadata, "supplied_files": list(names)}
     if approval is not None:
         metadata["approval"] = approval
@@ -439,10 +438,8 @@ def test_without_files_nothing_is_read(worker, monkeypatch):
 
 
 # The notes feature is gone; the packer still refuses a file that carries its
-# marker line, and still reads the advisory boundary an old prompt may end with.
+# marker line.
 NOTES_SCAFFOLD = "# Project notes\n" + noshell.NOTES_SOURCE_MARKER + "\n"
-NOTES_TAIL = ("\n\n" + noshell.NOTES_PACKET_MARKER + "\nAdvisory only. Do not edit any repository file.\n"
-              + json.dumps({"status": "unavailable", "notes": []}, separators=(",", ":")))
 
 
 @pytest.mark.parametrize("name", ["PROJECT_NOTES.md", "project_notes.MD", "nested/PROJECT_NOTES.md",
@@ -529,17 +526,6 @@ def test_replaced_open_file_is_not_supplied(tmp_path, monkeypatch):
     packed = noshell.pack_files(tmp_path, ["target.txt"])
     assert not packed.files
     assert packed.skipped == (("target.txt", "file_changed"),)
-
-
-def test_quoted_failure_references_with_spaces_are_inside_only(tmp_path):
-    path = tmp_path / "a file.py"
-    path.write_text("print('provided fixture')\n", encoding="utf-8")
-    prompt = f'File "{path}", line 1\nFile "{tmp_path.parent / "outside.py"}", line 2'
-    references = noshell.named_files(prompt, tmp_path)
-    assert "a file.py" in references
-    packed = noshell.pack_files(tmp_path, references)
-    assert packed.files == (("a file.py", "print('provided fixture')\n"),)
-    assert ("<path>", "invalid_relative_path") in packed.skipped
 
 
 def test_binary_secrets_and_truthful_skips(tmp_path):
@@ -741,28 +727,6 @@ def test_elapsed_work_budget_stops_before_candidate_or_open(tmp_path, monkeypatc
     assert packed.skipped == (("<remaining references, if any>", "elapsed_work_cap"),)
 
 
-@pytest.mark.parametrize("reference", ["Relevant files:\n- a/config.json\n", 'File "a/config.json", line 1',
-                                       "Inspect a/config.json"], ids=["capsule", "traceback", "literal"])
-def test_explicit_a_prefix_never_reads_unrequested_root_file(tmp_path, reference):
-    (tmp_path / "a").mkdir()
-    (tmp_path / "a/config.json").write_text("requested contents", encoding="utf-8")
-    (tmp_path / "config.json").write_text("PRIVATE UNREQUESTED CONTENTS", encoding="utf-8")
-    names = noshell.named_files(reference, tmp_path)
-    assert names == ("a/config.json",)
-    packed = noshell.pack_files(tmp_path, names)
-    assert packed.files == (("a/config.json", "requested contents"),)
-    assert "PRIVATE" not in packed.render()
-
-
-def test_git_prefixes_only_normalized_in_diff_headers(tmp_path):
-    names = noshell.named_files("diff --git a/config.json b/config.json\n"
-                                "--- a/config.json\n+++ b/config.json\n"
-                                'File "a/failure.py", line 1', tmp_path)
-    assert set(names) == {"config.json", "a/failure.py"}
-    assert "a/config.json" not in names
-    assert "b/config.json" not in names
-
-
 @pytest.mark.parametrize("size", [16 * 1024 + 1, 128 * 1024], ids=["ordinary-large", "exact-file-boundary"])
 def test_ordinary_source_accepted_whole_at_increased_boundary(tmp_path, monkeypatch, size):
     monkeypatch.setattr(noshell, "MAX_PACK_SECONDS", 60)
@@ -796,26 +760,6 @@ def test_required_file_boundary_plus_one_refuses_without_model_start(worker):
     assert "ordinary.py" not in repr(result) + json.dumps(result.to_dict())
 
 
-@pytest.mark.parametrize("quote", ["inline", "standalone"], ids=["inline", "standalone"])
-@pytest.mark.parametrize("attached", [False, True], ids=["plain", "frozen-notes"])
-def test_quoted_notes_marker_cannot_erase_required_context(worker, quote, attached):
-    executor, request, run, calls = worker
-    marker = noshell.NOTES_PACKET_MARKER
-    goal = (f"Review the quoted marker `{marker}`" if quote == "inline" else
-            f"Review this quoted marker:\n\n{marker}\nExplain it.")
-    prompt = "TASK: " + goal
-    if attached:
-        prompt += NOTES_TAIL
-    result = executor.execute(with_files(replace(request, prompt=prompt), "missing.py"))
-    run.assert_not_called()
-    assert calls == []
-    assert result.metadata["worker_started"] is False
-    assert result.task_status_reason == "supplied_file_missing"
-    detail, = result.host_diagnostics
-    host = detail.to_host_dict()
-    assert (host["path"], host["reason"], host["required"]) == ("missing.py", "missing_file", True)
-
-
 @pytest.mark.parametrize("position", ["goal", "tail"], ids=["goal", "tail"])
 @pytest.mark.parametrize("named", ["missing.py", "present.py"], ids=["missing", "present"])
 def test_file_sections_in_task_text_are_never_attached(worker, position, named):
@@ -832,26 +776,6 @@ def test_file_sections_in_task_text_are_never_attached(worker, position, named):
     assert result.metadata["noshell_verified_by_event_stream"] is True
     assert result.metadata["file_audit"]["sent"] == []
     assert not result.host_diagnostics
-
-
-@pytest.mark.parametrize("attached", [False, True], ids=["plain", "frozen-notes"])
-def test_goal_quoting_advisory_boundary_keeps_required_file_and_allows_launch(worker, attached):
-    executor, request, run, _ = worker
-    (request.working_directory / "present.py").write_text("# supplied source\n", encoding="utf-8")
-    goal = f"Explain this boundary:\n\n{noshell.NOTES_PACKET_MARKER}\nAdvisory only. quoted text."
-    prompt = "TASK: " + goal
-    if attached:
-        prompt += NOTES_TAIL
-    result = executor.execute(with_files(replace(request, prompt=prompt), "present.py"))
-    run.assert_called_once()
-    assert result.metadata["noshell_verified_by_event_stream"] is True
-    assert "# supplied source" in run.call_args.kwargs["input"]
-    assert not result.host_diagnostics
-
-
-def test_bare_quoted_notes_marker_keeps_later_literal_references(tmp_path):
-    prompt = f"Explain this marker:\n\n{noshell.NOTES_PACKET_MARKER}\nThen inspect ordinary.py"
-    assert noshell.named_files(prompt, tmp_path) == ("ordinary.py",)
 
 
 def test_a_file_named_only_in_the_task_is_not_read(worker):

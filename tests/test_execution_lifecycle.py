@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Non-launching evidence contracts for the existing caller/result consumers."""
+"""How an execution result resolves into an attempt verdict, without launching anything."""
 
 from dataclasses import FrozenInstanceError, asdict, replace
 from threading import Barrier, Thread

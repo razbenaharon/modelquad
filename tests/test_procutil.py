@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import ast
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -65,8 +64,8 @@ def test_canonical_no_window_kwargs_fallback_when_attribute_missing(monkeypatch)
 def test_no_window_kwargs_opt_out_drops_only_stdin():
     """The opt-out exists for callers that drive stdin themselves.
 
-    subprocess.run refuses ``input=`` alongside ``stdin``, and the app-server
-    hands the child a real pipe. Both are non-interactive by construction, so
+    subprocess.run refuses ``input=`` alongside ``stdin``; the Codex launch
+    and the file-rules probe feed stdin themselves. Both are non-interactive by construction, so
     they may skip the detachment -- but they must not lose CREATE_NO_WINDOW
     with it.
     """
@@ -551,86 +550,8 @@ def test_the_test_helper_agrees_with_the_products_flag():
     assert test_helper("nt") == procutil.no_window_kwargs("nt", detach_stdin=False)
 
 
-# --------------------------------------------------------------------------
-# process_image_name: the identity half of "is that pid really
-# the recorded service?"
-# --------------------------------------------------------------------------
-
-
 def _completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
-
-
-def test_process_image_name_reads_this_process_for_real():
-    import os
-
-    name = procutil.process_image_name(os.getpid())
-    assert name is not None
-    assert name.casefold() == Path(sys.executable).name.casefold()
-
-
-def test_process_image_name_spawns_its_lookup_without_a_console(tmp_path, monkeypatch):
-    from modelquad.executable_resolution import Resolution
-
-    executable = tmp_path / 'synthetic system' / 'tasklist.exe'
-    executable.parent.mkdir()
-    executable.write_bytes(b'synthetic fixture - never execute\n')
-    resolved = os.path.realpath(executable)
-
-    def resolve(name):
-        assert name == 'tasklist'
-        return Resolution(resolved, 'system', 'binary', None)
-
-    monkeypatch.setattr(procutil, 'system_executable', resolve)
-    runner = RecordingRun(result=_completed('"python.exe","4242","Console","1","10,000 K"\n'))
-    monkeypatch.setattr(procutil.os, "name", "nt")
-
-    assert procutil.process_image_name(4242, run=runner) == "python.exe"
-
-    call = runner.calls[0]
-    assert os.path.normcase(call["argv"][0]) == os.path.normcase(resolved)
-    assert call["kwargs"]["stdin"] is subprocess.DEVNULL
-    assert call["kwargs"]["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-    assert call["kwargs"]["shell"] is False
-
-
-@pytest.mark.parametrize(
-    "stdout",
-    [
-        "",  # nothing matched
-        "INFO: No tasks are running which match the specified criteria.\n",  # not a CSV row for that pid
-        '"python.exe","4242","Console","1","10,000 K"\n"python.exe","4243","Console","1","10,000 K"\n',  # two rows
-        '"python.exe","9999","Console","1","10,000 K"\n',  # a different pid
-    ],
-)
-def test_process_image_name_is_unknown_unless_exactly_that_pid_is_reported(monkeypatch, stdout):
-    monkeypatch.setattr(procutil.os, "name", "nt")
-    assert procutil.process_image_name(4242, run=RecordingRun(result=_completed(stdout))) is None
-
-
-def test_process_image_name_is_unknown_when_the_lookup_fails(monkeypatch):
-    monkeypatch.setattr(procutil.os, "name", "nt")
-    assert procutil.process_image_name(4242, run=RecordingRun(result=_completed("", returncode=1))) is None
-    assert procutil.process_image_name(4242, run=RecordingRun(exc=FileNotFoundError())) is None
-    assert procutil.process_image_name(4242, run=RecordingRun(exc=subprocess.TimeoutExpired("tasklist", 15))) is None
-    assert procutil.process_image_name(0, run=RecordingRun()) is None
-    assert procutil.process_image_name("x", run=RecordingRun()) is None
-
-
-def test_process_image_name_uses_ps_on_posix(monkeypatch):
-    from modelquad.executable_resolution import Resolution
-
-    resolved = "/usr/bin/ps"
-    monkeypatch.setattr(procutil, "resolve_executable", lambda name: Resolution(resolved, "path", "binary", None))
-    monkeypatch.setattr(procutil.os, "name", "posix")
-    runner = RecordingRun(result=_completed("/usr/bin/python3.11\n"))
-
-    assert procutil.process_image_name(4242, run=runner) == "python3.11"
-
-    assert runner.calls[0]["argv"][:2] == [resolved, "-p"]
-    assert "creationflags" not in runner.calls[0]["kwargs"]
-    assert procutil.process_image_name(4242, run=RecordingRun(result=_completed("a\nb\n"))) is None
-
 
 
 # --------------------------------------------------------------------------
@@ -745,7 +666,7 @@ def test_run_with_tree_kill_reports_what_the_worker_left_running():
         assert completed.returncode == 0
         assert started - 1 <= facts["observed_at"] <= time.time() + 1
         if os.name != "nt":
-            # Not looked at, and said so: the row keeps the worker-process accounting.
+            # Not looked at, and said so: the result keeps only the worker-process accounting.
             assert facts == {
                 "observed_at": facts["observed_at"],
                 "descendants": [],
@@ -972,8 +893,8 @@ def test_run_with_tree_kill_does_not_change_how_a_worker_is_spawned(monkeypatch)
 # OpenProcess returns ERROR_ACCESS_DENIED for two processes that could not be
 # more different -- one that is running under another token, and one that
 # exited long ago and is only still a pid because some other process leaked a
-# handle to it. Reading both as "alive" kept a settled workspace unsettled
-# permanently. The corroborating enumeration is what separates them.
+# handle to it. Reading both as "alive" would let the worker guard treat a dead
+# ancestor as a live worker. The corroborating enumeration is what separates them.
 # --------------------------------------------------------------------------
 
 
@@ -989,7 +910,7 @@ def test_access_denied_on_an_enumerable_pid_is_still_alive(monkeypatch):
 
     Another user's process, or the kernel's, is refused by OpenProcess and IS
     listed by an enumeration that needs no access to it. That is a real
-    process, and closing its attempt row would be the destructive error
+    process, and reading it as dead would be the destructive error
     pid_state exists to prevent.
     """
 
@@ -1004,7 +925,7 @@ def test_access_denied_on_a_pid_no_enumerator_lists_is_dead(monkeypatch):
 
     Its token is gone, which is why the access check fails; it has exited,
     which is why nothing enumerates it. It cannot be writing a workspace, so
-    it must not hold a delegation row open forever.
+    it must not read as a live worker.
     """
 
     _deny_openprocess(monkeypatch)

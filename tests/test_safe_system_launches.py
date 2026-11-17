@@ -294,8 +294,7 @@ def synthetic_system(tmp_path, monkeypatch, isolated):
 
 
 @win_only
-@pytest.mark.parametrize("utility", ["tasklist", "taskkill"], ids=["tasklist", "taskkill"])
-def test_tasklist_and_taskkill_come_from_the_system_directory(utility, monkeypatch, synthetic_system):
+def test_taskkill_comes_from_the_system_directory(monkeypatch, synthetic_system):
     calls = []
 
     def run(argv, **kwargs):
@@ -305,24 +304,19 @@ def test_tasklist_and_taskkill_come_from_the_system_directory(utility, monkeypat
     monkeypatch.setattr(procutil.subprocess, "run", run)
 
     def invoke():
-        return procutil.process_image_name(4242, run=run) if utility == "tasklist" else procutil._taskkill_tree(4242)
+        return procutil._taskkill_tree(4242)
 
-    assert invoke() == ("python.exe" if utility == "tasklist" else "ok")
+    assert invoke() == "ok"
     (argv, kwargs), = calls
-    assert _canonical(argv[0]) == _canonical(synthetic_system / (utility + ".exe"))
-    arguments = ["/FI", "PID eq 4242", "/FO", "CSV", "/NH"] if utility == "tasklist" else ["/PID", "4242", "/T", "/F"]
-    assert argv[1:] == arguments
-    expected = {"capture_output": True, "timeout": procutil.IMAGE_NAME_SECONDS if utility == "tasklist" else 10.0,
-                **procutil.no_window_kwargs()}
-    if utility == "tasklist":
-        expected.update(text=True, shell=False)
-    assert kwargs == expected
+    assert _canonical(argv[0]) == _canonical(synthetic_system / "taskkill.exe")
+    assert argv[1:] == ["/PID", "4242", "/T", "/F"]
+    assert kwargs == {"capture_output": True, "timeout": 10.0, **procutil.no_window_kwargs()}
 
     # A process may itself start in the system directory; no re-admission.
     monkeypatch.chdir(synthetic_system)
-    assert invoke() == ("python.exe" if utility == "tasklist" else "ok")
-    assert _canonical(calls[-1][0][0]) == _canonical(synthetic_system / (utility + ".exe"))
+    assert invoke() == "ok"
+    assert _canonical(calls[-1][0][0]) == _canonical(synthetic_system / "taskkill.exe")
     monkeypatch.setattr(resolver, "_system_directory", lambda: None)
     count = len(calls)
-    assert invoke() == (None if utility == "tasklist" else "launch_error: UnsafeExecutable")
+    assert invoke() == "launch_error: UnsafeExecutable"
     assert len(calls) == count

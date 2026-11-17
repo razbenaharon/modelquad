@@ -233,9 +233,6 @@ ALLOW_LIST = (
     ("procutil.py", "process_creation_epoch", "launch", 2,
      "resolver call: POSIX resolve_executable pins ps argv[0] or returns unknown without launch; "
      "Windows reads the process handle; includes default reference"),
-    ("procutil.py", "process_image_name", "launch", 2,
-     "resolver call: POSIX resolve_executable pins ps argv[0] or returns unknown without launch; "
-     "Windows tasklist remains pinned through system_executable; includes default reference"),
     ("setupcheck.py", "_codex", "launch", 1,
      "forwarding wrapper, guard inside: CodexExecutor.unavailable_reason admits the native executable "
      "first, then run_inventory prepares the bounded provider-free listing argv in an empty folder"),
@@ -249,9 +246,6 @@ ALLOW_LIST = (
     ("procutil.py", "run_worker", "launch", 1,
      "forwarding wrapper, guard at callers: CodexExecutor default runner "
      "(argv from prepare_codex_launch) and codex_worker_mcp.run_inventory (prepare_codex_launch)"),
-    ("procutil.py", "start_contained", "launch", 1,
-     "forwarding wrapper, guard at callers: no product caller in this build (its only caller, "
-     "usage/codex_appserver.py, was removed); a new caller must admit its executable first"),
 )
 
 # Sites that are NOT admitted. Pinned with the same exact counts so a new or

@@ -568,14 +568,11 @@ def test_the_root_conftest_states_the_mechanism_it_uses(devenv):
 
 
 def test_the_root_conftest_cannot_reach_the_product_runtime():
-    """Product-runtime `tempfile` behaviour is unchanged, for two independent
-    reasons, both asserted rather than argued.
+    """Product-runtime `tempfile` behaviour is unchanged, asserted rather than argued.
 
     The file is outside `src/`, and `pyproject.toml` builds the distribution
-    from `src/` alone -- so it is in no wheel or sdist. And
-    `modelquad`'s own validation runner launches pytest inside a *user's*
-    project, which takes that project as its rootdir and never collects this
-    file.
+    from `src/` alone -- so it is in no wheel or sdist, and the product never
+    runs pytest.
     """
     assert ROOT_CONFTEST.parent == REPO_ROOT
     assert list((REPO_ROOT / "src").rglob("conftest.py")) == []

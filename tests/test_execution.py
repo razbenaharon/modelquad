@@ -314,8 +314,8 @@ def test_codex_non_zero_exit(tmp_path, *, synthetic_worker_binary):
 
     assert result.success is False
     assert result.exit_code == 2
-    # The stderr BODY is never persisted, in any evidence
-    # mode, so `error` reports its category and size instead of quoting it.
+    # The stderr BODY never reaches the result, so `error` reports its
+    # category and size instead of quoting it.
     assert "boom" not in (result.error or "")
     assert "withheld from persistence" in (result.error or "")
     assert result.metadata["stderr_category"] == "narration"
@@ -377,7 +377,7 @@ def test_a_working_directory_that_is_not_a_folder_is_refused_before_any_process(
 
 # --- task_status / task_completed semantics: process success != task success ---
 #
-# These four cases are the mandatory regression set: a clean exit code alone
+# These cases are the mandatory regression set: a clean exit code alone
 # must never certify task completion, and a worker's own self-reported
 # envelope can never override an independently detected failure signature.
 

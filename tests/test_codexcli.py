@@ -285,8 +285,8 @@ def test_explicit_binary_is_not_redirected(tmp_path, monkeypatch):
 
 def test_a_codex_planted_under_the_project_is_never_found(tmp_path, monkeypatch):
     """A project folder can carry codex.exe in a folder an editor puts on PATH
-    (an activated .venv). ModelQuad runs a found Codex for its version and its
-    quota without a prompt, so nothing under the working folder is found."""
+    (an activated .venv). ModelQuad runs a found Codex for its version check
+    without a prompt, so nothing under the working folder is found."""
     home = tmp_path / "home"
     project = home / "projects" / "app"
     planted = project / ".venv" / "Scripts"
@@ -308,5 +308,3 @@ def test_a_working_folder_at_or_above_home_does_not_hide_the_users_own_install(t
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(home if where == "home" else tmp_path)
     assert codexcli.project_roots() == ()
-
-

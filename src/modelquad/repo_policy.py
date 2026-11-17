@@ -513,9 +513,8 @@ def message(code: str, policy: RepoPolicy | None = None, *, task_type=None, acco
                 "from that repository's own folder instead.")
     if code == ACCOUNT_WORKSPACE_REQUIRED:
         which = ("Codex reports a personal account" if account_kind == "personal" else
-                 "Codex has not reported a work account in the last 5 minutes (read it again "
-                 "with modelquad usage-refresh; a plan set with modelquad settings plan does "
-                 "not count)")
+                 "this version of ModelQuad does not read which Codex account is signed in "
+                 "(a reading an earlier version stored does not count)")
         return (f"This repository's {FILE_NAME} allows Codex only on a work account "
                 f"([codex] account = \"workspace\"), and {which}, so ModelQuad started nothing. "
                 "Use a work Codex account here, or change that line.")

@@ -25,7 +25,6 @@ from . import file_rules
 from .closed import closed_limitations
 #: A file carrying this line is a notes file of an earlier ModelQuad, not code to review.
 NOTES_SOURCE_MARKER = "<!-- modelquad-project-notes-v1 -->"
-NOTES_PACKET_MARKER = "ModelQuad repository notes advisory v1 (untrusted JSON data):"
 #: The complete prompt a read-only worker accepts.
 WORKER_PROMPT_BYTES = 192 * 1024
 MAX_PATH_CHARS = 512
@@ -971,7 +970,7 @@ def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOT
         seen.add(name.casefold())
         parts = tuple(part.casefold() for part in name.split("/"))
         # Repository notes have their own bounded, frozen selection. Never
-        # reread their raw source via an incidental reference or capsule path.
+        # reread their raw source through the files list.
         if parts[-1] == "project_notes.md":
             skipped.append((name, "repository_notes_source"))
             continue
@@ -1027,15 +1026,7 @@ def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOT
     return packed
 
 
-_FILE_REFERENCE = re.compile(r'(?<![\w/\\])(?:[A-Za-z]:[\\/]|/)?[\w.-]+(?:[\\/][\w.-]+)*(?=[?!:;\s"\x27`),]|$)')
-_FILE_EXTENSIONS = frozenset({
-    '.py', '.pyi', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.json', '.yaml', '.yml',
-    '.toml', '.ini', '.cfg', '.conf', '.txt', '.md', '.rst', '.csv', '.tsv', '.xml',
-    '.html', '.htm', '.css', '.scss', '.sass', '.less', '.sql', '.sh', '.ps1', '.psm1',
-    '.psd1', '.bat', '.cmd', '.go', '.rs', '.java', '.kt', '.kts', '.swift', '.c', '.cc',
-    '.cpp', '.cxx', '.h', '.hpp', '.cs', '.rb', '.php', '.lua', '.vue', '.svelte', '.tex',
-})
-# A capsule entry may carry a location or a note after the path:
+# A files entry may carry a location or a note after the path:
 # "src/app.py:12", "src/app.py:12-40", "src/app.py#L12", "src/app.py (handler)",
 # "src/app.py - the handler". Only the path names the file.
 _ENTRY_NOTE = re.compile(r"\s+(?:\([^()\n]*\)|[-–—]\s.*)$")
@@ -1043,7 +1034,7 @@ _ENTRY_LOCATION = re.compile(r"(?::\d+(?:[-:]\d+)*|#L\d+(?:-L?\d+)?)$")
 
 
 def relevant_entry(entry, workspace=None):
-    """The path a Relevant files entry names, without its location or note."""
+    """The path a files entry names, without its location or note."""
     text = entry.strip()
     previous = None
     while text != previous:
@@ -1059,74 +1050,6 @@ def relevant_entry(entry, workspace=None):
     while text.startswith("./"):
         text = text[2:]
     return text.rstrip("/") or text
-
-
-def _file_reference(name, workspace):
-    if re.fullmatch(r'\d+\.\.\d+', name):
-        return False
-    if Path(name).suffix.lower() in _FILE_EXTENSIONS:
-        return True
-    if '/' not in name and '\\' not in name:
-        return False
-    try:
-        # Validate before observing existence: absolute/traversal names must
-        # never probe files outside the supplied workspace.
-        relative = canonical_path(name.replace('\\', '/'))
-        return (Path(workspace) / relative).is_file()
-    except (OSError, TargetError):
-        return False
-
-
-def named_files(prompt, workspace):
-    """Capsule references first, then literal failure/patch references only."""
-    names = []
-    # Extract the capsule independently of marker text quoted in its goal.
-    match = re.search(r"(?m)^Relevant files:\n((?:- [^\n]+\n?)+)", prompt)
-    if match:
-        names += [relevant_entry(line[2:], workspace) for line in match[1].splitlines()]
-        # Preserve the newline that may also start the appended boundary.
-        masked = re.sub(r"[^\n]", " ", match[0])
-        prompt = prompt[:match.start()] + masked + prompt[match.end():]
-    # attach() appends a standalone advisory after task evidence; only that
-    # boundary excludes advisory prose/linked paths from incidental selection.
-    task, boundary, _ = prompt.rpartition("\n\n" + NOTES_PACKET_MARKER + "\nAdvisory only. ")
-    if boundary:
-        prompt = task
-    # Git prefixes describe a patch only in recognized headers. Mask those
-    # lines so their a/b paths cannot be rediscovered as independent references.
-    remaining = []
-    for line in prompt.splitlines():
-        header = re.fullmatch(r'diff --git (a/\S+) (b/\S+)', line)
-        single = re.fullmatch(r'(?:---|\+\+\+) ([ab]/[^\t]+)(?:\t.*)?', line)
-        if header or single:
-            names.extend(value[2:] for value in (header.groups() if header else single.groups()))
-            remaining.append("")
-        else:
-            remaining.append(line)
-    prompt = "\n".join(remaining)
-    quoted_pattern = re.compile(r'["\x27`]([^"\x27`\n]+\.[A-Za-z0-9]{1,10})["\x27`]')
-    references = []
-    def quoted_reference(match):
-        references.append(match[1])
-        return " " * len(match[0])
-    prompt = quoted_pattern.sub(quoted_reference, prompt)
-    references.extend(match[0] for match in _FILE_REFERENCE.finditer(prompt))
-    for reference in references:
-        name = reference.strip().rstrip('.?!,;:)')
-        # Remove a literal traceback introducer, not arbitrary dependencies.
-        if name.startswith("File "):
-            name = name[5:].strip()
-        if not _file_reference(name, workspace):
-            continue
-        path = Path(name)
-        if path.is_absolute():
-            try:
-                name = path.relative_to(Path(workspace)).as_posix()
-            except ValueError:
-                names.append("<path>")
-                continue
-        names.append(name)
-    return tuple(names)
 
 
 def explicit_names(files, workspace=None):
@@ -1220,7 +1143,7 @@ def render_supplied(screened, pack, instruction, *, required=(), withheld=(),
                   - getattr(pack, "_examined_keys", frozenset()))
     for name, reason in pack.skipped:
         if name == "<remaining references, if any>" and unreported:
-            # Use only capsule strings already in memory, never consume the
+            # Use only names already in memory, never consume the
             # stopped packer's iterable or perform more reads. Retain the
             # omission bound plus one sentinel if required entries remain.
             slots = max(0, MAX_SKIPPED - (len(pack.skipped) - 1))

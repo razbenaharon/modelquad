@@ -15,7 +15,7 @@ that goes through `uname()` reaches `platform.win32_ver()`, which calls
     subprocess.check_output('ver', ..., shell=True)   # no creationflags
 
 with no console suppression, so from a console-less parent -- an agent
-harness, a service, a detached job runner -- that `cmd.exe` allocates a console
+harness, an IDE test runner, a scheduled task -- that `cmd.exe` allocates a console
 and the user sees a window. It is CPython's spawn, not ModelQuad's, so the
 `creationflags` invariants in `test_procutil.py` and `test_scripts_no_window.py`
 cannot see it: both recognise a literal `subprocess.<method>(...)` call, and
@@ -46,7 +46,8 @@ for afterwards. There is therefore no ordinary spelling that reaches
 describing two different guards. What is true is narrower: the two functions
 are reachable exactly where the reference rule is the only rule left, which is
 inside a `PLATFORM_IMPORT_EXEMPT` module. Everywhere else the approved way to
-learn what `platform` reports is `conftest.platform_reference()`, for these two
+learn what `platform` reports is to ask it in a hidden child process
+(launched with `conftest.no_window_kwargs()`), for these two
 functions the same as for the nine.
 
 **Two rules, not one, because call-site matching alone cannot hold.**
@@ -64,8 +65,8 @@ code may not get its hands on the `platform` module at all. Every use, however
 it is spelled, needs the module first, and there are only so many ways to
 obtain it -- `import`, `from ... import`, `importlib.import_module`,
 `__import__`, `sys.modules`. All five are rejected. The approved way to learn
-what `platform` reports is `conftest.platform_reference()`, which reads it in
-a hidden child.
+what `platform` reports is to read it in a hidden child process (launched
+with `conftest.no_window_kwargs()`).
 
 **Each of those five is rejected under a rename, too.** The first
 version of the acquisition rule matched the importer by its callee name and
@@ -156,9 +157,8 @@ neither of which reaches it alone, are outside the claim. That is narrower than
 round 5's ambition and it is the width that is actually true; the list below is
 what falls outside it, by construction rather than by oversight.
 
-* Product code under `src/`. Scanning `src/` statically would not help here:
-  a deliberate `platform` cache read and a live one look the same to a
-  source scan.
+* Product code under `src/`. Its spawns are covered by the creationflags
+  scan in `test_procutil.py`.
 * **Third-party code the suite imports.** Nothing here reads site-packages, so
   a dependency that calls `platform.system()` at import time is invisible to
   it. The `pyreadline3` note below is exactly that case, and it is why the
@@ -227,7 +227,7 @@ what falls outside it, by construction rather than by oversight.
   provenance tracking stopped. Asserted in `test_the_guard_admits_the_expression_call_target`,
   beside the spelling that is caught.
 * **Code assembled at runtime.** `exec`, `eval`, a template rendered to a file
-  and imported, a `.pth`. Deliberate rather than missed: `conftest`'s probe
+  and imported, a `.pth`. Deliberate rather than missed: a hidden-child probe
   *is* source text for a child process, and running it there is the fix, so
   string contents must stay legal. A test that built a forbidden call at
   runtime would be defeating this guard on purpose rather than by accident,
@@ -666,7 +666,7 @@ def _platform_offences(tree: ast.AST) -> list[Offence]:
        call-site scan cannot follow.
 
     A call written inside a string literal is invisible to ``ast`` and stays
-    legal on purpose: ``conftest``'s probe is source code for a *child*
+    legal on purpose: a hidden-child probe is source code for a *child*
     process, and running it there is the fix, not the offence.
     """
 
@@ -810,14 +810,14 @@ def test_no_test_module_calls_platform_in_process():
     assert not uses, (
         "these reach a `platform` function measured to spawn `cmd /c ver` on "
         "Windows from a cold `platform._uname_cache`, which is the popup "
-        "this guard exists to prevent -- use `conftest.platform_reference()`, "
-        f"which reads the same values in a CREATE_NO_WINDOW child: {uses}"
+        "this guard exists to prevent -- read the same values in a child "
+        f"launched with `conftest.no_window_kwargs()`: {uses}"
     )
     assert not acquisitions, (
         "test-support code may not obtain the `platform` module at all -- every "
         "spawning call needs it first, and banning the acquisition is the only "
         "rule an alias, a `getattr` or a star import cannot walk around. Read "
-        "what `platform` reports through `conftest.platform_reference()`; if a "
+        "what `platform` reports in a child launched with `conftest.no_window_kwargs()`; if a "
         "module genuinely needs the module object itself, add it to "
         f"PLATFORM_IMPORT_EXEMPT with the reason: {acquisitions}"
     )
@@ -870,8 +870,8 @@ def test_the_guard_detects_both_import_spellings():
     indistinguishable from a scan with a typo'd attribute name. These snippets
     are the cases that decide whether the test above means anything: the two
     ways to spell the call, the alias that would dodge a name-matching scan,
-    and the string literal that must *not* be flagged so ``conftest``'s
-    hidden-child probe stays legal.
+    and the string literal that must *not* be flagged so a hidden-child
+    probe stays legal.
     """
 
     def uses(source: str) -> list[str]:

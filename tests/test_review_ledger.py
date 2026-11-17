@@ -6,7 +6,6 @@ Claude's agreement as proof."""
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -237,18 +236,6 @@ def test_gate_events_store_an_installation_keyed_session_pseudonym(tmp_path):
     assert stored == rl.session_pseudonym("session-a")
 
 
-def test_an_unreadable_ledger_counts_unknown_not_zero(tmp_path):
-    import time
-
-    db = tmp_path / "ledger.db"
-    conn = sqlite3.connect(db)
-    conn.execute(f"PRAGMA user_version = {rl.SCHEMA_VERSION + 1}")
-    conn.close()
-    assert rl.count_runs(trigger="claude", since=time.time() - 60, path=db) is None
-    db.write_bytes(b"not a database at all, just bytes")
-    assert rl.count_runs(trigger="claude", since=time.time() - 60, path=db) is None
-
-
 def test_the_delegate_tool_records_its_trigger(tmp_path, monkeypatch):
     import anyio
 
@@ -335,7 +322,7 @@ def test_reading_a_round_creates_no_ledger(tmp_path):
     ({"refused": True, "started": True}, rl.WITHHELD),
     ({"refused": True, "reason": "worker_noshell_unavailable"}, rl.FAILED),
     # A rule or a setting refused it before Codex started.
-    ({"refused": True, "started": False, "reason": "routing_refused"}, rl.REFUSED),
+    ({"refused": True, "started": False, "reason": "user_repo_codex_off"}, rl.REFUSED),
     ({"refused": True, "reason": "repo_policy_codex_off"}, rl.REFUSED),
     ({"refused": True, "reason": "supplied_file_secret"}, rl.REFUSED),
     # The request itself could not be used: never started, and not a Codex failure.
@@ -356,7 +343,7 @@ def test_only_started_calls_are_codex_calls_in_the_report(tmp_path):
         {"decision_id": "s-2", "output": "Looks fine.", "metadata": {"worker_started": True}},
         {"decision_id": "s-3", "output": "", "metadata": {"worker_started": True}},
         {"decision_id": "s-4", "refused": True, "reason": "supplied_file_missing", "output": ""},
-        {"decision_id": "s-5", "refused": True, "reason": "routing_refused"},
+        {"decision_id": "s-5", "refused": True, "reason": "user_repo_codex_off"},
         {"decision_id": "s-6", "output": "", "reason": "invalid_request"},
         {"decision_id": "s-7", "output": "", "reason": "noshell_violated",
          "metadata": {"worker_started": True}},

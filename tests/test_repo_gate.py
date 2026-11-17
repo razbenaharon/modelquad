@@ -181,7 +181,7 @@ def test_the_workspace_rule_refuses_because_the_account_is_unknown(tmp_path, no_
     payload = delegate("review", "Review it.", str(repo))
     assert payload["reason"] == rp.ACCOUNT_WORKSPACE_REQUIRED and started == []
     assert payload["refused"] is True and payload["started"] is False
-    assert "last 5 minutes" in payload["message"]
+    assert "does not read which Codex account" in payload["message"]
     assert package("review", "Review it.", str(repo))["reason"] == rp.ACCOUNT_WORKSPACE_REQUIRED
 
 
@@ -223,7 +223,6 @@ def test_empty_task_kinds_read_as_codex_off_everywhere(tmp_path, no_start):
     assert (applied.refusal, applied.offer) == (rp.KIND_REMOVED, rs.OFF)
     repo = git_repo(tmp_path / "repo")
     write_policy(repo, EMPTY_KINDS.decode())
-    assert rs.advice_line(repo) == rs.ADVICE[rs.OFF]
     rules = mcp.modelquad_status(str(repo)).structured_content["folder_rules"]
     assert (rules["state"], rules["codex_allowed"], rules["task_kinds"]) == ("file", False, [])
     for kind in rp.TASK_KINDS:

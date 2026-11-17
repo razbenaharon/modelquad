@@ -337,23 +337,6 @@ USER_OFF_MESSAGE = (
     "started nothing. To allow it here again, run: modelquad settings repo inherit")
 
 
-# --------------------------------------------------------------- guidance
-
-#: The one advisory line per offer mode, when it differs from the global one.
-ADVICE = {
-    PROACTIVE: ("ModelQuad: In this repository, you may ask Codex on your own; "
-                "Claude Code still asks the user each time."),
-    OFFER: ("ModelQuad: In this repository, offer Codex in one short sentence when it would "
-            "help, and call it only when the user agrees or asks."),
-    ON_REQUEST: ("ModelQuad: In this repository, do not offer Codex on your own; call it "
-                 "only when the user asks for it."),
-    OFF: "ModelQuad: In this repository, Codex is off. Do not offer or call it.",
-}
-BROKEN_FILE_ADVICE = (
-    "ModelQuad: In this repository, Codex is off until its .modelquad.toml is fixed. "
-    "Do not offer or call it.")
-
-
 REPO_FILE_NAME = ".modelquad.toml"  # repo_policy.FILE_NAME; a test checks they agree
 _REPO_FILE_OFF = "repo_policy_codex_off"  # repo_policy.CODEX_OFF; likewise
 _REPO_FILE_NO_KINDS = "repo_policy_kind_removed"  # repo_policy.KIND_REMOVED; likewise
@@ -407,50 +390,3 @@ def local_policy(working_directory):
     from .repo_policy import load_from_root
 
     return load_from_root(root)
-
-
-def advice_line(working_directory, *, preferences: Path | None = None) -> str | None:
-    """The SessionStart line for this repository, or None when it matches the default.
-
-    Reads only ``preferences.json``, this installation's id (only when a
-    per-repo entry exists), the ``.git`` pointer files and the repository's
-    ``.modelquad.toml``. Never starts a process and never writes. The file is
-    looked for in the nearest folder holding ``.git`` (the walk the gates use
-    when Git cannot answer), so no Git process is needed here.
-    """
-    from .adapters.server_instructions import _read_preferences, read_proactive
-
-    if local_reason(working_directory) is not None:
-        return None  # A network share or a device folder is never opened.
-    directory = Path(working_directory)
-    payload = _read_preferences(_preferences_path(preferences))
-    global_proactive = read_proactive(_preferences_path(preferences))
-    modes = _stored(payload)
-    user_mode = read_mode(directory, modes=modes) if modes else None
-    policy = local_policy(directory)
-    result = effective(global_proactive=global_proactive, user_mode=user_mode, policy=policy)
-    if result.refusal is not None and result.refusal not in (USER_CODEX_OFF, _REPO_FILE_OFF,
-                                                                _REPO_FILE_NO_KINDS):
-        return BROKEN_FILE_ADVICE
-    default = PROACTIVE if global_proactive else OFFER
-    if result.offer == default:
-        return None
-    if result.refusal is None and _standing_grant_covers(directory, preferences):
-        # The user's standing grant: Claude consults Codex on its own here, as
-        # the server's instructions say. A line telling it to offer, to wait
-        # to be asked, or that each call is prompted would contradict them.
-        return None
-    return ADVICE[result.offer]
-
-
-def _standing_grant_covers(directory, preferences: Path | None) -> bool:
-    import os
-
-    if os.environ.get("MODELQUAD_WORKER") == "1":
-        return False
-    try:
-        from . import grant
-
-        return grant.allows(directory, path=preferences)
-    except Exception:  # noqa: BLE001 -- unreadable: no grant
-        return False

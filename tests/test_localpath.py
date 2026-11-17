@@ -186,7 +186,6 @@ def test_the_gate_and_the_repository_readers_never_open_a_share(share_tripwire):
     assert rp.load(REMOTE[0]).refusal == rp.UNREADABLE
     assert rs.local_policy(REMOTE[0]).refusal == rp.UNREADABLE
     assert rs.repo_key(REMOTE[0], "0" * 32) is None
-    assert rs.advice_line(REMOTE[0]) is None
     assert share_tripwire == []
 
 

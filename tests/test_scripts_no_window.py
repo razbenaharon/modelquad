@@ -328,8 +328,7 @@ def test_hidden_spawn_has_no_console_window():
 #: windows" had become the last remaining source of console windows, and it
 #: failed the criterion on the criterion's own terms.
 #:
-#: The invariant it proves is real and stays runnable, in the style
-#: ``tests/test_acceptance_live.py`` already uses for a test with a cost:
+#: The invariant it proves is real and stays runnable as an opt-in:
 #:
 #:     MODELQUAD_CONSOLE_ALLOCATION_CONTROL=1 python -m pytest \
 #:         tests/test_scripts_no_window.py -k console_less_parent
@@ -357,8 +356,8 @@ def test_a_console_less_parent_gets_a_window_without_the_flag_and_none_with_it(t
     -- which is where this repository is actually developed -- the control
     silently does nothing and the test proves only half of what it reads as
     proving. Here the parent is launched ``DETACHED_PROCESS`` and therefore has
-    no console at all, which is what a detached job runner, an MCP host and a
-    service really are. Under that parent the unflagged child MUST report a
+    no console at all, which is what an MCP host really
+    is. Under that parent the unflagged child MUST report a
     console window and the flagged one MUST report none, so both halves are
     load-bearing on every machine.
 

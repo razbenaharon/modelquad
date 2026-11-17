@@ -7,7 +7,7 @@ writes and the MCP registration is one of the first, so this sequence is real
 and was demonstrated live:
 
 1. the registration is replaced -- the user's original is now overwritten;
-2. a later write in the same install (CLAUDE.md, settings.json) fails;
+2. a later step in the same install fails;
 3. the install transaction (``install_with_registration``) catches the failure
    and retires the recovery record;
 4. the install fails.
@@ -66,7 +66,7 @@ def _fail_after_the_registration_write(monkeypatch) -> None:
     """
 
     def explode(*a, **k):
-        raise OSError("CLAUDE.md is not writable")
+        raise OSError("a later install step failed")
 
     monkeypatch.setattr(
         "modelquad.adapters.claude_adapter.pending_action", explode
@@ -216,7 +216,7 @@ def test_an_unreadable_registration_after_failure_keeps_the_record(
 
     def explode(*a, **k):
         state["install_failed"] = True
-        raise OSError("CLAUDE.md is not writable")
+        raise OSError("a later install step failed")
 
     monkeypatch.setattr(
         "modelquad.adapters.claude_adapter.pending_action", explode

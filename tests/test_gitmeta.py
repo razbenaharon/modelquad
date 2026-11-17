@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Shared synthetic repositories and metadata Git hardening."""
+"""The metadata Git call (repository root lookup) runs hardened and windowless."""
 
 import os
 import shutil

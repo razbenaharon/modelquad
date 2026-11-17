@@ -24,12 +24,11 @@ from modelquad.adapters.claude_adapter import ClaudeAdapter
 from modelquad.branding import MCP_SERVER_NAME
 
 
-#: The absolute launcher an installed ModelQuad registers. Repair's whole job
-#: is to move a stale registration onto this.
+#: A launcher different from the bare name, so a rewrite of ModelQuad's own
+#: entry is visible.
 INSTALLED_SHIM = "C:\\Users\\Someone\\AppData\\Local\\ModelQuad\\bin\\modelquad-mcp.cmd"
 
-#: What P0-A found live on 2026-08-26: a bare name that resolved through PATH
-#: to an editable checkout while the installed product used another database.
+#: A registration an earlier build or another copy left behind.
 STALE_BARE = "modelquad-mcp"
 STALE_EDITABLE = "C:\\Python311\\Scripts\\modelquad-mcp.exe"
 

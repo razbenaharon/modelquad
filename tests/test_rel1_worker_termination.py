@@ -202,7 +202,7 @@ def test_a_runner_that_says_nothing_about_the_worker_leaves_the_record_silent(tm
 # -- the words -------------------------------------------------------------------------
 
 
-def test_the_row_never_rounds_an_attempted_kill_up_to_a_finished_one():
+def test_the_description_never_rounds_an_attempted_kill_up_to_a_finished_one():
     assert describe_worker_termination({}) == ""
     assert describe_worker_termination({"worker_termination": {"pid": 7, "tree_kill": "ok", "confirmed_dead": True}}) == (
         "worker pid 7 terminated (tree kill ok; exit confirmed)")
@@ -239,7 +239,7 @@ def test_a_dead_direct_child_is_not_a_dead_tree():
     """`confirmed_dead` is read for the DIRECT CHILD only. Where the tree walk
     did not succeed -- POSIX has none, and on Windows taskkill can fail or hang
     -- the descendants are exactly the workers this work exists to stop, so the
-    row must say `timeout`, not `terminated`."""
+    result must say `timeout`, not `terminated`."""
 
     confirmed = {"pid": 7, "tree_kill": "ok", "confirmed_dead": True}
     assert worker_confirmed_dead({"worker_termination": confirmed}) is True

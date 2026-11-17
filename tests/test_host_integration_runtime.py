@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Host integrations launch the ModelQuad on PATH by its bare command names."""
+"""The Claude Code install launches ModelQuad by its bare command names, and
+removes the gate and status line that earlier builds wrote."""
 
 from __future__ import annotations
 
@@ -37,12 +38,6 @@ def force_installed(monkeypatch, local_appdata: Path) -> None:
     monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: False)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
-
-
-def scripts_which(tmp_path):
-    """A PATH on which pip put both console commands in one Scripts folder."""
-    scripts = tmp_path / "Python311" / "Scripts"
-    return lambda name: str(scripts / f"{name}.exe")
 
 
 def write_settings(home, payload):
@@ -175,35 +170,6 @@ def test_tolerant_split(command, expected):
     assert hostruntime.split_command(command) == expected
 
 
-def test_bare_registration_is_canonical_when_it_resolves(tmp_path):
-    """The normal pip install: the bare name resolves, so nothing is a finding."""
-    which = scripts_which(tmp_path)
-    for verdict in (
-        hostruntime.classify_cli_registration("modelquad hook-gate", which=which),
-        hostruntime.classify_registration("modelquad-mcp", which=which),
-    ):
-        assert verdict.canonical and not verdict.explicit and not verdict.reason
-    missing = hostruntime.classify_cli_registration("modelquad hook-gate", which=lambda _: None)
-    assert not missing.canonical and "not on this PATH" in missing.reason
-
-
-def test_an_absolute_registration_is_pinned_and_judged_without_a_lookup(tmp_path):
-    """A pinned path is reported, structurally: no PATH lookup may answer for it."""
-
-    def no_lookup(_name):
-        pytest.fail("an absolute registration must not consult PATH")
-
-    pinned = tmp_path / "Python311" / "Scripts" / "modelquad.exe"
-    verdict = hostruntime.classify_cli_registration(f'"{pinned.as_posix()}" hook-gate', which=no_lookup)
-    assert not verdict.canonical and verdict.explicit
-    assert "pinned" in verdict.reason and "'modelquad'" in verdict.reason
-    mcp = hostruntime.classify_registration(str(pinned.with_name("modelquad-mcp.exe")), which=no_lookup)
-    assert not mcp.canonical and mcp.explicit
-    blank = hostruntime.classify_cli_registration("   ", which=no_lookup)
-    assert not blank.canonical and blank.command == "   "
-    assert "No launch command" in blank.reason
-
-
 @pytest.mark.parametrize("payload", ["{", "[]", '{"statusLine": []}', '{"statusLine": {"command": 7}}'])
 def test_status_reader_tolerates_foreign_shapes(tmp_path, payload):
     """Malformed host settings must not crash the reader or be rewritten by the removal."""
@@ -309,7 +275,7 @@ def test_rendered_launcher_survives_posix_word_splitting(monkeypatch, tmp_path, 
 
     words = _bash_words(command)
     assert words == [executable.as_posix(), *arguments]
-    assert hostruntime._same_path(Path(words[0]), executable)
+    assert str(Path(words[0]).resolve()).casefold() == str(executable.resolve()).casefold()
     assert WINDOWS_SEPARATOR not in words[0]
     assert hostruntime.split_command(command) == (executable.as_posix(), tuple(arguments))
 
@@ -329,22 +295,6 @@ def test_rendered_launcher_survives_posix_word_splitting(monkeypatch, tmp_path, 
 def test_render_launcher_spellings(launcher, expected):
     """POSIX separators always; quotes only where whitespace makes them necessary."""
     assert hostruntime.render_launcher(launcher) == expected
-
-
-@pytest.mark.parametrize("arguments", [("hook-gate",), ("usage-hook", "claude")])
-def test_unexecutable_spelling_of_the_right_path_is_a_finding(tmp_path, arguments):
-    """A correct path bash cannot execute is not canonical."""
-    executable = _fake_exe(tmp_path, "Local")
-    which = lambda _: str(executable)
-    old = " ".join((str(executable), *arguments))
-    verdict = hostruntime.classify_cli_registration(old, which=which)
-    assert not verdict.canonical
-    if not any(character.isspace() for character in str(executable)):
-        assert "Windows separators" in verdict.reason and "bash" in verdict.reason
-        assert "fails open" in verdict.reason
-    good = hostruntime.render_launcher(str(executable), shell="bash") + " " + " ".join(arguments)
-    spelled = hostruntime.classify_cli_registration(good, which=which)
-    assert not spelled.canonical and "pinned" in spelled.reason, "a correct spelling is only pinned"
 
 
 def _git_bash() -> str | None:

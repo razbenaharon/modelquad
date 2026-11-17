@@ -58,8 +58,8 @@ def test_identity_record_with_wrong_shape_is_replaced(tmp_path):
 def test_concurrent_first_runs_leave_one_well_formed_identity(tmp_path):
     """The identity is minted by whichever process reads first.
 
-    A host hook, the CLI and the service can all take that first read at
-    once. Each writer stages in its own temp file, so the file on disk is
+    The review hook, the CLI and the MCP server can all take that first read
+    at once. Each writer stages in its own temp file, so the file on disk is
     always one complete record and no staging file is left behind; the
     losing processes used their own id for that one run only.
     """
@@ -98,7 +98,7 @@ def test_a_lost_first_run_race_adopts_the_winners_identity(tmp_path, monkeypatch
     """Windows refuses a replace onto a file being replaced or read at that instant.
 
     The loser of a first-run race must not raise out of ``installation_id``
-    (the host hook calls it on every status-line render); it adopts the record
+    (the review hook and the MCP server reach it); it adopts the record
     the winner wrote, so every later read agrees with the file.
     """
 

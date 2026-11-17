@@ -238,15 +238,6 @@ def test_install_and_uninstall_take_back_a_block_an_earlier_version_wrote(tmp_pa
     assert all(a.path.name != "CLAUDE.md" for a in repeated.actions)
 
 
-def test_server_instructions_omit_routing_business_logic():
-    from modelquad.adapters.server_instructions import server_instructions
-
-    for proactive in (False, True):
-        text = server_instructions(proactive)
-        for term in ("fit_weight", "usage_weight", "score", "0.75", "0.25", "subprocess"):
-            assert term not in text
-
-
 def test_claude_install_leaves_a_users_claude_md_byte_identical(tmp_path):
     target = tmp_path / "claude"
     target.mkdir()
@@ -391,7 +382,7 @@ def test_claude_install_writes_no_status_line(tmp_path):
 
 
 def _status_line_action(report, settings_path):
-    """The status line is the first settings.json action (then the startup reminder)."""
+    """The status line is the first settings.json action (then the removal of an earlier startup reminder)."""
     actions = [a for a in report.actions if Path(a.path) == settings_path]
     return actions[0]
 

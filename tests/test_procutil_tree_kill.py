@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """A timed-out worker must actually STOP.
 
-subprocess.run's timeout kills only the direct child; on Windows every
-provider CLI is a .cmd shim (cmd.exe -> node.exe), so the real worker
-survived a timeout and kept mutating the workspace unobserved (seen live in
-a live bootstrap run). run_with_tree_kill is the fix; these tests
-prove the tree dies and that executors default to it.
+subprocess.run's timeout kills only the direct child, so a worker's
+descendants (an npm launcher's node.exe, for one) would outlive it
+unobserved. run_with_tree_kill is the fix; these tests prove the tree dies
+and that the Codex executor defaults to it.
 
 `taskkill /T` walks parent pids, so it missed a grandchild whose
 parent had already exited and a child born while the kill ran -- and exited 0
@@ -776,7 +775,7 @@ def test_a_process_windows_started_outside_the_job_is_reported_after_a_normal_ex
 
 @windows_only
 def test_a_cancellation_after_the_worker_starts_but_before_the_wait_stops_it(dummy, pinned):
-    """`on_spawn` runs after the resume; Ctrl+C while it writes its row must
+    """`on_spawn` runs after the resume; Ctrl+C while it registers the worker must
     not leave the worker running with its job handle closed."""
 
     script, folder = dummy
