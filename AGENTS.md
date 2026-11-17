@@ -107,8 +107,9 @@ the instrument for developing it.
 
 Build a wheel for release or a hand check from a clean export
 (`git archive HEAD | tar -x -C <empty folder>`, then `pip wheel . --no-deps`
-there), not from a working checkout: a `build/` folder left by an earlier
-build puts modules that no longer exist in `src/` into the wheel.
+there), so that it holds the commit and not uncommitted edits. A `build/`
+folder left by an earlier build no longer adds removed modules to the wheel:
+`setup.py` empties `build/lib` first (`tests/test_wheel_packaging.py`).
 
 CI (`.github/workflows/windows-ci.yml`) installs the package non-editable on
 GitHub-hosted Windows and runs the suite against the installed distribution.

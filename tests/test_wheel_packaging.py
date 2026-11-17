@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import zipfile
 
 import pytest
 
@@ -83,7 +84,7 @@ def private_build_root(repo_root: Path, tmp_path: Path) -> Path:
     """
     root = tmp_path / "source"
     root.mkdir()
-    for name in ("pyproject.toml", "MANIFEST.in", "README.md", "LICENSE", "NOTICE", *SDIST_DOCUMENTS):
+    for name in ("pyproject.toml", "setup.py", "MANIFEST.in", "README.md", "LICENSE", "NOTICE", *SDIST_DOCUMENTS):
         shutil.copy2(repo_root / name, root / name)
     shutil.copytree(
         repo_root / "src",
@@ -225,3 +226,39 @@ def test_sdist_carries_the_documents_notice_and_readme_point_to(tmp_path):
         names = {name.split("/", 1)[1] for name in source.getnames() if "/" in name}
     for name in ("LICENSE", "NOTICE", "README.md", *SDIST_DOCUMENTS):
         assert name in names, f"{name} missing from the sdist"
+
+
+def _wheel_modules(wheel: Path) -> set[str]:
+    with zipfile.ZipFile(wheel) as archive:
+        return {name for name in archive.namelist() if name.startswith("modelquad/")}
+
+
+def test_a_leftover_build_folder_adds_nothing_to_the_wheel(tmp_path):
+    """A checkout that built an earlier version still has that version's
+    modules in ``build/lib``. setuptools makes the wheel from that folder
+    without emptying it, so the wheel of the reduced product carried modules
+    removed from ``src/`` (found 2026-11-17 in a hand-built wheel). setup.py
+    empties the folder first; the wheel holds what ``src/`` holds and no more.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    build_root = private_build_root(repo_root, tmp_path)
+    stale = build_root / "build" / "lib" / "modelquad"
+    (stale / "removed_package").mkdir(parents=True)
+    (stale / "removed_module.py").write_text("LEFTOVER = True\n", encoding="utf-8")
+    (stale / "removed_package" / "__init__.py").write_text("", encoding="utf-8")
+    (stale / "adapters" / "templates").mkdir(parents=True)
+    (stale / "adapters" / "templates" / "removed.json").write_text("{}", encoding="utf-8")
+
+    dist_dir = tmp_path / "dist"
+    _run([sys.executable, "setup.py", "-q", "bdist_wheel", "--dist-dir", str(dist_dir)],
+         cwd=build_root, env=env_without_the_source_tree())
+    wheels = list(dist_dir.glob("*.whl"))
+    assert len(wheels) == 1
+
+    source = build_root / "src"
+    expected = {path.relative_to(source).as_posix()
+                for path in (source / "modelquad").rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts}
+    shipped = _wheel_modules(wheels[0])
+    assert not {name for name in shipped if "removed" in name}
+    assert shipped == expected
