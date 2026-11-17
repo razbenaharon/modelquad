@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import re
 import sqlite3
@@ -35,7 +36,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 FILE_NAME = "review-ledger.db"
 MAX_CLAIM_CHARS = 300
 MAX_REASON_CHARS = 400
@@ -107,6 +108,21 @@ CREATE TABLE IF NOT EXISTS gate_events (
     session TEXT NOT NULL,
     event TEXT NOT NULL,
     files INTEGER
+);
+CREATE TABLE IF NOT EXISTS packages (
+    decision_id TEXT PRIMARY KEY,
+    package_id TEXT,
+    workspace TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    follows TEXT,
+    file_count INTEGER,
+    total_bytes INTEGER,
+    skipped_count INTEGER,
+    files_needed INTEGER,
+    model_calls INTEGER,
+    cached_input_tokens INTEGER,
+    reasoning_output_tokens INTEGER,
+    manifest TEXT
 );
 """
 
@@ -401,6 +417,57 @@ def _outcome(payload: dict) -> str:
         started=started if isinstance(started, bool) else None,
         delivered=isinstance(payload.get("output"), str) and bool(payload["output"].strip()),
         reason=reason if isinstance(reason, str) else None)
+
+
+MAX_MANIFEST_CHARS = 32_000
+
+
+def record_package(decision_id: str, manifest, *, working_directory, round_number: int = 0,
+                   follows: str | None = None, files_needed=(), usage=None,
+                   path: Path | None = None) -> None:
+    """Record what one call sent: the package manifest, its round and what it used.
+
+    The manifest holds relative paths, sizes, digest prefixes and skip
+    reasons only. A call that packed nothing (refused before the launch)
+    still gets its row, with no package id.
+    """
+    manifest = manifest if isinstance(manifest, dict) else {}
+    usage = usage if isinstance(usage, dict) else {}
+
+    def count(value):
+        return value if type(value) is int and 0 <= value < 10**10 else None
+
+    text = json.dumps(manifest, sort_keys=True, separators=(",", ":")) if manifest else None
+    if text is not None and len(text) > MAX_MANIFEST_CHARS:
+        text = None  # Counts and the id are kept; an oversized list is not.
+    conn = connect(path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO packages VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (decision_id, manifest.get("package_id"), workspace_id(working_directory),
+             int(round_number), follows if isinstance(follows, str) else None,
+             count(manifest.get("file_count")), count(manifest.get("total_bytes")),
+             len(manifest.get("skipped") or ()) if manifest else None,
+             len(tuple(files_needed or ())), count(usage.get("model_calls")),
+             count(usage.get("cached_input_tokens")), count(usage.get("reasoning_output_tokens")),
+             text))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def package_round(decision_id: str, working_directory, *, path: Path | None = None) -> int | None:
+    """The completion round of a recorded call in this folder; None when there is no such call."""
+    target = Path(path) if path is not None else ledger_path()
+    if not isinstance(decision_id, str) or not target.is_file():
+        return None
+    conn = connect(target)
+    try:
+        row = conn.execute("SELECT round FROM packages WHERE decision_id = ? AND workspace = ?",
+                           (decision_id, workspace_id(working_directory))).fetchone()
+    finally:
+        conn.close()
+    return None if row is None else int(row["round"])
 
 
 def record_run(payload: dict, *, working_directory, task_type, trigger, path: Path | None = None,

@@ -150,3 +150,73 @@ def lines(folder: Path, db_path) -> list[str]:
             "  Exclude a folder:              modelquad settings repo off [--project DIR]"
             " (documented in modelquad settings repo --help)"]
     return out
+
+
+# ------------------------------------------------------------ the status view
+
+
+def _switch_line() -> tuple[str, str]:
+    from . import switch
+
+    installed = _claude_installed()
+    if installed is False:
+        return "not_installed", ("1. ModelQuad in Claude Code: not installed "
+                                 "(run modelquad install claude, or install the plugin).")
+    if installed is None:
+        return "unknown", "1. ModelQuad in Claude Code: unknown (whether it is installed could not be read)."
+    state = switch.enabled()
+    if state is None:
+        return "unknown", "1. ModelQuad in Claude Code: unknown (its settings could not be read)."
+    if state is False:
+        return "off", "1. ModelQuad in Claude Code: off (you turned it off: no Codex call starts)."
+    return "on", "1. ModelQuad in Claude Code: on."
+
+
+def _folder_rules(folder: Path) -> dict:
+    """What this folder's own rules allow, read now. Unknown stays unknown."""
+    from . import repo_policy
+
+    try:
+        policy = repo_policy.load(folder)
+    except Exception:  # noqa: BLE001 -- unknown, never a default
+        return {"state": "unknown"}
+    if policy.refusal is not None:
+        return {"state": "refused", "reason": policy.refusal,
+                "message": repo_policy.message(policy.refusal, policy)}
+    return {"state": "builtin" if policy.source == repo_policy.BUILTIN.source else "file",
+            **policy.facts()}
+
+
+def view(folder: Path | None) -> dict:
+    """The settings as data: the switch, the mode, this folder's rules and the history line."""
+    state, switch_line = _switch_line()
+    data: dict = {"modelquad": state, "lines": [switch_line]}
+    if folder is None:
+        data["lines"].append("2. Mode: pass this session's project folder to see its mode and rules.")
+        return data
+    mode_lines, own_grant = _mode_lines(Path(folder))
+    data["own_grant"] = own_grant
+    data["folder_rules"] = _folder_rules(Path(folder))
+    data["lines"] += [*mode_lines, _history_line(Path(folder))]
+    rules = data["folder_rules"]
+    if rules["state"] == "refused":
+        data["lines"].append("   " + rules["message"])
+    elif rules["state"] == "file":
+        data["lines"].append("   This repository's .modelquad.toml sets its own limits for Codex here.")
+    return data
+
+
+def lines_from(data: dict, folder: Path | None = None) -> list[str]:
+    """What ``modelquad settings`` and ``modelquad_status`` print for a view."""
+    out = ["ModelQuad settings", *data["lines"], "",
+           "To change them (pick it in /modelquad:settings, or run it in your own terminal):",
+           "  ModelQuad off:                 modelquad off",
+           "  ModelQuad on:                  modelquad on",
+           "  Automatic in every folder:     modelquad settings auto on --global --yes"
+           " (it shows what that means first)",
+           "  Approve each call:             modelquad settings auto off --global"]
+    if data.get("own_grant") and folder is not None:
+        out.append(f'                                 and modelquad settings auto off --project "{folder}"')
+    out += ["  History in detail:             modelquad review report",
+            "  Exclude a folder:              modelquad settings repo off [--project DIR]"]
+    return out
