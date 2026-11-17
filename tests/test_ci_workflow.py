@@ -11,9 +11,7 @@ these are not redundant with "the file parses".
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -135,91 +133,37 @@ def test_the_suite_runs_on_the_oldest_and_newest_supported_python(job: dict):
     assert "3.11" not in str(job.get("continue-on-error", False))
 
 
-def _dco_script(workflow: dict) -> str:
-    return workflow["jobs"]["dco"]["steps"][1]["run"]
-
-
-def test_every_new_commit_must_carry_a_dco_sign_off(workflow: dict):
+def test_the_dco_job_runs_the_checked_in_script_with_the_events_facts(workflow: dict):
+    """The rules live in .github/scripts/dco_check.py (tests/test_dco_check.py).
+    The job hands it what GitHub reports about the event, as data in the
+    environment: the head repository, the account that pushed, the range."""
     job = workflow["jobs"]["dco"]
-    checkout = job["steps"][0]
+    checkout, step = job["steps"]
     assert checkout["with"]["fetch-depth"] == 0, "the commit range needs history"
-    script = _dco_script(workflow)
-    assert "%ae" in script
-    assert "git rev-list --no-merges" in script
-    assert "exit $missing" in script
+    assert step["run"].strip() == "python3 .github/scripts/dco_check.py"
+    assert "${{" not in step["run"]
+    assert (WORKFLOW.parents[1] / "scripts" / "dco_check.py").is_file()
+    assert step["env"] == {
+        "EVENT_NAME": "${{ github.event_name }}",
+        "ACTOR_ID": "${{ github.actor_id }}",
+        "PR_BASE": "${{ github.event.pull_request.base.sha }}",
+        "PR_HEAD": "${{ github.event.pull_request.head.sha }}",
+        "PR_HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
+        "PUSH_BEFORE": "${{ github.event.before }}",
+        "PUSH_AFTER": "${{ github.sha }}",
+        "GH_TOKEN": "${{ github.token }}",
+        "REPO": "${{ github.repository }}",
+    }
+    # The lookup needs read access only.
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "permissions" not in job
 
 
-def test_the_dco_check_compares_the_email_as_a_fixed_string(workflow: dict):
-    """GitHub noreply addresses (``123+user@users.noreply.github.com``) carry
-    a ``+``. Interpolated into ``grep -E`` it is a quantifier, and every
-    noreply sign-off failed. The e-mail must be matched literally, against
-    the parsed Signed-off-by trailers only."""
-    script = _dco_script(workflow)
-    assert "%(trailers:key=Signed-off-by,valueonly)" in script
-    assert 'grep -Fqi -- "<$email>"' in script
-    assert "grep -qiE" not in script and "grep -E" not in script
-
-
-def test_a_failed_rev_list_fails_the_dco_job(workflow: dict):
-    """An unreadable range must not become an empty loop that passes."""
-    script = _dco_script(workflow)
-    assert "set -euo pipefail" in script
-    assert re.search(r'if ! shas=\$\(git rev-list --no-merges "\$range"\); then\s+echo[^\n]*\n\s+exit 1', script)
-    assert "for sha in $shas" in script
-    # The root-commit case still checks the commit alone.
-    assert 'range="$PUSH_AFTER"' in script
-
-
-NOREPLY = "181751257+razbenaharon@users.noreply.github.com"
-
-
-def _git(repo: Path, *args: str, env: dict[str, str]) -> str:
-    completed = subprocess.run(
-        ["git", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=", *args],
-        cwd=repo, env=env, capture_output=True, text=True, check=True, **no_window_kwargs(),
-    )
-    return completed.stdout
-
-
-@pytest.mark.parametrize("signed_as, accepted", [
-    (f"Raz Ben Aharon <{NOREPLY}>", True),
-    (f"Raz Ben Aharon <{NOREPLY.upper()}>", True),
-    # The `+` is literal: dropping it, or reading it as "one or more", fails.
-    ("Raz Ben Aharon <181751257razbenaharon@users.noreply.github.com>", False),
-    ("Raz Ben Aharon <1817512577+razbenaharon@users.noreply.github.com>", False),
-    ("Someone Else <someone@example.com>", False),
-])
-def test_the_dco_check_accepts_a_noreply_sign_off(tmp_path: Path, signed_as: str, accepted: bool):
-    """The workflow's comparison, run against a real commit by a noreply author.
-
-    The trailer read is the workflow's own ``git log`` format; the match is
-    ``grep -Fqi`` -- a case-insensitive fixed-string search -- reproduced here
-    as a lower-cased substring test.
-    """
-    if shutil.which("git") is None:
-        pytest.skip("git is not installed")
-    env = dict(os.environ)
-    env.update({
-        "GIT_AUTHOR_NAME": "Raz Ben Aharon", "GIT_AUTHOR_EMAIL": NOREPLY,
-        "GIT_COMMITTER_NAME": "Raz Ben Aharon", "GIT_COMMITTER_EMAIL": NOREPLY,
-        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
-    })
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-q", env=env)
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "change",
-         "-m", "A body line.", "-m", f"Signed-off-by: {signed_as}", env=env)
-
-    email = _git(repo, "show", "-s", "--format=%ae", "HEAD", env=env).strip()
-    assert email == NOREPLY
-    trailers = _git(repo, "log", "-1", "--format=%(trailers:key=Signed-off-by,valueonly)",
-                    "HEAD", env=env)
-    assert (f"<{email}>".lower() in trailers.lower()) is accepted
-
-    if accepted:
-        # The pattern the workflow used to build never matched this address.
-        assert not re.search(rf"^Signed-off-by: .+ <{email}>\s*$", f"Signed-off-by: {signed_as}",
-                             re.IGNORECASE | re.MULTILINE)
+def test_the_dco_job_never_runs_with_a_fork_given_the_repositorys_token(workflow: dict):
+    """`pull_request_target` would run with write access next to a fork's
+    code. The check reads commit metadata and needs nothing of the kind."""
+    triggers = workflow.get("on", workflow.get(True))
+    assert "pull_request_target" not in triggers
 
 
 def test_the_secret_scan_reads_the_whole_history(workflow: dict):
@@ -258,24 +202,6 @@ def test_a_private_repository_runs_only_on_manual_dispatch(workflow: dict):
         condition = definition.get("if", "")
         assert "github.event.repository.private" in condition, name
         assert "workflow_dispatch" in condition, name
-
-
-def test_the_dco_skip_needs_more_than_dependabots_author_email(workflow: dict):
-    """Anyone can set an author e-mail. A Dependabot commit is skipped only
-    when GitHub is also the committer and GitHub reports the signature
-    verified; a failed lookup reads as unverified."""
-    script = _dco_script(workflow)
-    skip = script[script.index("dependabot[bot]"):script.index("continue")]
-    assert "%ce" in script
-    assert '[ "$committer" = "noreply@github.com" ]' in skip
-    assert "--jq '.commit.verification.verified' || echo false" in skip
-    assert '[ "$verified" = "true" ]' in skip
-    env = workflow["jobs"]["dco"]["steps"][1]["env"]
-    assert env["GH_TOKEN"] == "${{ github.token }}"
-    assert env["REPO"] == "${{ github.repository }}"
-    # The lookup needs read access only.
-    assert workflow["permissions"] == {"contents": "read"}
-    assert "permissions" not in workflow["jobs"]["dco"]
 
 
 def test_a_failed_advisory_leg_is_reported_on_the_summary(job: dict):

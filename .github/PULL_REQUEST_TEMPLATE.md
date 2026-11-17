@@ -20,7 +20,7 @@ Windows version:
 
 ## Checklist
 
-- [ ] Every commit is signed off (`git commit -s`), as described in CONTRIBUTING.md (DCO 1.1).
+- [ ] Every commit of mine is signed off (`git commit -s`), as described in CONTRIBUTING.md (DCO 1.1). The maintainer's own commits need none.
 - [ ] The change does not weaken the safety invariants in AGENTS.md.
 - [ ] A new host or provider was agreed in an issue first, or this change adds none.
 - [ ] Documentation is updated, and describes only what the code does today.

@@ -187,6 +187,9 @@ telemetry. See [PRIVACY.md](PRIVACY.md).
 - A worker's own account is never sufficient: a clean exit code is not
   success without a completion envelope.
 - Prefer the smallest change that is honest.
+- Never add a `Signed-off-by` line, in anyone's name. The maintainer's own
+  commits need none; an outside contributor signs their own
+  ([CONTRIBUTING.md](CONTRIBUTING.md), `.github/scripts/dco_check.py`).
 - Do not add a second backend, a provider registry or code for a future
   feature. A second backend would implement `review.ReviewExecutor`; until one
   is decided, there is one.

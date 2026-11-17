@@ -94,8 +94,8 @@ it.
 
 ## Sign your commits (DCO)
 
-This project uses the Developer Certificate of Origin, version 1.1:
-https://developercertificate.org/
+Contributions from outside the project use the Developer Certificate of
+Origin, version 1.1: https://developercertificate.org/
 
 By signing off a commit you certify that you wrote the change, or otherwise
 have the right to submit it under the project's license, as the DCO
@@ -112,9 +112,30 @@ To sign off commits you already made, use `git commit --amend -s` for the
 last one, or `git rebase --signoff` for several.
 
 AI coding tools must not add a `Signed-off-by` line: only a human can certify
-the DCO. A commit an AI tool helped with should carry an `Assisted-by:` trailer
-naming the tool (for example `Assisted-by: Claude Code`), and the human
-submitting it signs off.
+the DCO. A commit an AI tool helped with should carry an `Assisted-by:` or
+`Co-authored-by:` trailer naming the tool (for example
+`Assisted-by: Claude Code`), and the human submitting it signs off.
+
+### The maintainer's own commits
+
+The maintainer's own commits need no sign-off. That covers work the
+maintainer did with an AI tool, which the maintainer answers for. It does
+not cover anyone else's work: a commit by another person needs that
+person's sign-off wherever it arrives, including inside a pull request the
+maintainer opens, and a person named in a `Co-authored-by:` trailer needs a
+sign-off of their own.
+
+CI (`.github/scripts/dco_check.py`) does not take a commit's name or e-mail
+as proof of whose it is, and does not go by who opened the pull request. A
+commit counts as the maintainer's own only when GitHub reports all of these:
+it came in on a branch of this repository, not a fork; the maintainer's
+account pushed it or started the run; and GitHub attributes the commit's
+author and committer to the maintainer's account. Every commit in a pull
+request from a fork needs a sign-off, whatever its author field says. When
+GitHub cannot be asked, the sign-off is required.
+
+The check cannot see text copied into a commit the maintainer authored. The
+maintainer brings outside work in as that person's own signed-off commit.
 
 ## License
 
