@@ -29,7 +29,7 @@ From a checkout, in PowerShell:
 
     python -m venv .venv
     .venv\Scripts\activate
-    pip install -e ".[dev,service]"
+    pip install -e ".[dev]"
 
 The pre-flight script sets the import path itself and prints every command
 it runs:
@@ -51,14 +51,14 @@ import path:
 
     python -m venv .venv-ci
     .venv-ci\Scripts\activate
-    pip install ".[dev,service]"
+    pip install ".[dev]"
     pytest -q -n auto -m "not serial_timing"
     pytest -q -n 0 -m serial_timing
 
 More about the scripts is in [scripts/README.md](scripts/README.md).
 
 Do not use ModelQuad itself while developing this repository: do not ask it
-which tool fits a task and do not call `modelquad_*` MCP tools. The tool under
+for a Codex review of this code and do not call `modelquad_*` MCP tools. The tool under
 development is not the tool for developing it.
 
 ## Safety invariants
@@ -72,7 +72,7 @@ standing grant themselves (no MCP tool can, and Claude is told never to). A chan
 you think one is wrong, open an issue.
 
 Privacy rules live in `src/modelquad/privacy.py`. Do not add tool output
-or absolute paths to history or metadata; a stored worker command names only
+or absolute paths to the review ledger or metadata; a stored worker command names only
 the executable and its flags. ModelQuad has no telemetry.
 
 ## Pull requests

@@ -4,9 +4,67 @@
 
 The first open-source release.
 
+### One review flow
+
+ModelQuad is cut down to one flow: Claude Code asks your own Codex CLI for a
+read-only review of a named context package, and ModelQuad records what was
+sent and what Codex found.
+
+Removed:
+
+- **The local service and background work.** The loopback HTTP service and
+  its Task Scheduler task, background jobs and the job runner, answers kept
+  for later collection (`pending-output`), and the `SessionStart` hook that
+  reported them.
+- **Quota.** The status line, `modelquad usage-hook`, the `usage-*.json` and
+  `quota-pace.json` files, the Codex app-server quota read and
+  `MODELQUAD_CODEX_QUOTA_REFRESH`, the desktop quota band, and the notes when
+  Claude is near its limit.
+- **Handoff and division of work.** `modelquad_handoff`, `/modelquad:handoff`
+  and the handoff window; `modelquad_split`, `/modelquad:split`, declared
+  plans and `modelquad settings plan`; the quota command.
+- **The history database.** `modelquad.db` and the activity tools.
+- **Commands.** `modelquad onboard`, `repair`, `state`, `status`, `advise`,
+  `network`, `tools --fix-path`, `integrations on|off` and
+  `host connect|disconnect`. The `modelquad_status` tool stays.
+- **Other reads.** Codex's `config.toml` and repository notes are no longer
+  read.
+
+Added:
+
+- **Package preview.** `modelquad_review_package` and
+  `modelquad review package` show the context package: each file with its
+  size as sent, what is left out and why, the limits, and a package id.
+  Showing it starts nothing and sends nothing.
+- **Package id binding.** `modelquad_delegate` takes a `package_id` and sends
+  exactly that package or nothing.
+- **Completion rounds.** When Codex says it needed files it was not given,
+  nothing is added by itself. A call with `follows` sends the larger package
+  after you agree, at most two rounds per review.
+- **One switch.** `modelquad off` stops every Codex call on this computer and
+  quiets the hooks; `modelquad on` turns ModelQuad back on. An earlier build's
+  disconnect or pause still counts as off until you set the switch.
+- **A short `doctor`.** Five checks, each with what to do next: Windows, the
+  Codex CLI, the connection to Claude Code, your settings and the current
+  folder's rules.
+- **Review ledger schema 3.** A `packages` table keeps each call's package id,
+  completion round, counts and manifest (relative paths, sizes, digest
+  prefixes, the reasons files were left out). No file contents, no task text,
+  no full answer.
+
+Stays: Claude Code's approval prompt or the standing grant on every call, the
+review reminder and gates (plugin only), repository rules and
+per-repository settings, the secret screening, the read-only Codex run with
+its tools switched off, the review ledger and report, and install and
+uninstall, which also take back what earlier builds wrote. Files earlier
+builds kept are not read, written or deleted; `modelquad privacy` lists them.
+The core dependencies are `mcp`, `pydantic` and `anyio`, and `pip install .`
+is the install.
+
+### Changes
+
 - **Claude Code plugin.** ModelQuad installs as a Claude Code plugin
-  (`plugin/`): the MCP server, seven skills, the startup reminder, the review
-  hooks and, in the desktop app, a band with Codex's quota. See
+  (`plugin/`): the MCP server, four skills and the review hooks. See
   [docs/PLUGIN.md](docs/PLUGIN.md).
 - **Claude decides when to ask Codex.** By default Claude consults Codex at
   named moments: before a large, architectural or sensitive change, when a
@@ -31,13 +89,6 @@ The first open-source release.
   `review-ledger.db`. `modelquad review report` separates findings confirmed
   by a test, a reproduction, CI or your own verdict from those Claude only
   agreed with.
-- **Division of work.** `modelquad_split` proposes who takes each step of a
-  task; Codex takes only read-only steps. When Claude is near its limit and
-  Codex has room, a medium or large read-only step may be proposed for Codex
-  (`claude_near_limit`), and its calls are counted under the `split_quota`
-  trigger. The proposal starts nothing. Under the standing grant the reply
-  says that each Codex step runs without a prompt, and `asks_user` is false;
-  without the grant each step still shows Claude Code's approval prompt.
 - **Settings inside Claude Code.** `/modelquad:settings` shows whether
   ModelQuad is on, whether Codex calls are automatic or approved one by one,
   and the history, and changes only what you pick; `modelquad settings` shows
@@ -56,19 +107,13 @@ The first open-source release.
   in Codex's event stream is of a known inert kind; an item of any other
   kind, on any event, withholds it. Reading the completion report takes
   linear time on any input.
-- **Quota readings.** A reading stamped in the future, or one that is not a
-  finite number, reads unknown. The status line, `modelquad status`,
-  `modelquad_status` and the split reply show the same figure for the same
-  reading, and a lower figure never replaces a higher one inside one window.
-- **One count of what happened.** The review report, the settings view, the
-  split summary and the activity list use one definition of answered,
-  withheld, refused and not started. A call that never started says why
-  (a missing file, a folder that does not exist, an unknown model) and is
-  not counted as a Codex call.
+- **One count of what happened.** The review report and the settings view
+  use one definition of answered, withheld, refused and not started. A call
+  that never started says why (a missing file, a folder that does not exist,
+  an unknown model) and is not counted as a Codex call.
 - **Review ledger.** `modelquad review report --findings` lists decisions and
   findings with their ids. Your verdict still outranks Claude's, and a fix
-  Claude records later on a finding you confirmed is kept. Answers collected
-  from background jobs are recorded too.
+  Claude records later on a finding you confirmed is kept.
 - **The grant.** With a standing grant Claude consults Codex on its own even
   where `offer-only` or the repository's `on_request` is set (only `off`
   stops it); a call without a prompt must stay inside the folder the session
@@ -78,9 +123,6 @@ The first open-source release.
   escape is written back unchanged instead of stopping half-way; uninstall
   restores a displaced entry after a plugin switch and leaves a `modelquad`
   entry that is not ModelQuad's own in place.
-- **Saved answers.** A clock that once ran ahead no longer expires new
-  answers early, one damaged answer no longer blocks the others, and
-  `modelquad jobs clear --yes` deletes them all.
 - **Release.** Publishing runs only when started by hand with a typed
   confirmation, from a version tag on `main` whose CI run passed.
 - **Claude never turns a grant back on.** When a call is refused because the
@@ -90,3 +132,18 @@ The first open-source release.
   sends, with credentials redacted, and runs with Codex's agents switched
   off (`agents.enabled=false`), so its collaboration tools are not offered
   to the model.
+
+### Removed before release
+
+These were in earlier 0.4.0 builds and are gone from this one (see "One
+review flow" above):
+
+- **Division of work.** `modelquad_split` proposed who takes each step of a
+  task, including a read-only step for Codex when Claude was near its limit
+  (the `split_quota` trigger).
+- **Quota readings.** The status line, `modelquad status`, `modelquad_status`
+  and the split reply showed Codex's and Claude's quota windows.
+- **The startup reminder and the quota band** in the plugin.
+- **Saved answers.** Answers of background jobs waited in the state folder
+  for up to 7 days, and `modelquad jobs clear --yes` deleted them; the review
+  ledger also recorded answers collected from background jobs.
