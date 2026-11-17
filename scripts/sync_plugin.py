@@ -29,10 +29,7 @@ LEGAL_FILES = ("LICENSE", "NOTICE")
 SKILLS = {
     "modelquad": "guide",
     "modelquad-review": "review",
-    "modelquad-handoff": "handoff",
-    "modelquad-quota": "quota",
     "modelquad-setup": "setup",
-    "modelquad-split": "split",
     "modelquad-settings": "settings",
 }
 

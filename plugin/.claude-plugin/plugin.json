@@ -1,12 +1,16 @@
 {
   "name": "modelquad",
   "version": "0.4.0",
-  "description": "Read-only Codex second opinions inside Claude Code: the ModelQuad MCP server, its commands, its reminder, and Codex's quota above the prompt in the desktop app. Needs the modelquad package installed with pip. The terminal status line comes from `modelquad install claude --plugin`. Not affiliated with Anthropic or OpenAI.",
+  "description": "A controlled, read-only Codex review inside Claude Code: the ModelQuad MCP server, its commands and its review reminder. Codex gets only the files you can see listed, and each review is recorded. Needs the modelquad package installed with pip. Not affiliated with Anthropic or OpenAI.",
   "author": {
     "name": "Raz Ben Aharon"
   },
   "homepage": "https://modelquad.com",
   "repository": "https://github.com/razbenaharon/modelquad",
   "license": "Apache-2.0",
-  "keywords": ["codex", "second-opinion", "review", "quota"]
+  "keywords": [
+    "codex",
+    "second-opinion",
+    "review"
+  ]
 }

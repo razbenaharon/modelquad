@@ -49,9 +49,11 @@ _MCP_KEY_PATH = ("mcpServers", MCP_SERVER_NAME)
 _SKILL_DIR = PRODUCT_SLUG
 # Commands only the user starts (``disable-model-invocation: true``). Each
 # still reaches Codex only through a tool Claude Code asks about.
-_COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("review", "handoff", "quota", "setup", "split",
-                                                                     "settings"))
+_COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("review", "setup", "settings"))
 _SKILL_DIRS = (_SKILL_DIR, *_COMMAND_SKILL_DIRS)
+# Commands earlier builds installed for features this build no longer has.
+# Install and uninstall remove a copy that carries ModelQuad's mark.
+_RETIRED_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("handoff", "quota", "split"))
 # Command skills sit in folders a user could also choose, so each copy carries
 # this line in its frontmatter; install and uninstall touch only a file that
 # has it.
@@ -267,9 +269,16 @@ def _remove_skills(
         name: _remove_command_skill(
             destination / "skills" / name / "SKILL.md", dry_run=dry_run, installed=installed.get(name),
         )
-        for name in _COMMAND_SKILL_DIRS
+        for name in (*_COMMAND_SKILL_DIRS, *_RETIRED_SKILL_DIRS)
     })
     return skills
+
+
+def _remove_retired_skills(destination: Path, *, dry_run: bool) -> list[FileAction]:
+    """Take back the command skills of features this build no longer has."""
+
+    return [_remove_command_skill(destination / "skills" / name / "SKILL.md", dry_run=dry_run)
+            for name in _RETIRED_SKILL_DIRS]
 
 
 def _has_home_policy_block(path: Path) -> bool:
@@ -563,6 +572,7 @@ class ClaudeAdapter:
             # The command skills come last so earlier report positions stay put.
             *(skills[name].action(skill_changes[name], dry_run=dry_run)
               for name in _COMMAND_SKILL_DIRS),
+            *_remove_retired_skills(destination, dry_run=dry_run),
         ]
         return InstallReport(self.name, dry_run, tuple(actions))
 
@@ -607,7 +617,7 @@ class ClaudeAdapter:
             *_timeout_action(settings, timeout_change, retire, dry_run=dry_run),
             pending_action(settings, pending_change, dry_run=dry_run),
             *(settings.action(change, dry_run=dry_run) for change in gates),
-            *(skills[name] for name in _COMMAND_SKILL_DIRS),
+            *(skills[name] for name in (*_COMMAND_SKILL_DIRS, *_RETIRED_SKILL_DIRS)),
         ]
         return InstallReport(self.name, dry_run, tuple(actions))
 
@@ -644,7 +654,7 @@ class ClaudeAdapter:
             *_timeout_action(settings, timeout_change, retire, dry_run=dry_run),
             pending_action(settings, pending_change, dry_run=dry_run),
             *(settings.action(change, dry_run=dry_run) for change in gates),
-            *(skills[name] for name in _COMMAND_SKILL_DIRS),
+            *(skills[name] for name in (*_COMMAND_SKILL_DIRS, *_RETIRED_SKILL_DIRS)),
         ]
         return InstallReport(self.name, dry_run, tuple(actions))
 

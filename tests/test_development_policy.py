@@ -240,7 +240,7 @@ def test_public_text_uses_none_of_the_banned_phrases():
         ("README.md", "It helps you save your Claude\nquota.\n", "save quota or usage"),
         ("PRIVACY.md", "Combine both of your subscriptions.\n", "combine or pool subscriptions"),
         ("docs/GUIDE.md", "A safe second opinion.\n", "safe"),
-        ("plugin/skills/split/SKILL.md", "Never hit a limit again.\n", "beat or bypass a limit"),
+        ("plugin/skills/review/SKILL.md", "Never hit a limit again.\n", "beat or bypass a limit"),
         ("src/modelquad/adapters/templates/claude/skills/modelquad/SKILL.md",
          "Unlimited reviews.\n", "unlimited"),
         ("README.md", "כלי רשמי לעבודה.\n", "רשמי"),
@@ -248,14 +248,13 @@ def test_public_text_uses_none_of_the_banned_phrases():
         ("src/modelquad/adapters/server_instructions.py",
          '_INTRO = (\n    "ModelQuad is an "\n    "auto-switch for your plans."\n)\n', "auto-switch"),
         # Code people and Claude read: string literals, read with ast.
-        ("src/modelquad/mcp/presentation.py",
+        ("src/modelquad/review.py",
          'def line():\n    return {"note": "A safe second opinion."}\n', "safe"),
         ("src/modelquad/cli.py", 'HELP = f"Use the official {name} CLI."\n', "official"),
         ("src/modelquad/execution/noshell.py",
          '_GUIDANCE = {"x": ("Open it "\n    "securely.")}\n', "secure"),
         ("src/modelquad/mcp/server.py",
          'def modelquad_status():\n    """Shows the router state."""\n', "route, router, routing"),
-        ("plugin/hooks/quota-band.tsx", 'const NOTE = "Never hit a limit again";\n', "beat or bypass a limit"),
     ],
 )
 def test_the_docs_check_fails_on_a_planted_banned_phrase(tmp_path, capsys, relative, text, label):
@@ -286,8 +285,7 @@ def test_code_identifiers_and_developer_docstrings_pass(tmp_path):
     """In code, only text a reader sees is scanned.
 
     A literal without a space is an identifier, key or code; a docstring is
-    for developers unless it is a `modelquad_*` tool's description; and an
-    allow-listed stored value passes only where it is quoted as code.
+    for developers unless it is a `modelquad_*` tool's description.
     """
     source = (
         '"""Module docstring about the router."""\n'
@@ -295,7 +293,7 @@ def test_code_identifiers_and_developer_docstrings_pass(tmp_path):
         'KIND = "safe"\n'
         'def _helper():\n'
         '    """Internal: the routing record."""\n'
-        '    return "`kind` is \\"routing\\" or \\"execution\\"; try \'routing:7\'."\n'
+        '    return "`kind` names the record."\n'
     )
     module = _fresh_check(_tree(tmp_path, {"src/modelquad/mcp/server.py": source}))
     assert module._code_texts(), "the wording guard read no code strings"
@@ -309,7 +307,7 @@ def test_code_identifiers_and_developer_docstrings_pass(tmp_path):
 
 def test_the_allowed_identifiers_stay_tiny():
     module = _fresh_check(REPO_ROOT)
-    assert module.BANNED_PHRASE_ALLOWED_IDENTIFIERS <= {"routing"}
+    assert module.BANNED_PHRASE_ALLOWED_IDENTIFIERS == frozenset()
     assert len(module.BANNED_PHRASE_ALLOWED_LINES) <= 3
 
 
