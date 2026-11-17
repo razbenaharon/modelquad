@@ -6,21 +6,12 @@ import os
 from pathlib import Path
 import tomllib
 
-CODEX_REASONING_EFFORTS = frozenset({"minimal", "low", "medium", "high", "xhigh"})
+from .execution.closed import CODEX_REASONING_EFFORTS, safe_model_id  # noqa: F401
 
 
 def config_path(codex_home=None):
     home = codex_home if codex_home is not None else os.environ.get("CODEX_HOME")
     return (Path(home) if home else Path.home() / ".codex") / "config.toml"
-
-
-def safe_model_id(value):
-    """Use host scalar safety/length limits, with Codex's namespace separator."""
-    from .hostobs import _safe_model_id
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    return value if _safe_model_id(value.replace('/', ':')) is not None else None
 
 
 #: Codex's built-in provider. A worker runs with --ignore-user-config, which

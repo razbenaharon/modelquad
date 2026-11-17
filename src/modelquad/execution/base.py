@@ -372,7 +372,7 @@ class ExecutionRequest:
             validate_cli_token(self.session_id, "session_id")
         if self.model is not None:
             if self.provider == 'codex':
-                from ..codex_config import safe_model_id
+                from .closed import safe_model_id
                 if safe_model_id(self.model) != self.model:
                     raise ValueError('model is not a valid Codex model id')
             else:

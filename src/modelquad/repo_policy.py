@@ -256,8 +256,7 @@ def find_root(working_directory) -> Path:
 
 def _read(root: Path) -> bytes | RepoPolicy | None:
     """The file's bytes, None when there is no file, or a refusing policy."""
-    from .project_notes import ObservationError, open_regular
-    from .gitmeta import _linked
+    from .gitmeta import ObservationError, _linked, open_regular
 
     path = root / FILE_NAME
     try:

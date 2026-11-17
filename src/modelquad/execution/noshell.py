@@ -22,8 +22,10 @@ import time
 
 from ..privacy import _CONTEXT_CREDENTIAL
 from . import file_rules
-from ..project_notes import MARKER as NOTES_SOURCE_MARKER, PACKET_MARKER as NOTES_PACKET_MARKER
-from ..project_notes import closed_limitations
+from .closed import closed_limitations
+#: A file carrying this line is a notes file of an earlier ModelQuad, not code to review.
+NOTES_SOURCE_MARKER = "<!-- modelquad-project-notes-v1 -->"
+NOTES_PACKET_MARKER = "ModelQuad repository notes advisory v1 (untrusted JSON data):"
 #: The complete prompt a read-only worker accepts.
 WORKER_PROMPT_BYTES = 192 * 1024
 MAX_PATH_CHARS = 512

@@ -21,6 +21,9 @@ import time
 import unicodedata
 
 from . import gitmeta as changes
+from .gitmeta import ObservationError, _check_info, _walk, open_regular  # noqa: F401
+from .execution.closed import _number, closed_limitations, closed_reason  # noqa: F401
+from .execution.noshell import NOTES_SOURCE_MARKER as MARKER, NOTES_PACKET_MARKER as PACKET_MARKER
 from .privacy import sanitize_context_text
 from .repo_identity import RepoIdentity, _canonical_directory, _hash
 
@@ -31,18 +34,12 @@ MAX_DECISION_BYTES = 1024
 MAX_SELECTED = 8
 MAX_PACKET_BYTES = 8192
 OBSERVATION_SECONDS = 10.0
-MARKER = "<!-- modelquad-project-notes-v1 -->"
-PACKET_MARKER = "ModelQuad repository notes advisory v1 (untrusted JSON data):"
 NOTICE = ("The current code and its history win; check linked files before relying on notes. "
           "Working-tree changes were not checked.")
 SCAFFOLD = "# Project notes\n" + MARKER + "\n"
 _ID = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)\Z")
 _OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
-
-
-class ObservationError(ValueError):
-    """Private-note observation could not safely read its target."""
 
 
 def validate_relative_path(value: object) -> str:
@@ -55,28 +52,6 @@ def validate_relative_path(value: object) -> str:
            for part in value.split("/")):
         raise ObservationError("path_invalid")
     return value
-
-
-def _check_info(info, *, directory: bool = False) -> None:
-    if changes._linked(info) or getattr(info, "st_file_attributes", 0) & (0x400000 | 0x40000 | 0x1000):
-        raise ObservationError("unreadable")
-    if directory:
-        if not stat.S_ISDIR(info.st_mode):
-            raise ObservationError("unreadable")
-    elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise ObservationError("unreadable")
-
-
-def _walk(path: Path) -> None:
-    for parent in (*reversed(path.parents), path):
-        _check_info(parent.lstat(), directory=True)
-
-
-def open_regular(path: Path) -> int:
-    _walk(path.parent)
-    info = path.lstat()
-    _check_info(info)
-    return os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
 
 
 def _order(note):
@@ -400,46 +375,6 @@ def require_read_only(task_type) -> None:
     from .routing_policy import LaunchRefused
     if TaskType(task_type) not in READ_ONLY_TASK_TYPES:
         raise LaunchRefused("task_type_not_read_only")
-
-
-def closed_reason(reason, *, capability='delegate'):
-    """No ordinary prose survives a worker echo into a persisted reason."""
-    from .execution.base import ATTEMPT_FAILURE_REASONS, POLICY_REFUSAL_REASONS
-    from .execution.noshell import REFUSAL_LABELS as NOSHELL_REFUSAL_LABELS
-    allowed = {*ATTEMPT_FAILURE_REASONS, *POLICY_REFUSAL_REASONS,
-               *NOSHELL_REFUSAL_LABELS,
-               'task_type_not_read_only', 'worker_reported',
-               'review_completed', 'review_worker_reported', 'review_malformed',
-               'review_correction_failed', 'correction_failed', 'correction_completed',
-               'independence_unavailable', 'requested_tests_not_verified'}
-    allowed.update({'policy_refused', 'no_completion_envelope',
-                    'stdin_write_failed', 'timed_out', 'unsafe_executable', 'task_not_completed',
-                    'worker_exception', 'completion_unconfirmed', 'process_failed', 'engine_start_failed',
-                    'duplicate_in_flight', 'attempt_unrecorded', 'launch_state_unavailable',
-                    'review_block_invalid', 'review_findings_invalid', 'review_correction_failed'})
-    # Translate trusted launch wording in the packet's own capability domain.
-    # Already closed reasons pass unchanged; worker prose never does.
-    translated = reason if type(reason) is str and reason in allowed else None
-    return None if reason is None else translated if translated in allowed else 'worker_reported'
-
-
-def _number(value):
-    try:
-        return type(value) in (int, float) and math.isfinite(value)
-    except OverflowError:
-        return False
-
-
-def closed_limitations(values):
-    """Keep fixed limitation labels; worker prose can quote supplied files."""
-    allowed = {'worker_command_refusal_not_enforced', 'diagnosis_is_not_verification',
-               'live_workspace_not_isolated', 'worker_reads_not_confined',
-               'inline_runner_host_bound', 'diagnosis_truncated',
-               'worker_has_no_command_tools', 'noshell_verified_by_event_stream', 'noshell_violated',
-               'review_is_not_verification', 'frozen_execution_not_isolated',
-               'correction_failed', 'provider_independence_unknown',
-               'provider_independence_same_provider', 'session_strategy_overrides_prefer_role'}
-    return tuple(v for v in values if type(v) is str and v in allowed)
 
 
 def private_result(result, *, model=None, model_source=None, reasoning_effort=None, catalog=None):

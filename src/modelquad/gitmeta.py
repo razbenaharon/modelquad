@@ -164,3 +164,29 @@ def snapshot(directory: str | Path) -> Snapshot | None:
 def changed_files(before: Snapshot | None, directory: str | Path) -> tuple[str, ...] | None:
     """Return None without observing, including for a legacy Snapshot."""
     return None
+
+
+class ObservationError(ValueError):
+    """Private-note observation could not safely read its target."""
+
+
+def _check_info(info, *, directory: bool = False) -> None:
+    if _linked(info) or getattr(info, "st_file_attributes", 0) & (0x400000 | 0x40000 | 0x1000):
+        raise ObservationError("unreadable")
+    if directory:
+        if not stat.S_ISDIR(info.st_mode):
+            raise ObservationError("unreadable")
+    elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise ObservationError("unreadable")
+
+
+def _walk(path: Path) -> None:
+    for parent in (*reversed(path.parents), path):
+        _check_info(parent.lstat(), directory=True)
+
+
+def open_regular(path: Path) -> int:
+    _walk(path.parent)
+    info = path.lstat()
+    _check_info(info)
+    return os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))

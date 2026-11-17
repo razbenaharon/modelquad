@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from ..codex_config import CODEX_REASONING_EFFORTS
+from .closed import CODEX_REASONING_EFFORTS
 from ..codexcli import _probe, launcher_only, which_codex
 from ..executable_resolution import UnsafeExecutable, safe_child_env
 from ..procutil import WorkerStopRequested, run_worker
@@ -509,7 +509,7 @@ class CodexExecutor(Executor):
         metadata.update({"evidence_mode": "structured", "worker_metrics": parsed.metrics.to_dict(),
                          "stderr_bytes": len(completed.stderr or ""),
                          "stderr_category": classify_stderr(completed.stderr or "")})
-        from ..project_notes import closed_reason
+        from .closed import closed_reason
         return noshell.bind_host_diagnostics(NoShellResult(
             provider=self.name, success=success, output=parsed.assistant_text,
             exit_code=completed.returncode,
