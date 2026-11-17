@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -24,9 +24,9 @@ authors = [{ name = "Raz Ben Aharon" }]
 # ModelQuad is an MCP server, so the MCP SDK and the libraries the server code
 # imports directly (pydantic, anyio) are core dependencies.
 dependencies = [
-  "mcp>=2.0,<3",
-  "pydantic>=2.12,<3",
-  "anyio>=4.9,<5",
+  "mcp>=2.3.0,<3",
+  "pydantic>=2.14.3,<3",
+  "anyio>=4.16.0,<5",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -52,10 +52,10 @@ modelquad-mcp = "modelquad.mcp.server:main"
 # setuptools is listed because tests drive it in-process (egg_info), and the
 # PEP 639 licence metadata above needs setuptools 77 or newer.
 dev = [
-  "pytest>=7.3,<10",
-  "pytest-xdist>=3.5,<4",
-  "build>=1.0,<2",
-  "setuptools>=77",
+  "pytest>=9.2.0,<10",
+  "pytest-xdist>=3.8.0,<4",
+  "build>=1.6.1,<2",
+  "setuptools>=84.2.1",
 ]
 # Kept empty so existing `pip install ".[mcp,...]"` commands keep working: the
 # MCP SDK is now a core dependency.
