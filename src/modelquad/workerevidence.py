@@ -1,17 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Structured worker evidence: normalize rich CLI output into safe research
-fields, and capture objective runtime versions.
+"""Structured worker evidence: normalize Codex's event stream into safe fields.
 
-Two separable things live here.
-
-**1. Runtime version capture (IMPLEMENTED, used today).** ``agent_version`` is
-first-class research metadata because a harness changes behavior independently
-of its model: the same model under codex-cli 0.147.0 and 0.150.0 is not the
-same agent. ``runtime_version()`` probes the CLI's own ``--version``, costs no
-provider quota, and is cached per process. An unprobeable CLI stays UNKNOWN.
-
-**2. Structured-output normalization.** The Codex worker always runs
+**Structured-output normalization.** The Codex worker always runs
 ``codex exec --json``. Verified against codex-cli 0.147.0 on 2026-08-26:
 
 - ``codex exec --json`` emits JSONL ``ThreadEvent``s: ``thread.started``
@@ -36,23 +27,9 @@ never the parsed payload.
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import executable_resolution
-
-# Tool categories are a closed vocabulary: a new upstream item type is counted
-# under "other" rather than widening the schema implicitly.
-TOOL_CATEGORIES: tuple[str, ...] = (
-    "shell",
-    "file_edit",
-    "file_read",
-    "search",
-    "mcp_tool",
-    "other",
-)
 
 _CODEX_ITEM_CATEGORY: dict[str, str] = {
     "command_execution": "shell",
@@ -344,90 +321,3 @@ def normalize_codex_json_events(text: str | None) -> WorkerMetrics:
         # OBSERVABLE for this runtime -- None, never a misleading zero.
         permission_blocks=None,
     )
-
-
-# --------------------------------------------------------------------------
-# Runtime version capture
-# --------------------------------------------------------------------------
-
-_VERSION_CACHE: dict[str | tuple[str, str | None], str | None] = {}
-_VERSION_TIMEOUT_SECONDS = 10.0
-
-# The CLI whose --version identifies each agent runtime. A runtime absent
-# here has no probe and stays UNKNOWN rather than being guessed.
-#: Only the worker is probed. Claude Code is the host, never a worker, and
-#: ModelQuad never launches the ``claude`` binary, not even for ``--version``:
-#: the host's version comes from the MCP session (``hostobs``).
-_RUNTIME_EXECUTABLES: dict[str, str] = {
-    "codex": "codex",
-}
-
-
-def _probe_version(executable: str) -> str | None:
-    from .codexcli import which_codex
-
-    # Codex resolves to the CLI that actually runs (codexcli.py).
-    # runtime_version, the only production caller, supplies Codex's already
-    # admitted selection path so the cache and probe agree. Bare runtime
-    # names are resolved here; patched selection hooks retain the test seam.
-    path = (
-        which_codex(executable, native=True)
-        if executable in _RUNTIME_EXECUTABLES.values() else executable
-    )
-    if path is None:
-        return None
-    try:
-        from .procutil import no_window_kwargs
-
-        completed = subprocess.run(  # noqa: S603 -- fixed argv, shell=False
-            [path, "--version"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_VERSION_TIMEOUT_SECONDS,
-            shell=False,
-            # Fixed --version only: Codex/Claude shims may use bare node.
-            # Prompt launches must establish their own batch handling.
-            env=executable_resolution.safe_child_env(os.environ),
-            **no_window_kwargs(),
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if completed.returncode != 0:
-        return None
-    output = (completed.stdout or completed.stderr or "").strip()
-    if not output:
-        return None
-    # A version banner is one short line; anything else is not a version.
-    first = output.splitlines()[0].strip()
-    return first[:120] or None
-
-
-def runtime_version(runtime_or_provider: str, *, refresh: bool = False) -> str | None:
-    """The agent runtime's own reported version, or None when unknowable.
-
-    Costs no provider quota (a ``--version`` probe never contacts a backend)
-    and is cached for the process, so a delegation pays at most one probe per
-    runtime (per resolved executable for Codex). Never raises.
-    """
-
-    key = str(runtime_or_provider)
-    executable = _RUNTIME_EXECUTABLES.get(key)
-    if key == "codex":
-        from .codexcli import which_codex
-
-        executable = which_codex(native=True)
-        key = (key, executable)
-    if not refresh and key in _VERSION_CACHE:
-        return _VERSION_CACHE[key]
-    version = _probe_version(executable) if executable else None
-    _VERSION_CACHE[key] = version
-    return version
-
-
-def clear_version_cache() -> None:
-    """Drop cached probes (tests, and after a provider upgrade)."""
-
-    _VERSION_CACHE.clear()
-

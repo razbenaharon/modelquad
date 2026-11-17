@@ -31,10 +31,6 @@ SPAWN_GRACE_SECONDS = 120.0
 #: Longer than any call may run (840 s); an older record is a leftover.
 RECORD_SECONDS = 3600.0
 FOLDER_NAME = "active-workers"
-WORKER_REFUSAL = (
-    "ModelQuad refuses worker MCP calls: a delegated worker must never re-enter "
-    "orchestration and cannot report a host outcome."
-)
 
 
 def _folder(state_root: Path | None = None) -> Path:

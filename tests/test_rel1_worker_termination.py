@@ -40,7 +40,7 @@ from conftest import no_window_kwargs
 def _pid_alive(pid: int) -> bool:
     """Is this pid a live process? Asked of the OS directly, on either platform.
 
-    Deliberately NOT `procutil.pid_alive`: that function is part of what these
+    Deliberately NOT `procutil.pid_state`: that function is part of what these
     tests check, and a probe that shares the bug it is meant to catch proves
     nothing.
     """
@@ -335,12 +335,6 @@ def test_a_real_access_denied_pid_does_not_read_as_dead():
     assert procutil.pid_state(4) != "dead"
     assert procutil.pid_state(os.getpid()) == "alive"
     assert procutil.pid_state(_dead_pid()) == "dead"
-
-
-def test_the_tri_state_probe_agrees_with_the_boolean_one_where_both_can_speak():
-    assert procutil.pid_alive(os.getpid()) is True
-    dead = _dead_pid()
-    assert procutil.pid_state(dead) == "dead" and procutil.pid_alive(dead) is False
 
 
 # -- a cleanup tool that will not launch ----------------------------

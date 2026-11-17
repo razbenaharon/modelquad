@@ -355,9 +355,9 @@ def test_a_stored_reading_never_meets_the_workspace_rule(tmp_path, no_start, rep
     write_policy(repo, 'schema = 1\n[codex]\naccount = "workspace"\n')
     from modelquad.paths import state_root
 
-    for directory in (tmp_path / "usage", state_root(), state_root() / "usage"):
+    for directory in (state_root(), state_root() / "usage"):
         _usage(directory, reported)
-    refusal, _ = rp.gate(str(repo), "review", usage_directory=tmp_path / "usage")
+    refusal, _ = rp.gate(str(repo), "review")
     assert refusal["reason"] == rp.ACCOUNT_WORKSPACE_REQUIRED
     payload = delegate(repo).structured_content
     assert payload["reason"] == rp.ACCOUNT_WORKSPACE_REQUIRED and started == []

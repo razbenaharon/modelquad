@@ -17,7 +17,7 @@ from typing import Any
 
 from ..models import NETWORK_POLICY_REFUSED, TaskType
 # Re-exported for the existing MCP observer and caller publication boundary.
-from .lifecycle import CallerWaitHandle, TerminalResolution
+from .lifecycle import TerminalResolution
 
 
 DEFAULT_TIMEOUT_SECONDS = 600.0
@@ -381,10 +381,6 @@ class ExecutionRequest:
         if self.agent_runtime is not None:
             validate_cli_token(self.agent_runtime, "agent_runtime")
 
-    @property
-    def authority_status(self) -> str:
-        return "legacy_unmigrated" if self.action_authority is None else "declared_unmapped"
-
     def to_dict(self) -> dict[str, Any]:
         result = {
             "provider": self.provider,
@@ -419,165 +415,6 @@ def foundation_authority_refusal(request: ExecutionRequest) -> ExecutionResult |
 
 
 @dataclass(frozen=True)
-class EvidenceItem:
-    """One verification fact with its provenance.
-
-    ``source`` states who observed the fact — the load-bearing distinction is
-    that a worker's own claim (``worker_self_reported``) can never silently
-    become ``objective``: only checks the modelquad ran itself are
-    objective. ``verification_level`` on OutcomeEvidence summarizes; the
-    items are the auditable trail behind that summary.
-    """
-
-    kind: str
-    source: str
-    detail: str | None = None
-
-    VALID_SOURCES = frozenset(
-        {"objective", "independent", "inferred", "user_reported", "worker_self_reported"}
-    )
-
-    def __post_init__(self) -> None:
-        if self.source not in self.VALID_SOURCES:
-            raise ValueError(
-                f"source must be one of {sorted(self.VALID_SOURCES)}, got {self.source!r}"
-            )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "source": self.source, "detail": self.detail}
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EvidenceItem":
-        return cls(
-            kind=str(data.get("kind", "unknown")),
-            source=data.get("source", "inferred"),
-            detail=data.get("detail"),
-        )
-
-
-@dataclass(frozen=True)
-class OutcomeEvidence:
-    """Objective and semantic verification signals for a completed task.
-
-    ``verification_level`` maps onto the conceptual verification classes:
-    ``objective`` = OBJECTIVE (modelquad ran the checks itself),
-    ``semantic`` = SELF_REPORTED (a worker/host completion claim),
-    ``process`` = only the process exit was observed, ``none`` = nothing.
-    The COMPLETED_VERIFIED vs COMPLETED_UNVERIFIED distinction is
-    ``ExecutionResult.verified_completed`` — task_status COMPLETED plus
-    ``verified`` here — not a duplicate status enum.
-    """
-
-    process_success: bool | None = None
-    semantic_status: str | None = None
-    files_changed: tuple[str, ...] | None = None
-    tests_executed: bool | None = None
-    tests_passed: bool | None = None
-    build_passed: bool | None = None
-    lint_passed: bool | None = None
-    artifact_validated: bool | None = None
-    scope_matches: bool | None = None
-    fallback_used: bool | None = None
-    blocked_reason: str | None = None
-    duration_seconds: float | None = None
-    verification_level: str = "none"
-    # v2 additions: per-item provenance, acceptance-check tallies,
-    # a categorical confidence (deliberately not a fabricated number), the
-    # assessor's own version, and the verifier's measured runtime. All
-    # optional; records written before these fields simply lack them.
-    evidence_items: tuple[EvidenceItem, ...] = ()
-    acceptance_checks_total: int | None = None
-    acceptance_checks_passed: int | None = None
-    verification_confidence: str = "none"
-    assessor_version: str | None = None
-    test_runtime_seconds: float | None = None
-
-    _VALID_VERIFICATION_LEVELS = frozenset({"none", "process", "semantic", "objective"})
-    # Categorical by design: "high" = the modelquad ran objective checks
-    # itself; "medium" = an objective process-level observation (e.g. a
-    # non-zero exit the modelquad saw) without scope verification;
-    # "low" = a self-reported claim only; "none" = no evidence at all.
-    _VALID_CONFIDENCE = frozenset({"high", "medium", "low", "none"})
-
-    def __post_init__(self) -> None:
-        if self.verification_level not in self._VALID_VERIFICATION_LEVELS:
-            raise ValueError(
-                f"verification_level must be one of {sorted(self._VALID_VERIFICATION_LEVELS)}, "
-                f"got {self.verification_level!r}"
-            )
-        if self.verification_confidence not in self._VALID_CONFIDENCE:
-            raise ValueError(
-                f"verification_confidence must be one of {sorted(self._VALID_CONFIDENCE)}, "
-                f"got {self.verification_confidence!r}"
-            )
-        if self.files_changed is not None and not isinstance(self.files_changed, tuple):
-            object.__setattr__(self, "files_changed", tuple(self.files_changed))
-        if not isinstance(self.evidence_items, tuple):
-            object.__setattr__(self, "evidence_items", tuple(self.evidence_items))
-
-    @property
-    def verified(self) -> bool:
-        """True only when verification level is objective and no test/build failures occurred."""
-        return (
-            self.verification_level == "objective"
-            and self.tests_passed is not False
-            and self.build_passed is not False
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "process_success": self.process_success,
-            "semantic_status": self.semantic_status,
-            "files_changed": list(self.files_changed) if self.files_changed is not None else None,
-            "tests_executed": self.tests_executed,
-            "tests_passed": self.tests_passed,
-            "build_passed": self.build_passed,
-            "lint_passed": self.lint_passed,
-            "artifact_validated": self.artifact_validated,
-            "scope_matches": self.scope_matches,
-            "fallback_used": self.fallback_used,
-            "blocked_reason": self.blocked_reason,
-            "duration_seconds": self.duration_seconds,
-            "verification_level": self.verification_level,
-            "verified": self.verified,
-            "evidence_items": [item.to_dict() for item in self.evidence_items],
-            "acceptance_checks_total": self.acceptance_checks_total,
-            "acceptance_checks_passed": self.acceptance_checks_passed,
-            "verification_confidence": self.verification_confidence,
-            "assessor_version": self.assessor_version,
-            "test_runtime_seconds": self.test_runtime_seconds,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> OutcomeEvidence:
-        files = data.get("files_changed")
-        items_raw = data.get("evidence_items") or ()
-        return cls(
-            process_success=data.get("process_success"),
-            semantic_status=data.get("semantic_status"),
-            files_changed=tuple(files) if files is not None else None,
-            tests_executed=data.get("tests_executed"),
-            tests_passed=data.get("tests_passed"),
-            build_passed=data.get("build_passed"),
-            lint_passed=data.get("lint_passed"),
-            artifact_validated=data.get("artifact_validated"),
-            scope_matches=data.get("scope_matches"),
-            fallback_used=data.get("fallback_used"),
-            blocked_reason=data.get("blocked_reason"),
-            duration_seconds=data.get("duration_seconds"),
-            verification_level=data.get("verification_level", "none"),
-            evidence_items=tuple(
-                EvidenceItem.from_dict(item) for item in items_raw if isinstance(item, dict)
-            ),
-            acceptance_checks_total=data.get("acceptance_checks_total"),
-            acceptance_checks_passed=data.get("acceptance_checks_passed"),
-            verification_confidence=data.get("verification_confidence", "none"),
-            assessor_version=data.get("assessor_version"),
-            test_runtime_seconds=data.get("test_runtime_seconds"),
-        )
-
-
-@dataclass(frozen=True)
 class ExecutionResult:
     """A normalized result from a provider CLI invocation.
 
@@ -599,7 +436,6 @@ class ExecutionResult:
     task_status: WorkerTaskStatus = WorkerTaskStatus.UNKNOWN
     task_status_reason: str | None = None
     safe_to_retry: bool = False
-    evidence: OutcomeEvidence | None = None
     # What the worker could not use and did not need: denied or
     # unavailable tools/capabilities that did not stop the objective. Beside
     # the headline, never inside it -- a caller reads `task_status` for
@@ -628,13 +464,6 @@ class ExecutionResult:
 
         return self.task_status is WorkerTaskStatus.COMPLETED
 
-    @property
-    def verified_completed(self) -> bool:
-        """This is the VERIFIED_COMPLETED vs COMPLETED_UNVERIFIED distinction
-        expressed on the existing status system rather than a duplicate enum."""
-
-        return self.task_completed and self.evidence is not None and self.evidence.verified
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
@@ -650,31 +479,18 @@ class ExecutionResult:
             "safe_to_retry": self.safe_to_retry,
             "task_completed": self.task_completed,
             "limitations": list(self.limitations),
-            "evidence": self.evidence.to_dict() if self.evidence else None,
         }
 
 
-# task_status_reasons that mean the delegation never reached a running worker:
-# the ExecutionManager's own pre-execution failures (execution/manager.py) and
-# each executor's pre-launch rejections and launch failures. For the attempt
-# record that is the difference between "the delegation happened and the task
-# went badly" and "the delegation never reached a worker at all" -- which is
-# the whole question delegation_attempts exists to answer.
+# task_status_reasons that mean the call never reached a running worker: the
+# executor's pre-launch rejections. That is the difference between "the call
+# happened and the task went badly" and "the call never reached a worker at all".
 ATTEMPT_FAILURE_REASONS: dict[str, str] = {
     "stop_requested": "timeout",  # without observed tree death, the worker is unaccounted for
-    # ExecutionManager pre-execution failures: no executor was ever asked.
     "invalid_request": "invalid_request",
-    "runtime_not_registered": "invalid_request",
-    "provider_not_registered": "provider_unavailable",
-    "provider_unavailable": "provider_unavailable",
-    "runtime_provider_mismatch": "invalid_request",
-    "no_viable_worker": "no_viable_worker",
     # Executor pre-launch failures: the worker process never started.
     "cli_not_found": "failed_to_start",
-    "launch_failed": "failed_to_start",
-    "unsafe_shim_binary": "failed_to_start",
     "invalid_sandbox_mode": "invalid_request",
-    "invalid_mode": "invalid_request",
     "invalid_reasoning_effort": "invalid_request",
 }
 
@@ -706,16 +522,14 @@ NOSHELL_PRELAUNCH_REFUSALS: frozenset[str] = frozenset({
 #: task_status_reasons that mean a ModelQuad policy gate said no -- NOT that a
 #: delegation tried and could not. No worker was asked, and none should have
 #: been, so the attempt resolves as `refused`/`policy_refused` rather than as a
-#: failure. `routing_refused` is the router's
-#: own terminal refusal; `network_policy_refused` is `netpolicy`'s, which is
+#: failure. `network_policy_refused` is `netpolicy`'s, which is
 #: what its gate returns to an executor that would have called a provider's
 #: API from this process. `read_only_resume_unpinned` is Codex's refusal to
 #: resume a session, and `task_type_not_read_only` its refusal of a task type
 #: that is not read-only. Host launch refusals are recorded before a worker
 #: starts by _launch_refusal as policy_refused, outside this result set.
 POLICY_REFUSAL_REASONS: frozenset[str] = frozenset(
-    {"routing_refused",
-     NETWORK_POLICY_REFUSED, READ_ONLY_RESUME_UNPINNED,
+    {NETWORK_POLICY_REFUSED, READ_ONLY_RESUME_UNPINNED,
      "action_authority_unmapped", "task_type_not_read_only",
      *NOSHELL_PRELAUNCH_REFUSALS}
 )
@@ -732,10 +546,7 @@ READ_ONLY_TASK_TYPES: frozenset[TaskType] = frozenset(
 
 # `NETWORK_POLICY_REFUSED` -- the `task_status_reason` an executor sets when
 # `netpolicy` denied its call -- is defined in `models.py` and imported above,
-# staying importable from here where every executor already reads it. One
-# definition, because the routing gate now states the same refusal as an
-# `ineligibility_reason` and two spellings of one vocabulary term
-# is how a surface starts recognising only one of them.
+# staying importable from here where every executor already reads it.
 
 
 def termination_facts(exc: BaseException) -> dict[str, Any]:
@@ -864,32 +675,17 @@ def describe_worker_termination(metadata: dict[str, Any] | None) -> str:
 def workspace_stability_note(
     metadata: dict[str, Any] | None, working_directory: Any
 ) -> dict[str, Any]:
-    """What an interrupted delegation's RESULT says about ITS OWN worker.
+    """What an interrupted Codex call's result says about its own worker.
 
-    :func:`describe_worker_termination` has always put the worker's fate on the
-    attempt ROW. The party that is about to run a gate over that tree, review
-    its diff or commit it is the CALLER, and previously the caller was
-    never told: it received a failure and a workspace that looked settled while
-    a descendant of the worker could still be writing to it.
-
-    Scoped to THIS delegation's worker, and named that way. One delegation
-    ending cleanly says nothing about the workspace, because a different
-    request -- a different fingerprint, so not a duplicate and not refused --
-    can be running against the same directory at the same time. The only
-    workspace-wide answer is
-    ``modelquad_delegation_status(working_directory=...)``, and this points at
-    it in BOTH branches rather than substituting a one-worker fact for it.
-
-    Empty for anything that did not time out or stop: a delegation that ended on its
+    Empty for anything that did not time out or stop: a call that ended on its
     own terms says nothing about processes, and inventing a reassurance is as
     wrong as withholding a warning. Otherwise the answer turns on
     :func:`worker_confirmed_dead`, a positive reading of the whole TREE's death
     from the process table -- a kill merely attempted, a tree walk that failed,
     or a runner that recorded nothing all leave descendants unaccounted for.
 
-    A read-only run (``requested_sandbox`` is ``read-only``) cannot write to
-    the workspace, so its note says only that the process may still be
-    running and using quota.
+    Codex runs read-only, so it cannot write to the workspace: the note says
+    only that the process may still be running and using quota.
     """
 
     if not ((metadata or {}).get("timed_out") or (metadata or {}).get("stop_requested")):
@@ -897,41 +693,20 @@ def workspace_stability_note(
     confirmed = worker_confirmed_dead(metadata)
     workspace = str(working_directory)
     interruption = "was stopped" if (metadata or {}).get("stop_requested") else "timed out"
-    if (metadata or {}).get("requested_sandbox") == "read-only":
-        # A read-only worker cannot write to the workspace; what is left of
-        # it can only keep running and spend the user's quota.
-        note = {
-            "workspace": workspace,
-            "worker_fate": describe_worker_termination(metadata)
-            or "the runner recorded no termination facts",
-            "this_worker_may_still_be_running": not confirmed,
-            "this_worker_may_still_be_writing": False,
-        }
-        if not confirmed:
-            note["warning"] = (
-                "This Codex call " + interruption + " and ModelQuad could not confirm "
-                "Codex ended, so a Codex process may still be running and using quota. "
-                "Codex through ModelQuad is read-only, so it cannot change this folder."
-            )
-        return note
-    ask = (
-        "Ask modelquad_delegation_status(working_directory=...) for whether "
-        "anything is still writing to " + workspace + "; this result speaks only "
-        "for this delegation's own worker."
-    )
+    # A read-only worker cannot write to the workspace; what is left of
+    # it can only keep running and spend the user's quota.
     note: dict[str, Any] = {
         "workspace": workspace,
         "worker_fate": describe_worker_termination(metadata)
         or "the runner recorded no termination facts",
-        "this_worker_may_still_be_writing": not confirmed,
-        "workspace_answer": ask,
+        "this_worker_may_still_be_running": not confirmed,
+        "this_worker_may_still_be_writing": False,
     }
     if not confirmed:
         note["warning"] = (
-            "This delegation " + interruption + " and the worker's death was NOT confirmed, so "
-            "a process of it may still be writing to " + workspace + ". Do not treat "
-            "a test run, a review or a commit of that tree as belonging to one "
-            "state. " + ask
+            "This Codex call " + interruption + " and ModelQuad could not confirm "
+            "Codex ended, so a Codex process may still be running and using quota. "
+            "Codex through ModelQuad is read-only, so it cannot change this folder."
         )
     return note
 
@@ -998,16 +773,6 @@ class Executor(ABC):
 # stderr handling
 # --------------------------------------------------------------------------
 
-STDERR_CATEGORIES: tuple[str, ...] = (
-    "empty",
-    "rate_limit",
-    "permission",
-    "sandbox",
-    "error",
-    "narration",
-)
-
-
 def classify_stderr(text: str) -> str:
     """Coarsen a stderr body into a closed-vocabulary category.
 
@@ -1056,4 +821,3 @@ def result_error(stderr: str | None, *, success: bool, structured: bool = True) 
         f"worker reported a non-zero exit ({classify_stderr(body)}; "
         f"{len(body)} bytes of stderr withheld from persistence)"
     )
-

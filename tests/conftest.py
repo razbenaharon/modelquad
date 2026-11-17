@@ -252,11 +252,6 @@ def isolate_provider_cli_spawns(monkeypatch):
     where none are.
     """
 
-    from modelquad import workerevidence
-
-    monkeypatch.setattr(workerevidence, "_probe_version", lambda _executable: None)
-    workerevidence.clear_version_cache()
-
     # Codex resolution prefers an official desktop install over PATH
     # (codexcli.py), so the same rule applies: a developer machine with the
     # Codex desktop app would resolve differently from CI. Tests see no

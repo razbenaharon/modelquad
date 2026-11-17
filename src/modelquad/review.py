@@ -516,7 +516,6 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
             _running.discard(key)
     seconds = round(clock() - started_at, 1)
     payload = closed_result(result).to_dict()
-    payload.pop("evidence", None)
     payload.pop("session_id", None)
     payload.update(decision_id=decision_id, task_type=request.task_type)
     reason = payload.get("reason")
@@ -524,8 +523,7 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     if reason in POLICY_REFUSAL_REASONS or reason in noshell.REFUSAL_LABELS:
         payload.update(delegated=False, refused=True, started=started)
         payload["message"] = refusal_line(payload)
-    note = workspace_stability_note({**payload["metadata"], "requested_sandbox": "read-only"},
-                                    request.working_directory)
+    note = workspace_stability_note(payload["metadata"], request.working_directory)
     if note:
         note.pop("workspace", None)
         payload["worker_note"] = note

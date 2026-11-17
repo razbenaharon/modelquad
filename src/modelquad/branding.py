@@ -16,13 +16,8 @@ PRODUCT_SLUG = "modelquad"
 # Distribution name on PyPI and in importlib.metadata.version() lookups.
 DISTRIBUTION_NAME = "modelquad"
 
-# The name each host config registers this MCP server under. Codex's TOML
-# table name cannot contain hyphens, hence the separate identifier form.
+# The name Claude Code's configuration registers this MCP server under.
 MCP_SERVER_NAME = "modelquad"
-MCP_SERVER_TOML_KEY = "modelquad"
-
-# Prefix for MCP tool names: modelquad_status, modelquad_delegate, ...
-TOOL_PREFIX = "modelquad"
 
 # Console entry points.
 CLI_COMMAND = "modelquad"

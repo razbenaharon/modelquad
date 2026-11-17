@@ -163,7 +163,7 @@ def closed_result(result):
     clean_result = replace(result, provider='codex' if result.provider == 'codex' else 'unknown',
                            error=error if result.error else None, session_id=None,
                            task_status_reason=closed_reason(result.task_status_reason),
-                           metadata=clean, evidence=None,
+                           metadata=clean,
                            limitations=closed_limitations(result.limitations))
     object.__setattr__(clean_result, '_terminal_resolution', result.terminal_resolution)
     return clean_result

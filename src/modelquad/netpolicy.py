@@ -32,9 +32,6 @@ from __future__ import annotations
 
 import sys
 
-#: The category for a provider's own API that ModelQuad would call directly.
-PROVIDER_API_CATEGORY = "provider_api"
-
 LOOPBACK_ONLY_REASON = "ModelQuad's own process connects only to loopback addresses"
 
 _GUARDED_EVENTS = frozenset({"socket.connect", "socket.sendto"})

@@ -55,8 +55,7 @@ INDEPENDENT_EVIDENCE = frozenset({"test", "reproduced", "ci"})
 #: ``fixed``: recorded again after the fix, with ``fix_verified``.
 ACTIONS = ("to_fix", "fixed", "no_change", "deferred")
 SEVERITIES = ("high", "medium", "low")
-CONFIDENCES = ("high", "medium", "low")
-GATE_EVENTS = ("blocked", "review_done", "review_failed", "review_pending", "not_done_reported",
+GATE_EVENTS = ("blocked", "review_done", "review_failed", "not_done_reported",
                "consult_reminded", "consult_blocked", "consult_done", "consult_failed",
                "skipped_small")
 

@@ -11,8 +11,6 @@ import threading
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
-import math
-import uuid
 
 from .executable_resolution import UnsafeExecutable, resolve_executable, system_executable
 
@@ -67,8 +65,8 @@ class WorkerContainmentError(OSError):
     be put in its Job Object before its first instruction. The
     process is stopped while still suspended, so nothing of the worker's own
     ran and nothing it could have spawned exists. It is an ``OSError`` so the
-    executors' existing launch-failure branch reports it as ``launch_failed``,
-    which is exactly what happened.
+    Codex executor's launch-failure branch reports Codex as unavailable, and no
+    answer is returned.
     """
 
 
@@ -103,38 +101,6 @@ def no_window_kwargs(os_name: str | None = None, *, detach_stdin: bool = True) -
     if effective == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     return kwargs
-
-
-def terminate_pid(pid: int) -> bool:
-    """Terminate exactly one PID through the Windows process API.
-
-    This is intentionally a product-owned, PID-scoped operation. Callers
-    must establish ownership before invoking it; this helper never broadens a
-    stop request into an image-name or process-tree sweep.
-    """
-
-    if os.name != "nt":
-        return False
-
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.windll.kernel32
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel32.TerminateProcess.restype = wintypes.BOOL
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-
-    invalid_handle = wintypes.HANDLE(-1).value
-    handle = kernel32.OpenProcess(0x0001, False, int(pid))  # PROCESS_TERMINATE
-    if not handle or handle in (-1, invalid_handle, ctypes.c_void_p(-1).value):
-        return False
-    try:
-        return bool(kernel32.TerminateProcess(handle, 1))
-    finally:
-        kernel32.CloseHandle(handle)
 
 
 #: The private fourth reading :func:`_windows_openprocess_state` can return.
@@ -191,13 +157,10 @@ def _windows_openprocess_state(pid: int) -> str:
 def pid_state(pid: int) -> str:
     """Is this pid ``"alive"``, ``"dead"``, or is the answer ``"unknown"``?
 
-    The third answer is the point. :func:`pid_alive`
-    is a two-valued reading of a three-valued question: a probe that *cannot
-    answer* -- ``OpenProcess`` handing back no handle because the process
-    belongs to another user or to the kernel -- came back as False, which the
-    reconcile passes then read as "the worker is dead" and used to close a
-    LIVE worker's attempt row (releasing duplicate protection with it). A
-    failure to observe is not an observation. This function keeps the two
+    The third answer is the point. A probe that *cannot answer* --
+    ``OpenProcess`` handing back no handle because the process belongs to
+    another user or to the kernel -- is not a dead process. A failure to
+    observe is not an observation. This function keeps the two
     apart so callers that must not guess can refuse to.
 
     Windows: a handle plus ``GetExitCodeProcess`` answers directly. Without a
@@ -378,18 +341,6 @@ def parse_ps_etime(text: str) -> float | None:
     if minutes >= 60 or seconds >= 60:
         return None
     return float(days * 86400 + hours * 3600 + minutes * 60 + seconds)
-
-
-def pid_alive(pid: int) -> bool:
-    """Best-effort check whether a process with this pid is currently running.
-
-    Two-valued by construction, and therefore only for callers that have
-    somewhere sensible to put a "no": an unanswerable probe reads False here.
-    Anything that would CLOSE a record or release a guard on the strength of
-    that False must ask :func:`pid_state` instead and act on ``"dead"`` alone.
-    """
-
-    return pid_state(pid) == "alive"
 
 
 def _kill_process_tree(
@@ -1330,7 +1281,7 @@ def _close_census_job(handle: int) -> None:
 def _terminate_job(handle: int) -> bool:
     """Terminate every process in the job. False if the call failed.
 
-    Exit code 1, the same one ``Popen.kill`` and :func:`terminate_pid` give.
+    Exit code 1, the same one ``Popen.kill`` gives.
     Whether anything is left is not this function's answer: the census is.
     """
 

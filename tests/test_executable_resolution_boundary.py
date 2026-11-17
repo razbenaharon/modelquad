@@ -238,8 +238,6 @@ ALLOW_LIST = (
      "first, then run_inventory prepares the bounded provider-free listing argv in an empty folder"),
     ("repo_policy.py", "find_root", "launch", 1,
      "forwarding wrapper, guard inside: gitmeta._git resolves/excludes Git; one rev-parse under a deadline"),
-    ("workerevidence.py", "_probe_version", "launch", 1,
-     "resolver call: probe_which/which_codex and admit_executable precede version argv"),
     # Classification of the sites an earlier pass left unlisted.
     ("procutil.py", "run_with_tree_kill", "launch", 1,
      "forwarding wrapper, guard at callers: run_worker"),

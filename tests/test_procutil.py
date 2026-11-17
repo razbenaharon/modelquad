@@ -696,13 +696,11 @@ def _release(pid: int) -> None:
     import os
     import signal
 
-    if os.name == "nt":
-        procutil.terminate_pid(pid)
-    else:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
+    # On Windows, os.kill with SIGTERM is TerminateProcess on that one pid.
+    try:
+        os.kill(pid, signal.SIGTERM if os.name == "nt" else signal.SIGKILL)
+    except OSError:
+        pass
 
 
 def test_a_worker_that_leaves_nothing_reports_an_empty_enumeration_not_unknown():

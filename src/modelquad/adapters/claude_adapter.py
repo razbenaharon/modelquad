@@ -59,8 +59,6 @@ _RETIRED_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("handoff", "qu
 _COMMAND_SKILL_MARK = b"managed-by: modelquad"
 _NOT_OURS = "{} has no ModelQuad mark, so it is not ModelQuad's and was left unchanged."
 _STATUS_LINE_ARGUMENTS = ("usage-hook", "claude")
-#: The compact part a user adds to a status line of their own.
-SEGMENT_ARGUMENTS = ("usage-hook", "claude", "--segment")
 # Earlier builds installed an advisory PreToolUse hook that added one note per
 # session suggesting ModelQuad. The MCP server's instructions now carry that
 # guidance into every session that has the server, so the hook only repeated
@@ -69,14 +67,12 @@ SEGMENT_ARGUMENTS = ("usage-hook", "claude", "--segment")
 # name with exactly ``hook-gate``) and nothing else. ``modelquad hook-gate``
 # still answers, harmlessly, for a session started before the removal.
 _HOOK_EVENT = "PreToolUse"
-_HOOK_MATCHER = "Bash|Edit|Write|MultiEdit|NotebookEdit|Task"
 # Earlier builds raised Claude Code's tool timeout for EVERY MCP server through
 # the global ``env.MCP_TOOL_TIMEOUT``. The timeout now lives on the modelquad
 # server entry itself (``"timeout"`` in templates/claude/mcp/mcp-servers.json,
 # milliseconds, documented by Claude Code to override MCP_TOOL_TIMEOUT for that
-# server only). The constants below identify the old global value so that an
+# server only). The constant below identifies the old global value so that an
 # owned one can be removed; a value the user set is never touched.
-_MCP_TOOL_TIMEOUT_KEY_PATH = ("env", "MCP_TOOL_TIMEOUT")
 _MCP_TOOL_TIMEOUT_MS = "900000"  # what earlier builds wrote, and recorded as owned
 _HTML_MARKER = {"comment_prefix": "<!--", "marker_suffix": "-->"}
 

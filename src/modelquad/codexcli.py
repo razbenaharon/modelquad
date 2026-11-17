@@ -86,7 +86,7 @@ def project_roots() -> tuple[str, ...]:
     Claude Code starts ModelQuad in the project folder. A project can carry a
     planted ``codex.exe`` in a folder an editor puts on PATH (an activated
     ``.venv\\Scripts``, say), and ModelQuad runs a found Codex for its version
-    and its quota without a prompt. So everything under the working folder is
+    check without a prompt. So everything under the working folder is
     refused for that lookup. The exception is a working folder that is the
     home folder or above it: excluding it would exclude the user's own install
     under AppData, and a project is never that high.

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Structured worker evidence normalization + runtime version (V8 slice 3, P2).
+"""Codex event-stream normalization.
 
 The load-bearing property is the REDACTION BOUNDARY: structured worker output
 is rich precisely because it embeds command lines, full tool stdout/stderr,
@@ -14,19 +14,8 @@ import json
 
 from modelquad.workerevidence import (
     WorkerMetrics,
-    clear_version_cache,
     normalize_codex_json_events,
-    runtime_version,
 )
-# conftest's `isolate_provider_cli_spawns` stubs `_probe_version` so no test
-# shells out to a real CLI. These tests are ABOUT the probe, so they restore
-# the genuine implementation (captured at import, before the fixture runs)
-# and stub `subprocess.run` beneath it instead -- still spawning nothing.
-from modelquad.workerevidence import _probe_version as _real_probe_version
-
-
-def _use_real_probe(monkeypatch):
-    monkeypatch.setattr("modelquad.workerevidence._probe_version", _real_probe_version)
 
 SECRET_COMMAND = "aws s3 cp s3://prod/secrets.env . --profile prod-admin"
 SECRET_PATH = "C:\\Users\\SecretUser\\PrivateRepo\\src\\credentials.py"
@@ -194,137 +183,6 @@ def test_unknown_item_type_counts_as_other_not_dropped():
     metrics = normalize_codex_json_events(stream)
     assert metrics.tool_calls_by_category == {"other": 1}
     assert metrics.tool_calls_total == 1
-
-
-# --- runtime version --------------------------------------------------------
-
-
-def test_runtime_version_of_an_unknown_runtime_is_unknown():
-    clear_version_cache()
-    assert runtime_version("no-such-runtime-xyz") is None
-
-
-def test_runtime_version_probe_is_cached(monkeypatch):
-    clear_version_cache()
-    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
-    calls = []
-
-    def _fake_probe(executable):
-        calls.append(executable)
-        return "codex-cli 0.147.0"
-
-    monkeypatch.setattr("modelquad.workerevidence._probe_version", _fake_probe)
-    assert runtime_version("codex") == "codex-cli 0.147.0"
-    assert runtime_version("codex") == "codex-cli 0.147.0"
-    assert len(calls) == 1  # probed once per process, not per delegation
-    clear_version_cache()
-
-
-def test_codex_probes_follow_the_resolved_official_executable(tmp_path, monkeypatch):
-    import subprocess
-    from modelquad import codexcli, workerevidence
-
-    _use_real_probe(monkeypatch)
-    old = tmp_path / "old" / "codex.exe"
-    new = tmp_path / "new" / "codex.exe"
-    candidates = [old]
-    monkeypatch.setattr(codexcli, "official_candidates", lambda: candidates)
-    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: None)
-    versions = {str(old): "0.155.0", str(new): "0.160.0"}
-    monkeypatch.setattr(codexcli, "_probe", versions.get)
-    calls = []
-
-    def run(argv, **kwargs):
-        calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, f"codex-cli {versions[argv[0]]}", "")
-
-    monkeypatch.setattr(workerevidence.subprocess, "run", run)
-    # Returning to a previously seen executable reuses its own probes.
-    for candidate, version in ((old, "0.155.0"), (new, "0.160.0"), (old, "0.155.0")):
-        candidates[:] = [candidate]
-        for _ in range(2):
-            assert runtime_version("codex") == f"codex-cli {version}"
-    assert calls == [[str(old), "--version"], [str(new), "--version"]]
-
-
-def test_codex_probes_recover_after_missing_executable(monkeypatch):
-    import subprocess
-    from modelquad import codexcli, workerevidence
-
-    _use_real_probe(monkeypatch)
-    monkeypatch.setattr(codexcli, "official_candidates", lambda: [])
-    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: None)
-    assert runtime_version("codex") is None
-    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
-    monkeypatch.setattr(workerevidence.subprocess, "run", lambda argv, **kwargs:
-                        subprocess.CompletedProcess(argv, 0, "codex-cli 0.160.0 --json", ""))
-    assert runtime_version("codex") == "codex-cli 0.160.0 --json"
-
-
-
-
-def test_runtime_version_is_unknown_when_the_probe_fails(monkeypatch):
-    """A CLI that cannot be probed yields UNKNOWN, never a guessed version."""
-    clear_version_cache()
-    _use_real_probe(monkeypatch)
-    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
-    calls = []
-
-    def _boom(*args, **kwargs):
-        calls.append(args)
-        raise OSError("binary is not executable")
-
-    monkeypatch.setattr("modelquad.workerevidence.subprocess.run", _boom)
-    assert runtime_version("codex") is None
-    assert len(calls) == 1
-    clear_version_cache()
-
-
-def test_runtime_version_rejects_a_nonzero_or_empty_probe(monkeypatch):
-    import subprocess as _sp
-
-    clear_version_cache()
-    _use_real_probe(monkeypatch)
-    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
-    calls = []
-
-    def run(completed):
-        def fake(*args, **kwargs):
-            calls.append(args)
-            return completed
-        return fake
-
-    monkeypatch.setattr(
-        "modelquad.workerevidence.subprocess.run",
-        run(_sp.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")),
-    )
-    assert runtime_version("codex") is None
-    assert len(calls) == 1
-    clear_version_cache()
-
-    monkeypatch.setattr(
-        "modelquad.workerevidence.subprocess.run",
-        run(_sp.CompletedProcess(args=[], returncode=0, stdout="   ", stderr="")),
-    )
-    assert runtime_version("codex") is None
-    assert len(calls) == 2
-    clear_version_cache()
-
-
-def test_runtime_version_takes_the_banner_line(monkeypatch):
-    import subprocess as _sp
-
-    clear_version_cache()
-    _use_real_probe(monkeypatch)
-    monkeypatch.setattr("modelquad.codexcli.probe_which", lambda _: "C:/fake/codex")
-    monkeypatch.setattr(
-        "modelquad.workerevidence.subprocess.run",
-        lambda *a, **k: _sp.CompletedProcess(
-            args=[], returncode=0, stdout="codex-cli 0.147.0\nextra noise\n", stderr=""
-        ),
-    )
-    assert runtime_version("codex") == "codex-cli 0.147.0"
-    clear_version_cache()
 
 
 def test_metrics_default_to_unknown():

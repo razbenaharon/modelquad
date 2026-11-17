@@ -118,7 +118,6 @@ VALID_REASONING_EFFORTS = CODEX_REASONING_EFFORTS
 
 # Windows App Execution Alias directories hold stub executables that a
 # restricted token cannot start (https://github.com/openai/codex/issues/20570).
-_WINDOWS_APPS_ALIAS_SEGMENT = os.path.join("Microsoft", "WindowsApps")
 
 
 def filter_windows_apps_alias_from_path(path_value: str) -> str:

@@ -241,7 +241,7 @@ def test_a_large_stdin_prompt_is_delivered_whole():
 
 
 def test_on_spawn_reports_the_live_worker_pid():
-    from modelquad.procutil import pid_alive
+    from modelquad.procutil import pid_state
 
     seen = []
     completed = run_with_tree_kill(
@@ -249,25 +249,13 @@ def test_on_spawn_reports_the_live_worker_pid():
         capture_output=True,
         text=True,
         timeout=60,
-        on_spawn=lambda pid: seen.append((pid, pid_alive(pid))),
+        on_spawn=lambda pid: seen.append((pid, pid_state(pid) == "alive")),
     )
     assert completed.returncode == 0
     assert len(seen) == 1
     pid, was_alive_at_spawn = seen[0]
     assert pid > 0
     assert was_alive_at_spawn is True
-
-
-def test_pid_alive_distinguishes_live_from_dead():
-    import os
-    import subprocess as sp
-
-    from modelquad.procutil import pid_alive
-
-    assert pid_alive(os.getpid()) is True
-    proc = sp.Popen([sys.executable, "-c", "pass"], **no_window_kwargs())
-    proc.wait()
-    assert pid_alive(proc.pid) is False
 
 
 def test_executors_default_to_tree_killing_run():

@@ -434,7 +434,7 @@ def file_in_other_repository(working_directory, files) -> bool:
     return False
 
 
-def gate(working_directory, task_type, *, files=(), usage_directory=None):
+def gate(working_directory, task_type, *, files=()):
     """The per-repository gate for one Codex call, read fresh: ``(refusal, policy)``.
 
     ``refusal`` is None or the closed ``{"reason", "message"}``; ``policy`` is
@@ -447,9 +447,8 @@ def gate(working_directory, task_type, *, files=(), usage_directory=None):
     2. the user's own ``modelquad settings repo off``;
     3. a named file in another Git repository below the folder;
     4. the repository's ``.modelquad.toml``, including ``account =
-       "workspace"``, which needs a fresh plan Codex itself reported
-       (``plans.reported_codex_kind``) in ``usage_directory`` (ModelQuad's
-       default usage folder when None).
+       "workspace"``, which always refuses here: this build does not read
+       which account Codex is signed in to.
     """
     from . import localpath, repo_settings
 

@@ -178,15 +178,17 @@ def test_windows_shaped_drain_timeout_does_not_invent_partial_output(monkeypatch
 
 
 @pytest.mark.parametrize("confirmed", [True, False])
-def test_stopped_result_reports_workspace_stability(confirmed):
+def test_stopped_result_reports_whether_codex_may_still_run(confirmed):
     note = workspace_stability_note({"stop_requested": True, "worker_termination": {
         "pid": 42, "confirmed_dead": confirmed,
         "tree_kill": "ok" if confirmed else "census_unknown",
     }}, "workspace")
-    assert note["this_worker_may_still_be_writing"] is (not confirmed)
+    assert note["this_worker_may_still_be_running"] is (not confirmed)
+    assert note["this_worker_may_still_be_writing"] is False
+    assert "workspace_answer" not in note
     assert ("warning" in note) is (not confirmed)
     if not confirmed:
-        assert "was stopped" in note["warning"] and "may still be writing" in note["warning"]
+        assert "was stopped" in note["warning"] and "may still be running" in note["warning"]
 
 
 def test_raising_callback_leaves_worker_running(monkeypatch):
@@ -290,5 +292,3 @@ def test_executor_maps_stop_and_forwards_callback(tmp_path, monkeypatch, executo
     assert "timed_out" not in result.metadata
     assert "private error" not in str(result.metadata)
     assert attempt_resolution(result) == ("failed", "terminated" if confirmed else "timeout")
-
-

@@ -6,13 +6,7 @@ import sys
 from pathlib import Path
 
 import modelquad.paths as paths_module
-from modelquad.paths import (
-    db_path,
-    is_dev_checkout,
-    logs_dir,
-    sessions_path,
-    state_root,
-)
+from modelquad.paths import is_dev_checkout, state_root
 
 
 def test_dev_checkout_detection_follows_the_src_layout_rule(tmp_path, monkeypatch):
@@ -55,13 +49,7 @@ def test_dev_mode_state_root_uses_the_identical_construction_as_pre_v08_defaults
 
     monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: True)
 
-    assert db_path() == Path.home() / ".modelquad" / "modelquad.db"
-    assert sessions_path() == Path.home() / ".modelquad" / "sessions.json"
     assert state_root() == Path.home() / ".modelquad"
-
-
-def test_logs_dir_is_under_state_root():
-    assert logs_dir() == state_root() / "logs"
 
 
 def test_installed_copy_keeps_its_state_outside_appdata_on_windows(monkeypatch):
@@ -73,7 +61,6 @@ def test_installed_copy_keeps_its_state_outside_appdata_on_windows(monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Someone\AppData\Local")
 
     assert state_root() == Path.home() / ".local" / "share" / "modelquad"
-    assert db_path() == Path.home() / ".local" / "share" / "modelquad" / "modelquad.db"
     # Relative to the home folder: the test's isolated home may itself sit
     # under AppData (a CI runner's temp folder does).
     assert "AppData" not in state_root().relative_to(Path.home()).parts

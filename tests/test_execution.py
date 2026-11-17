@@ -19,7 +19,6 @@ from modelquad.execution import (
     CodexExecutor,
     ExecutionRequest,
     ExecutionResult,
-    OutcomeEvidence,
     WorkerTaskStatus,
     no_window_kwargs,
 )
@@ -462,120 +461,6 @@ def test_codex_strips_store_package_windows_apps_dirs_too(tmp_path, monkeypatch,
     assert "WindowsApps" not in child_path
     assert r"C:\Windows\System32" in child_path
     assert r"C:\Windows\System32\WindowsPowerShell\v1.0" in child_path
-
-
-def test_outcome_evidence_validation_and_roundtrip():
-    evidence = OutcomeEvidence(
-        process_success=True,
-        semantic_status="completed",
-        files_changed=("src/file1.py", "src/file2.py"),
-        tests_executed=True,
-        tests_passed=True,
-        build_passed=True,
-        lint_passed=True,
-        artifact_validated=True,
-        scope_matches=True,
-        fallback_used=False,
-        blocked_reason=None,
-        duration_seconds=12.5,
-        verification_level="objective",
-    )
-    payload = evidence.to_dict()
-    assert payload["verification_level"] == "objective"
-    assert payload["verified"] is True
-    assert payload["files_changed"] == ["src/file1.py", "src/file2.py"]
-
-    restored = OutcomeEvidence.from_dict(payload)
-    assert restored == evidence
-
-    # Invalid verification_level rejected
-    with pytest.raises(ValueError, match="verification_level"):
-        OutcomeEvidence(verification_level="speculative")
-
-
-def test_outcome_evidence_verified_property_semantics():
-    # Objective with tests_passed None and build_passed None -> True
-    e1 = OutcomeEvidence(verification_level="objective")
-    assert e1.verified is True
-
-    # Objective with tests_passed True and build_passed True -> True
-    e2 = OutcomeEvidence(verification_level="objective", tests_passed=True, build_passed=True)
-    assert e2.verified is True
-
-    # Objective with tests_passed False -> False
-    e3 = OutcomeEvidence(verification_level="objective", tests_passed=False)
-    assert e3.verified is False
-
-    # Objective with build_passed False -> False
-    e4 = OutcomeEvidence(verification_level="objective", build_passed=False)
-    assert e4.verified is False
-
-    # Non-objective levels are never verified
-    for level in ("semantic", "process", "none"):
-        e = OutcomeEvidence(verification_level=level, tests_passed=True, build_passed=True)
-        assert e.verified is False
-
-
-def test_execution_result_verified_completed_truth_table():
-    objective_verified = OutcomeEvidence(verification_level="objective", tests_passed=True)
-    objective_unverified = OutcomeEvidence(verification_level="objective", tests_passed=False)
-    semantic_evidence = OutcomeEvidence(verification_level="semantic")
-
-    # 1. Completed + verified objective evidence -> True
-    r1 = ExecutionResult(
-        provider="codex",
-        success=True,
-        output="ok",
-        exit_code=0,
-        task_status=WorkerTaskStatus.COMPLETED,
-        evidence=objective_verified,
-    )
-    assert r1.task_completed is True
-    assert r1.verified_completed is True
-    assert r1.to_dict()["evidence"]["verified"] is True
-
-    # 2. Completed + no evidence -> False
-    r2 = ExecutionResult(
-        provider="codex",
-        success=True,
-        output="ok",
-        exit_code=0,
-        task_status=WorkerTaskStatus.COMPLETED,
-        evidence=None,
-    )
-    assert r2.task_completed is True
-    assert r2.verified_completed is False
-    assert r2.to_dict()["evidence"] is None
-
-    # 3. Completed + unverified evidence -> False
-    r3 = ExecutionResult(
-        provider="codex",
-        success=True,
-        output="ok",
-        exit_code=0,
-        task_status=WorkerTaskStatus.COMPLETED,
-        evidence=objective_unverified,
-    )
-    assert r3.task_completed is True
-    assert r3.verified_completed is False
-
-    # 4. Non-completed + verified objective evidence -> False
-    for status in (
-        WorkerTaskStatus.FAILED,
-        WorkerTaskStatus.BLOCKED,
-        WorkerTaskStatus.PARTIAL,
-        WorkerTaskStatus.UNKNOWN,
-    ):
-        r4 = ExecutionResult(
-            provider="codex",
-            success=False,
-            output="fail",
-            exit_code=1,
-            task_status=status,
-            evidence=objective_verified,
-        )
-        assert r4.task_completed is False
-        assert r4.verified_completed is False
 
 
 def test_no_window_kwargs_branches():

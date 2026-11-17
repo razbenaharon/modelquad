@@ -435,10 +435,6 @@ def test_the_per_session_file_name_is_keyed_to_the_installation(tmp_path):
 
 # ------------------------------------------ only a delivered answer is a review done
 
-JOB = {"job_id": "j-1", "status": "running", "poll_with": "modelquad_job_wait"}
-JOB_REPLY = {"content": [{"type": "text", "text": "Codex is working on this in the background. "
-                                                  "Claude collects the answer when it is ready."},
-                         {"type": "text", "text": json.dumps(JOB)}], "structuredContent": JOB}
 NOTICE = {"status": "notice_first", "codex_started": False, "notice": ["what goes where"]}
 NOTICE_REPLY = {"content": [{"type": "text", "text": "Codex was not started. Before the first "
                                                      "Codex call, ModelQuad shows what it sends where:"},
@@ -460,9 +456,6 @@ def _gate_counts():
 
 
 @pytest.mark.parametrize("response, state", [
-    (JOB_REPLY, rr.PENDING_REPLY),
-    ([{"type": "text", "text": JOB_REPLY["content"][0]["text"]}], rr.PENDING_REPLY),
-    (JOB_REPLY["content"], rr.PENDING_REPLY),
     (NOTICE_REPLY, rr.NOT_ANSWERED),
     (NOTICE_REPLY["content"], rr.NOT_ANSWERED),
     # A run that delivered nothing: failed, by the data.
@@ -480,40 +473,6 @@ def test_what_a_delegate_reply_delivered(response, state):
     assert rr._reply_state(response) == state
 
 
-def test_a_background_job_handle_is_not_a_review_done(tmp_path):
-    _edits(tmp_path, "a.py", "b.py", "c.py")
-    assert json.loads(_stop(tmp_path))["decision"] == "block"
-    _delegate(tmp_path, JOB_REPLY)
-    assert _state(tmp_path)["review"] == "pending"
-    # The gate asked once; it does not ask again for the pending job, and it does
-    # not say a review was done: the user is told the change is not reviewed yet.
-    out = json.loads(_stop(tmp_path))
-    assert "decision" not in out
-    assert "still running in the background" in out["systemMessage"]
-    assert "has not been reviewed by Codex yet" in out["systemMessage"]
-    assert _stop(tmp_path) == "" and _stop(tmp_path, active=True) == ""
-    counts = _gate_counts()
-    assert counts.get("review_done", 0) == 0 and counts["review_pending"] == 1
-
-
-def test_a_job_started_before_the_gate_is_not_asked_for_again(tmp_path):
-    _edits(tmp_path, "a.py", "b.py", "c.py")
-    _delegate(tmp_path, JOB_REPLY)
-    out = json.loads(_stop(tmp_path))
-    assert "decision" not in out and "still running in the background" in out["systemMessage"]
-    assert _stop(tmp_path) == ""
-    # The files are still counted: nothing was reviewed.
-    assert len(_state(tmp_path)["files"]) == 3
-
-
-def test_an_answer_after_the_pending_job_clears_the_gate(tmp_path):
-    _edits(tmp_path, "a.py", "b.py", "c.py")
-    _delegate(tmp_path, JOB_REPLY)
-    _delegate(tmp_path, {"structuredContent": ANSWER_DATA})
-    assert _state(tmp_path)["review"] == "done"
-    assert _stop(tmp_path) == ""
-
-
 def test_the_first_use_notice_is_not_a_review_done(tmp_path):
     _edits(tmp_path, "a.py", "b.py", "c.py")
     assert json.loads(_stop(tmp_path))["decision"] == "block"
@@ -528,16 +487,6 @@ def test_a_run_without_an_answer_is_not_a_review_done(tmp_path):
     _delegate(tmp_path, {"structuredContent": {"output": "", "task_status": "failed"}})
     out = json.loads(_stop(tmp_path))
     assert "decision" not in out and "did not complete" in out["systemMessage"]
-
-
-def test_a_pending_consultation_is_not_asked_for_again_and_not_called_done(tmp_path):
-    _run(tmp_path, _event(tool="mcp__plugin_modelquad_modelquad__modelquad_delegate",
-                          tool_input={"task_type": "architecture", "trigger": "pre_change"},
-                          tool_response=JOB_REPLY))
-    state = _state(tmp_path)
-    assert state["consult_pending"] is True and state["consulted"] is False
-    assert _pre(tmp_path, "C:/proj/src/auth.py", granted=True) == ""
-    assert _gate_counts().get("consult_done", 0) == 0
 
 
 # ------------------------------------------------- the gate says only what happened
