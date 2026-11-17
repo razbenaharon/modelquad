@@ -151,7 +151,10 @@ def refusal(reason: str, message: str | None = None, **extra: Any) -> dict:
     """The reply for a call that started nothing."""
     payload = {"delegated": False, "executed": False, "refused": True, "started": False,
                "reason": reason, **extra}
-    if message:
+    # The sentence travels in the data: Claude Code hands Claude the data of a
+    # reply, not the lines written for a person.
+    message = message or refusal_line({"reason": reason})
+    if message != REFUSAL_FALLBACK:
         payload["message"] = message
     return payload
 

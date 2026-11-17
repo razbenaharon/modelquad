@@ -636,3 +636,16 @@ def test_an_error_codex_reports_is_named_without_its_text(project, monkeypatch):
     assert result.structured_content["reason"] == "worker_reported"
     assert result.structured_content["message"] == lines[1]
     assert [row["outcome"] for row in _ledger_rows()[0]] == [review_ledger.FAILED]
+
+
+def test_every_refusal_carries_its_sentence_in_the_data(project):
+    """Claude Code hands Claude a reply's data, not its lines (seen in a real
+    session, where a path outside the project came back as a bare code)."""
+    outside = review.package(request_for(project, files=("../other.py",)))
+    assert outside["reason"] == "supplied_file_unavailable"
+    assert outside["message"] == noshell.REFUSAL_MESSAGES["supplied_file_unavailable"]
+    missing = review.run(request_for(project, files=("nope.py",)), FakeExecutor())
+    assert missing["refused"] and missing["message"] == review.refusal_line(missing)
+    assert review.refusal(review.DUPLICATE)["message"] == review._LINES[review.DUPLICATE]
+    # A code with no sentence of its own gets none invented.
+    assert "message" not in review.refusal("some_new_code")
