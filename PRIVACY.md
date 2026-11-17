@@ -17,7 +17,9 @@ with data you send them is governed by their terms and your settings with
 them, not by this document.
 
 ModelQuad's author receives no data from the tool. Nothing ModelQuad does
-sends anything to him or to any server he runs.
+sends anything to him or to any server he runs. If you choose to, you can
+print a usage report and pass it on yourself
+([below](#the-usage-report)).
 
 ## Summary
 
@@ -449,7 +451,52 @@ first space can remain.
 | Absolute paths do not reach the ledger | `privacy.py`, `review_ledger.py`; `tests/test_privacy_paths.py` |
 | The raw Claude Code session id is not stored. It becomes a 16-character HMAC keyed by the installation id | `review_ledger.session_pseudonym` |
 | Provider credential files (the names listed above) are not opened, copied or sent to Codex. Two kinds of copies can still hold secrets you put in configuration: `host-registration-backup.json` and the `*.modelquad-backup-*` files | `execution/noshell.py`, `adapters/registration.py` |
-| Nothing is collected for telemetry | ModelQuad has no telemetry code |
+| Nothing is collected for telemetry | ModelQuad has no telemetry code. The usage report below is text you print and pass on yourself (`usage_report.py`; `tests/test_usage_report.py`) |
+
+## The usage report
+
+`modelquad review usage-report` reads the review ledger and prints a report
+of counts: readable lines first, then the same data as one JSON object.
+`--days N` sets the period (30 by default). `--out FILE` also writes the
+JSON to the file you name, and to no other place; it does not replace a file
+that exists unless you add `--force`. The report covers every project on
+this computer together, with no figure per project.
+
+ModelQuad does not send the report. The command opens the ledger read-only,
+connects to nothing and turns nothing on. Passing the text on, for example
+by e-mail or in a GitHub issue, is your own choice. If you do, the channel
+shows who you are: an e-mail carries your address, and a public issue
+carries your account.
+
+The fields, and there are no others:
+
+| Field | What it holds |
+|---|---|
+| `schema`, `kind` | The report format: `1` and `modelquad-usage-report` |
+| `modelquad_version` | This build's version |
+| `windows_major` | `10` or `11`; null when it cannot be read |
+| `python_minor` | `3.11` to `3.14`, or `other` |
+| `window_days` | The period, in days |
+| `ledger_found` | Whether a review ledger exists on this computer |
+| `calls` | The number of calls recorded in the period |
+| `calls_by_outcome` | Calls per outcome: `answered`, `withheld`, `failed`, `refused`, `not_started`, `unfinished`, `other` |
+| `calls_by_trigger` | Calls per trigger: `review_gate`, `pre_change`, `user`, `claude`, `other` |
+| `calls_by_task_kind` | Calls per task kind: `review`, `exploration`, `architecture`, `other` |
+| `completion_rounds` | The number of calls that were a completion round |
+| `calls_by_files_sent` | Calls that sent `0`, `1-3`, `4-10` or `more` files, or an `unknown` number |
+| `findings_by_severity` | Findings per severity: `high`, `medium`, `low`, `other` |
+| `findings_by_verdict` | Findings counted as `modelquad review report` counts them: `confirmed_independent`, `confirmed_claude_only`, `refuted`, `undecidable`, `unjudged`, `fixed_and_verified` |
+| `median_call_seconds` | The median call duration, to the whole second |
+| `tokens_reported_by_codex` | The input and output token totals as Codex reported them, each to the nearest thousand |
+| `gate_events` | Gate events per kind (the names in `review_ledger.GATE_EVENTS`), and `other` |
+
+Every value is a number, true or false, null, or one of the fixed words
+above. A count the ledger does not hold is null, not zero. The report holds
+no code, task text, answer, finding text, note or error text, no file,
+folder or repository name, no digest, no package, decision or installation
+id, and no time finer than the period. The Codex CLI version is not in it:
+the ledger does not record it. A small count can still point at a person
+when few people use a build.
 
 ## The installation id
 
@@ -475,6 +522,7 @@ calls then ask you each time until you set them again.
   the network rule, how long each store keeps its data, what earlier builds
   kept, and the steps under "Everything" below.
 - `modelquad review report`: the review ledger.
+- `modelquad review usage-report`: the usage report, and nothing else.
 - `modelquad settings`: your settings, and one line of history.
 - The files themselves: the ledger is plain SQLite, the rest is JSON.
 

@@ -63,6 +63,13 @@ is the install.
 
 ### Changes
 
+- **A usage report you pass on yourself.** `modelquad review usage-report`
+  prints counts from the review ledger for every project together: calls by
+  outcome, trigger and task kind, findings by severity and verdict, the
+  median duration and the token totals Codex reported, plus the ModelQuad,
+  Windows and Python versions. It holds no text, name, path or id from the
+  ledger. `--out FILE` also writes the JSON to a file you name. ModelQuad
+  does not send it; PRIVACY.md lists every field.
 - **A call is recorded when Codex starts.** The ledger row and the package
   manifest are written at the start, as `unfinished`, and replaced when the
   call ends. A session that closed in the middle of a review used to leave
