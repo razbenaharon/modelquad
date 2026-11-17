@@ -398,19 +398,17 @@ def changed_paths() -> tuple[list[str], str]:
 #: helper that takes no arguments (one that does walks what it is handed).
 REPO_WIDE_SCANS = (
     "tests/test_adapter_template_packaging.py::test_packaged_adapter_templates_exist_without_project_duplicates",
-    "tests/test_delegation_workspace_liveness.py::test_every_path_that_opens_an_attempt_records_its_workspace",
-    "tests/test_delegation_workspace_liveness.py::test_every_result_boundary_that_closes_an_attempt_carries_the_note",
     "tests/test_devenv.py::test_every_repo_wide_scan_names_a_test_that_exists",
     "tests/test_devenv.py::test_every_test_that_walks_the_repository_is_a_repo_wide_scan",
     "tests/test_devenv.py::test_the_root_conftest_cannot_reach_the_product_runtime",
     "tests/test_docs_policy.py::test_no_document_carries_a_control_byte",
     "tests/test_executable_resolution_boundary.py::test_src_launches_use_central_resolution",
+    "tests/test_mcp_tool_surface.py::test_no_mcp_module_calls_a_protected_settings_writer",
+    "tests/test_mcp_tool_surface.py::test_the_writer_scan_covers_server_py_and_the_review_flow",
     "tests/test_procutil.py::test_no_subprocess_spawn_in_src_omits_window_suppression",
     "tests/test_procutil.py::test_no_subprocess_spawn_in_tests_omits_window_suppression",
     "tests/test_scripts_no_window.py::test_every_spawning_file_carries_the_same_helper",
-    "tests/test_service_entrypoints.py::test_every_cli_service_call_site_uses_managed_lifecycle",
-    "tests/test_service_entrypoints.py::test_installed_command_entry_has_no_service_call_sites",
-    "tests/test_startup_imports.py::test_runner_launch_sources_do_not_import_mcp",
+    "tests/test_startup_imports.py::test_execution_sources_do_not_import_mcp",
     "tests/test_third_party_notices.py::test_every_python_file_carries_the_spdx_identifier",
 )
 

@@ -341,7 +341,7 @@ def _note_notice_shown(args: argparse.Namespace, notices: dict, reports: list) -
 
 PLUGIN_CHOICE_NOT_SAVED = (
     "Installed, but the plugin choice was not saved (ModelQuad could not write its "
-    "preferences.json), so a later repair may install the direct server again. Run this "
+    "preferences.json), so a later install may add the direct server again. Run this "
     "install again once the file can be written.")
 
 
@@ -396,14 +396,13 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
         refused = _refuse_unsupported_platform(args.as_json)
         if refused is not None:
             return refused
-    integrations_off = False
     method_name = "install" if args.command == "install" else "uninstall"
     notices = _install_notices(args.as_json) if method_name == "install" else {}
     results: list[dict[str, object]] = []
     for client in CLIENT_NAMES:
         try:
             descriptor = get_host_descriptor(client)
-            detected = True if integrations_off or descriptor.detect is None else bool(descriptor.detect())
+            detected = True if descriptor.detect is None else bool(descriptor.detect())
         except (OSError, ValueError) as exc:
             results.append({"client": client, "detected": False, "report": None, "error": str(exc)})
             continue
@@ -411,10 +410,7 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
             results.append({"client": client, "detected": False, "report": None, "error": None})
             continue
         target_dir = descriptor.default_target_dir()
-        # Turning integrations off removes ModelQuad entirely, including a
-        # registration predating this installation. Ordinary uninstall keeps
-        # its existing displaced-registration restoration contract.
-        before = (None, None) if integrations_off else _registration_before_uninstall(client, target_dir, method_name)
+        before = _registration_before_uninstall(client, target_dir, method_name)
         adapter = (_adapter_for(client, args, descriptor.adapter_cls) if method_name == "install"
                    else descriptor.adapter_cls())
         try:
@@ -428,15 +424,11 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
                 report = adapter.uninstall(target_dir, dry_run=args.dry_run)
         except (OSError, ValueError, BackupPersistenceError) as exc:
             # A failed uninstall still owes the user their earlier registration.
-            restore = None if integrations_off else _restore_displaced_registration(
-                client, target_dir, args, method_name, before
-            )
+            restore = _restore_displaced_registration(client, target_dir, args, method_name, before)
             results.append({"client": client, "detected": True, "report": None,
                             "error": str(exc), "restore": restore})
             continue
-        restore = None if integrations_off else _restore_displaced_registration(
-            client, target_dir, args, method_name, before
-        )
+        restore = _restore_displaced_registration(client, target_dir, args, method_name, before)
         not_saved = None
         if method_name == "install":
             if client == "claude":
@@ -458,26 +450,6 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
 
     if method_name == "install":
         _note_notice_shown(args, notices, [result for result in results if result.get("report")])
-    incomplete: list[dict[str, str]] = []
-    if integrations_off:
-        from .adapters.report import ActionKind
-
-        for result in results:
-            report = result["report"]
-            if report is None:
-                continue
-            for action in report.actions:
-                if action.kind is ActionKind.SKIPPED:
-                    incomplete.append({
-                        "client": str(result["client"]),
-                        "path": str(action.path),
-                        "detail": action.detail or "Adapter skipped removal; wiring may remain.",
-                        "next_step": (
-                            "Inspect this file and remove the remaining ModelQuad wiring, "
-                            "preserving unrelated settings, then rerun modelquad integrations off."
-                        ),
-                    })
-
     if args.as_json:
         print(
             json.dumps(
@@ -502,15 +474,12 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
         )
     else:
         _render_global_adapter_results(results, args.command)
-        for item in incomplete:
-            print(f"Removal incomplete: {item['client']} {item['path']}: {item['detail']}")
-            print(item["next_step"])
     failed_restore = any(
         isinstance(result.get("restore"), dict)
         and result["restore"].get("status") == "failed"
         for result in results
     )
-    return 1 if incomplete or any(result["error"] is not None for result in results) or failed_restore else 0
+    return 1 if any(result["error"] is not None for result in results) or failed_restore else 0
 
 
 def _adapter_targets(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[tuple[str, Path], ...]:
@@ -706,6 +675,13 @@ def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
     from .disclosure import DATA_FLOW, print_lines
 
     folder = None if args.everywhere else Path(args.project or Path.cwd())
+    if folder is not None:
+        from .localpath import reason as local_reason
+
+        # Before any file-system call: a network share is never opened.
+        if local_reason(os.path.abspath(folder)) is not None:
+            print(_NOT_LOCAL_FOLDER, file=sys.stderr)
+            return 2
     if folder is not None and not folder.is_dir():
         print(f"The folder does not exist: {folder}", file=sys.stderr)
         return 2
@@ -779,8 +755,16 @@ def _run_review_command(args: argparse.Namespace) -> int:
             return 1
         print(f"Recorded your verdict ({count}). Your word outranks Claude's in the report.")
         return 0
-    workspace = None if args.all_projects else review_ledger.workspace_id(
-        Path(args.project or Path.cwd()))
+    workspace = None
+    if not args.all_projects:
+        from .localpath import reason as local_reason
+
+        project = Path(args.project or Path.cwd())
+        # Before any file-system call: a network share is never opened.
+        if local_reason(os.path.abspath(project)) is not None:
+            print(_NOT_LOCAL_FOLDER, file=sys.stderr)
+            return 2
+        workspace = review_ledger.workspace_id(project)
     try:
         if args.findings:
             decisions = review_ledger.list_findings(days=args.days, workspace=workspace)
@@ -965,7 +949,9 @@ def _run_package_command(args: argparse.Namespace) -> int:
     folder = os.path.abspath(args.project or os.getcwd())
     request = review.ReviewRequest(task_type=args.task_type, prompt=args.task,
                                    working_directory=folder, files=tuple(args.files))
-    result = review.gate(request, review.Session(), starts_codex=False) or review.package(request)
+    policies: list = []
+    result = (review.gate(request, review.Session(), starts_codex=False, policy_out=policies)
+              or review.package(request, policies[0].caps if policies else None))
     if args.as_json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:

@@ -14,7 +14,7 @@ The rule: the newest version wins; on an equal version the official install
 wins; a PATH copy older than the chosen CLI is reported as stale, never
 updated or removed. With no official install, or no readable version, the
 PATH lookup stands exactly as before. Every Codex lookup -- worker launch,
-version capture, quota read and doctor -- resolves through here, so the CLI
+version capture and doctor -- resolves through here, so the CLI
 that runs is the CLI that is recorded.
 
 An npm install puts a batch launcher (``codex.cmd``) on PATH, and a batch
@@ -78,15 +78,6 @@ def official_candidates() -> list[Path]:
     found.append(desktop / "codex.exe")
     found.append(Path(root) / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe")
     return [path for path in found if path.is_file()]
-
-
-def is_desktop_version_path(path: str | Path) -> bool:
-    """Whether an executable lives in a disposable desktop version folder."""
-    root = os.environ.get("LOCALAPPDATA")
-    if not root:
-        return False
-    desktop = Path(root) / "OpenAI" / "Codex" / "bin"
-    return Path(path).parent.parent == desktop
 
 
 def project_roots() -> tuple[str, ...]:

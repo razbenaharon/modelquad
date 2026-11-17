@@ -34,17 +34,6 @@ MCP_COMMAND = "modelquad-mcp"
 MANAGED_BLOCK_TAG = "modelquad"
 
 
-def qualified_tool_name(tool: str, *, server: str = MCP_SERVER_NAME) -> str:
-    """Return the ``mcp__<server>__<tool>`` name a host reports for one of our tools.
-
-    Hosts address MCP tools by this composed form, so anything matching on tool
-    identity has to compose it the same way rather than hard-coding a string
-    that silently stops matching the moment either half is renamed.
-    """
-
-    return f"mcp__{server}__{tool}"
-
-
 def installed_version(default: str | None = None) -> str | None:
     """Return the installed distribution version.
 

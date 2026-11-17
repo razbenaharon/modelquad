@@ -8,7 +8,7 @@ The rule
 ModelQuad is installed with pip, which puts the ``modelquad`` and
 ``modelquad-mcp`` console commands on PATH. Those bare names are the canonical
 registration: Claude Code's MCP entry, its PreToolUse gate, its status line
-and its SessionStart reminder all invoke them by name, so the copy the user
+and its hooks all invoke them by name, so the copy the user
 installed is the copy the host launches, and an upgrade with pip needs no
 reinstall of the host wiring.
 

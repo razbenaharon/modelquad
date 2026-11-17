@@ -43,9 +43,8 @@ MAX_REASON_CHARS = 400
 MAX_NOTE_CHARS = 200
 MAX_FINDINGS = 50
 
-#: Why a Codex call was made. ``split_quota``: a step ``modelquad_split``
-#: proposed for Codex because Claude was near its limit (``split.QUOTA_TRIGGER``).
-TRIGGERS = ("review_gate", "pre_change", "user", "claude", "split_quota")
+#: Why a Codex call was made.
+TRIGGERS = ("review_gate", "pre_change", "user", "claude")
 VERDICTS = ("confirmed", "refuted", "undecidable")
 #: Evidence a verdict rests on. The first three are independent of Claude's
 #: own reading; ``code_reading`` is Claude's judgment and is never counted as
@@ -780,38 +779,6 @@ def location_label(file, line, line_end=None) -> str:
     if line is None:
         return str(file)
     return f"{file}:{line}-{line_end}" if line_end else f"{file}:{line}"
-
-
-def delivered_answers(decision_ids, *, path: Path | None = None) -> dict[str, bool] | None:
-    """{decision_id: whether an answer was delivered} for the calls the ledger recorded; read-only.
-
-    The ledger saw each reply, so it knows whether an answer reached Claude;
-    the history database does not keep that. A call the ledger has no row
-    for is absent from the result. None when the ledger cannot be read.
-    """
-    ids = [item for item in decision_ids if isinstance(item, str) and item]
-    target = Path(path) if path is not None else ledger_path()
-    if not ids or not target.is_file():
-        return {}
-    try:
-        conn = sqlite3.connect(f"{target.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0)
-    except sqlite3.Error:
-        return None
-    try:
-        if conn.execute("PRAGMA user_version").fetchone()[0] > SCHEMA_VERSION:
-            return None
-        found: dict[str, bool] = {}
-        for start in range(0, len(ids), 500):
-            chunk = ids[start:start + 500]
-            marks = ",".join("?" * len(chunk))
-            for row in conn.execute(
-                    f"SELECT decision_id, outcome FROM runs WHERE decision_id IN ({marks})", chunk):
-                found[row[0]] = row[1] == ANSWERED
-        return found
-    except sqlite3.Error:
-        return None
-    finally:
-        conn.close()
 
 
 def list_findings(*, days: float = 30.0, workspace: str | None = None, limit: int = 20,

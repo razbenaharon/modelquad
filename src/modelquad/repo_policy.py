@@ -479,7 +479,7 @@ UNUSABLE_MESSAGE = (
 def load_from_root(root) -> RepoPolicy:
     """The policy of the file in ``root`` itself, read now; starts no process.
 
-    The SessionStart hook uses this with the nearest folder holding ``.git``
+    The review hook uses this with the nearest folder holding ``.git``
     (the fallback :func:`find_root` uses when Git cannot answer), so it stays
     within its time budget. Never raises; fails closed like :func:`load`.
     """

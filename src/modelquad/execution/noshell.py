@@ -1303,12 +1303,6 @@ def sent_entry(name, text):
 
 #: The most files one answer may name for a follow-up call.
 MAX_NEEDED_FILES = 8
-#: Beside those files in a reply. The follow-up is a new call with its own
-#: approval; nothing is sent because an answer named a file.
-NEEDED_FILES_NOTE = (
-    "Codex said these files would have helped and they were not sent. You may offer the "
-    "user a follow-up call that passes them in files. Do not call without the user's "
-    "agreement.")
 
 
 def needed_files(output, workspace, sent=()):
@@ -1412,7 +1406,7 @@ AUDIT_REASONS = frozenset({
     "total_byte_cap", "read_byte_cap", "elapsed_work_cap", "file_unavailable",
     "candidate_count_cap", "omission_count_cap", "file_count_cap", "rendered_prompt_cap",
 })
-APPROVALS = frozenset({"delegate", "handoff"})
+APPROVALS = frozenset({"delegate"})
 
 
 def _audit_path(value):

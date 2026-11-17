@@ -85,15 +85,3 @@ def upsert_json_key(
     change = set_key(staged.payload, key_path, value) if staged.refusal is None else UNCHANGED
     return staged.action(change, dry_run=dry_run)
 
-
-def remove_json_key(
-    path: Path,
-    key_path: tuple[str, ...],
-    *,
-    dry_run: bool,
-) -> FileAction:
-    """Remove one nested JSON key from a file, backing the file up first."""
-
-    staged = StagedJson.load(path)
-    change = delete_key(staged.payload, key_path) if staged.refusal is None else UNCHANGED
-    return staged.action(change, dry_run=dry_run)

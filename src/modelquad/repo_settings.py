@@ -21,7 +21,7 @@ the key is taken over the folder itself. Resetting the installation id
 (``modelquad privacy --reset-identity``) unlinks every stored entry.
 
 The key is computed from the file system alone, without starting Git, so the
-SessionStart hook can use it within its time budget: the nearest folder holding
+review hook can use it within its time budget: the nearest folder holding
 ``.git``; a ``.git`` file's ``gitdir:`` line and that folder's ``commondir``
 are followed the way Git does, and the result is the OS-canonical folder.
 
@@ -35,7 +35,7 @@ Precedence (design memo 5.3), computed in one place, :func:`effective`:
   the global ``proactive`` setting; then the repo file's
   ``offers.codex = "on_request"`` may only lower the result.
 
-Imports stay light: the SessionStart hook reads this.
+Imports stay light: the review hook reads this.
 """
 
 from __future__ import annotations

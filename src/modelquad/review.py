@@ -259,8 +259,12 @@ def notice() -> dict | None:
     return payload
 
 
-def gate(request: ReviewRequest, session: Session, *, starts_codex: bool = True) -> dict | None:
+def gate(request: ReviewRequest, session: Session, *, starts_codex: bool = True,
+         policy_out: list | None = None) -> dict | None:
     """Every reason not to go on, in order; None to go on.
+
+    ``policy_out``, when given, receives the repository policy this gate read,
+    so the caller packs under the same caps without reading the file again.
 
     ``starts_codex`` is False for a package preview: the consent gates that
     protect a Codex start (the standing grant, the first-use notice) do not
@@ -294,8 +298,10 @@ def gate(request: ReviewRequest, session: Session, *, starts_codex: bool = True)
         return unusable
     if request.task_type not in repo_policy.TASK_KINDS:
         return refusal("task_type_not_read_only")
-    repo_refusal, _policy = repo_policy.gate(request.working_directory, request.task_type,
-                                             files=request.files)
+    repo_refusal, policy = repo_policy.gate(request.working_directory, request.task_type,
+                                            files=request.files)
+    if policy_out is not None and policy is not None:
+        policy_out.append(policy)
     if repo_refusal is not None:
         return refusal(repo_refusal["reason"], repo_refusal["message"])
     if starts_codex:
@@ -350,7 +356,7 @@ def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict])
     }
 
 
-def package(request: ReviewRequest) -> dict:
+def package(request: ReviewRequest, caps: dict | None = None) -> dict:
     """What a run of this request would send now. Starts nothing.
 
     Packs the files exactly as the run does (the read rules, the secret
@@ -359,7 +365,7 @@ def package(request: ReviewRequest) -> dict:
     """
     from .execution import noshell
 
-    caps = _caps(request.working_directory)
+    caps = caps if caps is not None else _caps(request.working_directory)
     report: dict = {}
     try:
         noshell.supplied_prompt(request.prompt, request.working_directory, files=list(request.files),
@@ -463,7 +469,8 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     from .models import TaskType
 
     clock = clock or time.monotonic
-    refused = gate(request, session)
+    policies: list = []
+    refused = gate(request, session, policy_out=policies)
     if refused is not None:
         return refused
     round_number, refused = _round(request)
@@ -471,7 +478,7 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         return refused
     # What will be sent, by content, read now: the executor compares it with
     # what it packs at launch, so a file that changes in between is not sent.
-    shown = package(request)
+    shown = package(request, policies[0].caps if policies else None)
     if shown.get("refused"):
         return shown
     if request.package_id is not None and shown["package_id"] != request.package_id:

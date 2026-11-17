@@ -8,17 +8,16 @@ each changed file once, backing up its original bytes immediately before that
 write (see :mod:`staging`). A file that cannot be read safely is skipped with a
 plain reason; the others still proceed.
 
-The global footprint is deliberately small: the ``/modelquad`` skill and six
-user-only command skills (``/modelquad-review``, ``/modelquad-handoff``,
-``/modelquad-quota``, ``/modelquad-setup``, ``/modelquad-split``,
-``/modelquad-settings``), the MCP
-server entry (which carries its own tool ``timeout``), the status line when the
-user has none, and the SessionStart reminder. The model guidance comes from the
-MCP server's ``instructions`` (``server_instructions.py``), so nothing is
-written into the user's global ``CLAUDE.md``. Install and uninstall also take
-back what earlier builds added -- the ``CLAUDE.md`` managed block, the global
-``env.MCP_TOOL_TIMEOUT`` and the advisory PreToolUse gate hook -- each only
-when it is provably ModelQuad's, and each with a backup.
+The global footprint is deliberately small: the ``/modelquad`` skill, three
+user-only command skills (``/modelquad-review``, ``/modelquad-setup``,
+``/modelquad-settings``) and the MCP server entry (which carries its own tool
+``timeout``). The model guidance comes from the MCP server's ``instructions``
+(``server_instructions.py``), so nothing is written into the user's global
+``CLAUDE.md``. Install and uninstall also take back what earlier builds added
+-- the quota status line, the SessionStart reminder, the command skills for
+handoff, quota and division of work, the ``CLAUDE.md`` managed block, the
+global ``env.MCP_TOOL_TIMEOUT`` and the advisory PreToolUse gate hook -- each
+only when it is provably ModelQuad's, and each with a backup.
 """
 
 from __future__ import annotations
@@ -94,7 +93,7 @@ _REMOVED_GATE = (
     "ModelQuad's guidance now comes from its MCP server."
 )
 _LEFT_TO_PLUGIN = "Removed ModelQuad's server entry; the ModelQuad plugin supplies the server."
-_REMINDER_TO_PLUGIN = "Removed ModelQuad's SessionStart reminder; the ModelQuad plugin runs it."
+_REMINDER_TO_PLUGIN = "Removed the SessionStart reminder an earlier version added; this version has none."
 _FOREIGN_SERVER = (
     "A modelquad server entry that ModelQuad's install did not write was left in place. "
     "Claude Code starts it next to the plugin's server; remove it yourself to keep one."
@@ -111,14 +110,6 @@ def _status_line_command() -> str:
     return hostruntime.integration_command(*_STATUS_LINE_ARGUMENTS, shell="bash")
 
 
-def segment_command() -> str:
-    """``modelquad usage-hook claude --segment`` spelled for Claude Code's bash."""
-
-    from .. import hostruntime
-
-    return hostruntime.integration_command(*SEGMENT_ARGUMENTS, shell="bash")
-
-
 def mcp_config_path(target_dir: Path) -> Path:
     """``~/.claude.json`` for the default ``~/.claude`` target."""
 
@@ -126,43 +117,11 @@ def mcp_config_path(target_dir: Path) -> Path:
     return target.parent / f"{target.name}.json"
 
 
-def read_hook_commands(target_dir: Path) -> tuple[str, ...]:
-    """Expose Claude's recorded gate wiring without duplicating its settings path."""
-    return wired_commands(target_dir / "settings.json", _HOOK_EVENT)
-
-
 def read_status_line_command(target_dir: Path) -> str | None:
     """Read Claude's status line; ownership is a separate structural decision."""
     from .cliintegration import read_status_line_command as read_command
 
     return read_command(target_dir / "settings.json")
-
-
-def status_line_recipe(command: str | None) -> str | None:
-    """The one line that adds ModelQuad to a status line the user already has.
-
-    None when there is nothing to add: no status line (install writes its own),
-    ModelQuad's own, or a user line that already runs ``usage-hook claude``.
-    ccstatusline gets its Custom Command widget; any other command gets a
-    replacement that runs theirs and then ours on the same input, so a
-    multi-line status line (claude-hud) keeps every line.
-    """
-
-    if not isinstance(command, str) or not command.strip():
-        return None
-    if owns_cli_command(command, _STATUS_LINE_ARGUMENTS) or "usage-hook claude" in command:
-        return None
-    segment = segment_command()
-    if "ccstatusline" in command.casefold():
-        return (
-            "In ccstatusline (run it with no arguments to open its editor), add a "
-            f"Custom Command widget with this command: {segment}"
-        )
-    return (
-        "Set statusLine.command in ~/.claude/settings.json to: "
-        f"input=$(cat); printf '%s' \"$input\" | {command.strip()}; "
-        f"printf '%s' \"$input\" | {segment}"
-    )
 
 
 class _OwnedFile(StagedText):

@@ -144,18 +144,6 @@ def _linked(info) -> bool:
     return stat.S_ISLNK(info.st_mode) or bool(getattr(info, 'st_file_attributes', 0) & 0x400)
 
 
-def _safe_directory(directory: Path) -> Path:
-    if '..' in directory.parts:
-        # Normalizing first could hide a link traversed by the worker's cwd.
-        raise _Unavailable
-    directory = Path(os.path.abspath(directory))
-    for ancestor in (*reversed(directory.parents), directory):
-        info = ancestor.lstat()
-        if _linked(info) or not stat.S_ISDIR(info.st_mode):
-            raise _Unavailable
-    return directory.resolve(strict=True)
-
-
 def snapshot(directory: str | Path) -> Snapshot | None:
     """Return None: changed-files observation is disabled."""
     return None

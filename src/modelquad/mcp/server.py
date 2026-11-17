@@ -213,8 +213,11 @@ async def modelquad_review_package(
                                    working_directory=working_directory, files=tuple(files or ()))
 
     def build() -> dict:
-        refused = review.gate(request, _session(), starts_codex=False)
-        return refused if refused is not None else review.package(request)
+        policies: list = []
+        refused = review.gate(request, _session(), starts_codex=False, policy_out=policies)
+        if refused is not None:
+            return refused
+        return review.package(request, policies[0].caps if policies else None)
 
     payload = await anyio.to_thread.run_sync(build)
     return _result(payload, review.package_lines(payload))
