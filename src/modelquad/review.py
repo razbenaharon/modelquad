@@ -374,7 +374,8 @@ def package(request: ReviewRequest) -> dict:
                       [item for item in report.get("skipped", [])
                        if item.get("reason") in noshell.AUDIT_REASONS])
     lowered = {key: value for key, value in caps.items()
-               if key in ("max_files", "max_total_bytes") and type(value) is int}
+               if key in ("max_files", "max_total_bytes") and type(value) is int
+               and value < result["limits"][key]}
     if lowered:
         result["limits"].update(lowered)
         result["limits"]["lowered_by"] = ".modelquad.toml"
@@ -455,7 +456,7 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     """One review, start to finish. Returns the reply's data; never raises for a refusal."""
     import time
 
-    from . import procutil, repo_policy, review_ledger
+    from . import procutil, review_ledger
     from .execution import noshell
     from .execution.base import POLICY_REFUSAL_REASONS, workspace_stability_note
     from .execution.closed import closed_result

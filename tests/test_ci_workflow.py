@@ -84,7 +84,7 @@ def test_installs_the_extras_the_suite_needs(job: dict):
     install = re.search(r'pip install "\.\[([^\]]+)\]"', _commands(job))
     assert install is not None, "the package is not installed from the checkout"
     # The MCP SDK is a core dependency; `mcp` survives only as an empty alias.
-    assert set(install.group(1).split(",")) == {"dev", "service"}
+    assert set(install.group(1).split(",")) == {"dev"}
 
 
 def test_the_state_root_is_isolated_before_anything_runs(job: dict):

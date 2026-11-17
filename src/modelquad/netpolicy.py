@@ -31,8 +31,6 @@ before routing can pick it.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
-from typing import Any
 
 #: The category for a provider's own API that ModelQuad would call directly.
 PROVIDER_API_CATEGORY = "provider_api"
@@ -102,33 +100,3 @@ def install_loopback_guard() -> None:
         sys.addaudithook(_audit)
         _guard_installed = True
     guard_active = True
-
-
-@dataclass(frozen=True)
-class NetworkPolicyDecision:
-    """Policy decision governing an outbound network call from ModelQuad's process."""
-
-    allowed: bool
-    category: str
-    reason: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "allowed": self.allowed,
-            "category": self.category,
-            "reason": self.reason,
-        }
-
-
-def providers_refused_by_policy(*, registry: Any = None) -> dict[str, str]:
-    """Providers routing must not select, mapped to why.
-
-    Every provider whose work would be an API call from ModelQuad's own
-    process is refused: the loopback guard would stop that call. Refusing it
-    here, before routing, means the user sees a provider that was never
-    eligible rather than a task assigned somewhere it cannot run.
-    """
-
-    from .registry import api_execution_providers
-
-    return {name: LOOPBACK_ONLY_REASON for name in api_execution_providers(registry)}

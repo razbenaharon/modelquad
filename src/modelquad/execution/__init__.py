@@ -26,7 +26,6 @@ if TYPE_CHECKING:
         parse_completion_envelope,
     )
     from .codex import CodexExecutor
-    from .manager import ExecutionManager
 
 _EXPORTS = {
     "DEFAULT_TIMEOUT_SECONDS": ".base",
@@ -41,13 +40,11 @@ _EXPORTS = {
     "no_window_kwargs": ".base",
     "parse_completion_envelope": ".base",
     "CodexExecutor": ".codex",
-    "ExecutionManager": ".manager",
 }
 
 __all__ = [
     "CodexExecutor",
     "DEFAULT_TIMEOUT_SECONDS",
-    "ExecutionManager",
     "ExecutionRequest",
     "ExecutionResult",
     "Executor",

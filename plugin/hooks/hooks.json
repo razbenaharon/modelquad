@@ -1,21 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "modelquad",
-            "args": [
-              "hook-pending",
-              "claude"
-            ],
-            "timeout": 3
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|mcp__.*modelquad_delegate",
@@ -64,8 +48,5 @@
         ]
       }
     ]
-  },
-  "modules": [
-    "./quota-band.tsx"
-  ]
+  }
 }

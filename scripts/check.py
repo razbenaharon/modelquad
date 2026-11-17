@@ -674,15 +674,13 @@ def check_focused() -> int:
 
 _LINK = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)]+)\)")
 
-#: `AGENTS.md` "Current state" states four numbers that live in code. A wrong
+#: `AGENTS.md` "Current state" states two numbers that live in code. A wrong
 #: number in the orientation document is worse than an absent one, because it
 #: is the file an arriving agent trusts first. Each entry is
 #: (label, module-relative path, constant name).
 CURRENT_STATE_FACTS = (
     ("Version", "__init__.py", "__version__"),
-    ("DB schema", "service/db.py", "SCHEMA_VERSION"),
-    ("router engine", "router.py", "ROUTER_ENGINE_VERSION"),
-    ("outcome assessor", "outcome.py", "ASSESSOR_VERSION"),
+    ("review ledger schema", "review_ledger.py", "SCHEMA_VERSION"),
 )
 
 #: `VAR=value command` -- POSIX-only. PowerShell rejects it outright, and this
@@ -734,11 +732,11 @@ def _check_current_state() -> list[str]:
     if not agents.is_file():
         return ["AGENTS.md is missing"]
     line = next(
-        (l for l in agents.read_text(encoding="utf-8").splitlines() if "DB schema" in l),
+        (l for l in agents.read_text(encoding="utf-8").splitlines() if "review ledger schema" in l),
         None,
     )
     if line is None:
-        return ["AGENTS.md states no 'DB schema' line in Current state"]
+        return ["AGENTS.md states no 'review ledger schema' line in Current state"]
 
     problems: list[str] = []
     for label, module_relpath, constant in CURRENT_STATE_FACTS:
@@ -823,36 +821,27 @@ WORDING_SERVER_INSTRUCTIONS = "src/modelquad/adapters/server_instructions.py"
 #: docstring of a `modelquad_*` function, which is an MCP tool's description.
 WORDING_CODE_SOURCES = (
     "src/modelquad/mcp/server.py",
-    "src/modelquad/mcp/jobs_tools.py",
-    "src/modelquad/mcp/presentation.py",
-    "src/modelquad/split.py",
-    "src/modelquad/split_summary.py",
+    "src/modelquad/review.py",
+    "src/modelquad/switch.py",
+    "src/modelquad/setupcheck.py",
+    "src/modelquad/settings_view.py",
+    "src/modelquad/grant.py",
     "src/modelquad/disclosure.py",
-    "src/modelquad/onboarding.py",
-    "src/modelquad/doctor.py",
     "src/modelquad/cli.py",
     "src/modelquad/repo_policy.py",
     "src/modelquad/repo_settings.py",
-    "src/modelquad/plans.py",
-    "src/modelquad/assistance.py",
-    "src/modelquad/adapters/pending_reminder.py",
+    "src/modelquad/adapters/review_reminder.py",
     "src/modelquad/adapters/file_security.py",
     "src/modelquad/execution/noshell.py",
     "src/modelquad/execution/base.py",
-    "src/modelquad/usage/claude.py",
 )
-#: Scanned as plain text: the desktop band's source.
-WORDING_PLAIN_CODE_SOURCES = ("plugin/hooks/",)
+#: Scanned as plain text; none at present (the desktop quota band is gone).
+WORDING_PLAIN_CODE_SOURCES = ()
 WORDING_PLAIN_CODE_SUFFIXES = frozenset({".tsx"})
 #: A stored value a scanned string must be able to name, quoted as code
 #: (`routing`, 'routing:7', "routing"). Only these exact quoted tokens are
 #: skipped; the bare word still fails. Keep this list tiny, and say why.
-BANNED_PHRASE_ALLOWED_IDENTIFIERS = frozenset({
-    # The history keeps two record kinds, "routing" and "execution"
-    # (service/db.py); `modelquad_activity_detail` and `modelquad history
-    # --detail` take the kind as typed. Renaming it would break stored data.
-    "routing",
-})
+BANNED_PHRASE_ALLOWED_IDENTIFIERS = frozenset()
 
 #: Between two words of a phrase: up to three other words, across line breaks.
 _GAP = r"(?:\W+\w+){0,3}?\W+"
@@ -943,10 +932,6 @@ BANNED_PHRASE_ALLOWED_LINES = frozenset({
     # unchanged"); "endorsed by or sponsored by" is the standard form a
     # reader looks for.
     "ModelQuad is an independent project. It is not affiliated with, endorsed by",
-    # presentation.py `_REFUSAL_LINES`: the start of a closed reason code that
-    # routing_policy.py writes and history stores; the table maps it to a
-    # plain sentence, so a person never reads it.
-    "routing is paused",
 })
 
 _BANNED = tuple((label, re.compile(pattern, re.IGNORECASE)) for label, pattern in BANNED_PHRASES)

@@ -425,6 +425,11 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
         event = _read_event(stdin, clock, deadline)
         if event is None:
             return 0
+        from modelquad import switch
+        if switch.enabled() is not True:
+            # ModelQuad is off (or its switch cannot be read): no reminder and
+            # no gate asks for a Codex call that would only be refused.
+            return 0
         name = event["hook_event_name"]
         tool = event.get("tool_name")
         session = event.get("session_id")

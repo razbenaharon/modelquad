@@ -451,7 +451,7 @@ def gate(working_directory, task_type, *, files=(), usage_directory=None):
        (``plans.reported_codex_kind``) in ``usage_directory`` (ModelQuad's
        default usage folder when None).
     """
-    from . import localpath, plans, repo_settings
+    from . import localpath, repo_settings
 
     if localpath.reason(working_directory) is not None:
         return {"reason": localpath.UNUSABLE, "message": UNUSABLE_MESSAGE}, None
@@ -464,15 +464,10 @@ def gate(working_directory, task_type, *, files=(), usage_directory=None):
     if file_in_other_repository(working_directory, files):
         return {"reason": FILE_OUTSIDE_REPO, "message": message(FILE_OUTSIDE_REPO)}, None
     policy = load(working_directory)
-    kind = plans.UNKNOWN
-    if policy.refusal is None and policy.account == "workspace":
-        try:
-            if usage_directory is None:
-                from .providers.base import DEFAULT_USAGE_DIRECTORY as usage_directory
-            kind = plans.reported_codex_kind(Path(usage_directory))
-        except Exception:  # noqa: BLE001 -- an unreadable account reads unknown, and refuses
-            kind = plans.UNKNOWN
-    return refusal(policy, task_type, account_kind=kind), policy
+    # This build does not read which account Codex is signed in to, so the
+    # account kind is unknown, and a repository that requires a work account
+    # refuses (unknown never passes for the account it requires).
+    return refusal(policy, task_type, account_kind="unknown"), policy
 
 
 UNUSABLE_MESSAGE = (

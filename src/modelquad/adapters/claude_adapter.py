@@ -32,7 +32,6 @@ from ..branding import CLI_COMMAND, MANAGED_BLOCK_TAG, MCP_COMMAND, MCP_SERVER_N
 from .backup import backup_if_exists
 from .cliintegration import (
     owns_cli_command,
-    plan_owned_status_line,
     plan_remove_owned_status_line,
 )
 from .codex_hooks import pending_action, plan_pending_hook
@@ -505,8 +504,9 @@ class ClaudeAdapter:
     """Install Claude Code's fully-owned skill and MCP configuration entry.
 
     With ``via_plugin`` the ModelQuad plugin supplies the server, the commands
-    and the reminder, so install keeps only the status line and takes back its
-    own copies of the rest: Claude Code would otherwise run each twice.
+    and the hooks, so install takes back its own copies: Claude Code would
+    otherwise run each twice. Either way install removes what earlier builds
+    wrote and this one no longer has (a quota status line, a SessionStart note).
     ``None`` reads the choice ``modelquad install claude --plugin`` saved.
     """
 
@@ -523,8 +523,6 @@ class ClaudeAdapter:
         if self.via_plugin:
             return self._install_beside_plugin(Path(target_dir), dry_run=dry_run)
         destination = Path(target_dir)
-        # Resolve the shell command before the first filesystem write.
-        status_line_command = _status_line_command()
         with adapters_template_dir(self.name) as templates:
             skill_contents = _skill_templates(templates)
             mcp_value = _mcp_template_value(templates)
@@ -546,12 +544,11 @@ class ClaudeAdapter:
         retire: tuple[str, ...] = ()
         if settings.refusal is None:
             payload = settings.payload
-            status_change = plan_owned_status_line(
-                payload, _STATUS_LINE_ARGUMENTS, status_line_command, status_type="command"
-            )
+            # Earlier builds wrote a quota status line and a SessionStart note; both go.
+            status_change = plan_remove_owned_status_line(payload, _STATUS_LINE_ARGUMENTS)
             gates = _plan_remove_gates(payload)
             timeout_change, retire = _plan_remove_tool_timeout(settings)
-            pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run)
+            pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run, remove=True)
 
         for staged in (*skills.values(), mcp, policy, settings):
             staged.commit(dry_run=dry_run)
@@ -570,13 +567,12 @@ class ClaudeAdapter:
         return InstallReport(self.name, dry_run, tuple(actions))
 
     def _install_beside_plugin(self, destination: Path, *, dry_run: bool) -> InstallReport:
-        """The status line only; ModelQuad's own server, commands and reminder go.
+        """ModelQuad's own server, commands and earlier hooks go; the plugin has them.
 
         Each removal takes only what is provably ModelQuad's, with a backup,
         exactly as uninstall does. The report keeps install's order.
         """
 
-        status_line_command = _status_line_command()
         with adapters_template_dir(self.name) as templates:
             mcp_value = _mcp_template_value(templates)
 
@@ -591,9 +587,8 @@ class ClaudeAdapter:
         retire: tuple[str, ...] = ()
         if settings.refusal is None:
             payload = settings.payload
-            status_change = plan_owned_status_line(
-                payload, _STATUS_LINE_ARGUMENTS, status_line_command, status_type="command"
-            )
+            # Earlier builds wrote a quota status line and a SessionStart note; both go.
+            status_change = plan_remove_owned_status_line(payload, _STATUS_LINE_ARGUMENTS)
             gates = _plan_remove_gates(payload)
             timeout_change, retire = _plan_remove_tool_timeout(settings)
             pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run, remove=True)

@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from ..models import NETWORK_POLICY_REFUSED, TaskType
-from ..action_authority import TaskAuthority
 # Re-exported for the existing MCP observer and caller publication boundary.
 from .lifecycle import CallerWaitHandle, TerminalResolution
 
@@ -352,7 +351,7 @@ class ExecutionRequest:
     on_packed: Any = None
     stop_requested: Any = None
     # None is explicitly legacy/unmigrated; it is not implicit Host authority.
-    action_authority: TaskAuthority | None = None
+    action_authority: Any = None
 
     def __post_init__(self) -> None:
         working_directory = Path(self.working_directory).resolve()
@@ -381,10 +380,6 @@ class ExecutionRequest:
             validate_cli_token(self.reasoning_effort, "reasoning_effort")
         if self.agent_runtime is not None:
             validate_cli_token(self.agent_runtime, "agent_runtime")
-        if self.action_authority is not None:
-            if not isinstance(self.action_authority, TaskAuthority):
-                raise ValueError("action_authority must be a typed TaskAuthority")
-            self.action_authority.validate_consultation(self.task_type in READ_ONLY_TASK_TYPES)
 
     @property
     def authority_status(self) -> str:
@@ -403,8 +398,6 @@ class ExecutionRequest:
             "metadata": self.metadata,
             "agent_runtime": self.agent_runtime,
         }
-        if self.action_authority is not None:
-            result["action_authority"] = self.action_authority.to_dict()
         return result
 
 

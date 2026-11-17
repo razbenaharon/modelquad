@@ -50,24 +50,6 @@ def _claude_installed() -> bool | None:
     return None
 
 
-def _host_line(db_path) -> str:
-    from .service import history as service_history
-
-    installed = _claude_installed()
-    if installed is False:
-        return ("1. ModelQuad in Claude Code: not installed "
-                "(run modelquad install claude, or install the plugin).")
-    if installed is None:
-        return "1. ModelQuad in Claude Code: unknown (whether it is installed could not be read)."
-    try:
-        hosts = service_history.get_launch_state(db_path)["disconnected_hosts"]
-    except (service_history.LaunchStateUnavailable, OSError, ValueError, sqlite3.Error):
-        return "1. ModelQuad in Claude Code: unknown (its launch settings could not be read)."
-    if "claude" in hosts:
-        return "1. ModelQuad in Claude Code: off (disconnected: Claude Code starts no new Codex work)."
-    return "1. ModelQuad in Claude Code: on (connected)."
-
-
 def _mode_lines(folder: Path) -> tuple[list[str], bool]:
     """The mode lines, and whether this folder's repository has its own grant."""
     from . import grant, repo_settings
@@ -131,25 +113,6 @@ def _history_line(folder: Path) -> str:
         text += (f"; findings unknown for {data['runs_with_unknown_findings']} answer(s) "
                  "not in the findings format")
     return text + "."
-
-
-def lines(folder: Path, db_path) -> list[str]:
-    """Everything ``modelquad settings`` prints for this folder."""
-    folder = Path(folder)
-    mode_lines, own_grant = _mode_lines(folder)
-    out = ["ModelQuad settings", _host_line(db_path), *mode_lines, _history_line(folder), "",
-           "To change them (pick it in /modelquad:settings, or run it in your own terminal):",
-           "  ModelQuad off in Claude Code:  modelquad host disconnect claude",
-           "  ModelQuad on in Claude Code:   modelquad host connect claude",
-           "  Automatic in every folder:     modelquad settings auto on --global --yes"
-           " (it shows what that means first)",
-           "  Approve each call:             modelquad settings auto off --global"]
-    if own_grant:
-        out.append(f'                                 and modelquad settings auto off --project "{folder}"')
-    out += ["  History in detail:             modelquad review report",
-            "  Exclude a folder:              modelquad settings repo off [--project DIR]"
-            " (documented in modelquad settings repo --help)"]
-    return out
 
 
 # ------------------------------------------------------------ the status view
