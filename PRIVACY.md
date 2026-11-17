@@ -26,10 +26,13 @@ sends anything to him or to any server he runs.
 - For a Codex call, ModelQuad reads only the files listed in the call's
   `files` argument, which Claude Code shows you in its approval prompt
   unless you turned on the standing grant ([below](#the-standing-grant)). It
-  skips files your Claude Code `Read` deny rules, Git or a `.modelquadignore`
-  exclude, screens the rest for secrets, and your Codex CLI sends the task and
-  that text to OpenAI. Codex itself runs in an empty temporary folder without
-  file, command, web or MCP tools.
+  refuses a call that names a file your Claude Code `Read` deny rules, Git or
+  a `.modelquadignore` exclude, screens the rest for secrets, and your Codex
+  CLI sends the task and
+  that text to OpenAI. Codex itself runs read-only in an empty temporary
+  folder with its file, command, web and MCP tool features switched off.
+  Codex still lists a few built-in tools that ModelQuad cannot remove; see
+  [SECURITY.md](SECURITY.md).
 - Everything ModelQuad returns to Claude Code becomes part of your
   conversation, which Claude Code sends to Anthropic.
 - ModelQuad does not open conversation transcripts.

@@ -74,7 +74,7 @@ unfamiliar code.
   repository can lower both.
   The manifest covers what ModelQuad sends. Codex adds its own instructions,
   its tool declarations and your global Codex `AGENTS.md` to the request; see
-  [SECURITY.md](SECURITY.md).
+  [SECURITY.md](https://github.com/razbenaharon/modelquad/blob/main/SECURITY.md).
 - **A bound between what you saw and what is sent.** The package id covers
   the task text and every file's content. A run given that id sends that
   package or nothing.

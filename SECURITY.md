@@ -82,8 +82,8 @@ calls run. Every call re-checks the grant for its own folder and refuses
 when it is missing or was turned off, and a call without the prompt must stay
 inside the folder the session started in; a repository set to Codex off, or a
 `.modelquad.toml` that turns Codex off, outranks it. No MCP tool can turn a
-grant on (`tests/test_standing_grant.py`). Codex stays read-only and
-tool-less either way.
+grant on (`tests/test_standing_grant.py`). Codex stays read-only, with the
+same tool features switched off, either way.
 
 ModelQuad adds no permission rule for its tools. A folder argument
 that is not a local folder (a network share such as `\\host\share`, a device
@@ -153,7 +153,8 @@ ModelQuad for Codex again (`src/modelquad/mcp/worker_guard.py`,
 - Only review, exploration and architecture tasks are accepted. Other task
   types, and resuming a Codex session, are refused before Codex starts.
 - ModelQuad reads the files the request names itself, inside the working
-  folder and within fixed limits. It skips credential files, replaces
+  folder and within fixed limits. It refuses a call that names a credential
+  file, replaces
   secret-looking values, and refuses text that holds a private key or a
   recognizable access token (`execution/noshell.py`,
   `tests/test_noshell_workers.py`). See [PRIVACY.md](PRIVACY.md).
