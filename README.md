@@ -72,6 +72,9 @@ unfamiliar code.
   the reason (a Claude Code Read deny rule, Git ignore, `.modelquadignore`, a
   credential file, a size limit). At most 32 files and 128 KiB by default; a
   repository can lower both.
+  The manifest covers what ModelQuad sends. Codex adds its own instructions,
+  its tool declarations and your global Codex `AGENTS.md` to the request; see
+  [SECURITY.md](SECURITY.md).
 - **A bound between what you saw and what is sent.** The package id covers
   the task text and every file's content. A run given that id sends that
   package or nothing.

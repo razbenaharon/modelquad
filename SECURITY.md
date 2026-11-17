@@ -110,6 +110,25 @@ launch with the one taken when the call started, and sends nothing if a file
 changed in between. The id is a digest, not a signature: it binds what was
 shown to what is sent, and does not prove who made the request.
 
+**The manifest is not the whole model input.** The manifest lists the files
+ModelQuad sends and nothing else. Codex builds the request to the model
+itself and adds its own parts, which ModelQuad neither chooses nor sees:
+its base instructions, the declarations of the built-in tools it still lists
+(see **Codex worker launch** below), and your global Codex
+instructions file (`AGENTS.md` or `AGENTS.override.md` in your Codex folder)
+if you have one. On Codex 0.164.0, `codex debug prompt-input` in an empty
+folder showed about 22,000 characters of base instructions, about 25,000 of
+tool declarations with ModelQuad's switches applied (about 31,000 without),
+and the global instructions file in full; `-c project_doc_max_bytes=0` did
+not keep that file out, and `codex features list` names no switch for it.
+That command reads your Codex configuration and cannot be told to ignore it,
+so it is not the same path as the review run: it also showed a skills
+listing of about 50,000 characters, and whether a review run carries one was
+not checked. The only supported way found to run Codex without that file is a
+separate Codex folder, which would need its own sign-in; ModelQuad does not
+copy credentials, so it does not do this. The token counts in the reply and
+the ledger are Codex's totals for the whole request, not for the package.
+
 **Completion rounds.** When Codex's reply names files it needed and was not
 given, ModelQuad adds nothing by itself. The reply lists the names; a new
 call that names those files and the earlier reply (`follows`) is a new
@@ -200,6 +219,10 @@ links and files they cannot read or parse. Each changed file is written once,
 atomically, after a full copy of its original bytes is saved beside it. The
 copy is created with an exclusive open, so a planted link cannot redirect it.
 A file that another program changed during the run is left as it is.
+A file that could not be read, written or removed makes the command end with
+`Not finished: ...` and exit code 1; a file left alone on purpose (a link, a
+file that does not parse, your own entry) is a skipped row and not an error
+(`tests/test_install_incomplete.py`).
 
 **Which Codex runs.** ModelQuad runs the Codex it finds for its version and
 feature checks (`codex --version`, `codex features list`) without a prompt,
