@@ -5,8 +5,8 @@
 * A file in another Git repository below the working folder refuses: that
   repository's own ``.modelquad.toml`` and the user's setting for it would be
   skipped (fail closed).
-* ``account = "workspace"`` needs a fresh, successful Codex reading and an
-  exact plan name; an old, failed or unknown one refuses.
+* ``account = "workspace"`` always refuses: this build does not read which
+  Codex account is signed in, and unknown never passes.
 * A kind that is not read-only is refused by the read-only gate, not blamed
   on a repository file.
 * A valid file with an empty ``task_kinds`` reads as Codex off everywhere.
@@ -15,20 +15,19 @@
 
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timedelta, timezone
 import json
+import os
 import subprocess
 from unittest.mock import Mock
 
+import anyio
 import pytest
 
-from modelquad import disclosure, plans, repo_policy as rp, repo_settings as rs
-from modelquad.execution import ExecutionManager, codex, noshell
+from modelquad import disclosure, repo_policy as rp, repo_settings as rs, review
+from modelquad.execution import codex, noshell
 from modelquad.execution.base import ExecutionRequest
 from modelquad.models import TaskType
-from modelquad.mcp import server as mcp
-from modelquad.usage.refresh import FRESH_SECONDS
+from modelquad.mcp import server as mcp, worker_guard
 
 
 def git_repo(folder):
@@ -40,29 +39,48 @@ def write_policy(folder, text):
     (folder / rp.FILE_NAME).write_text(text, encoding="utf-8", newline="\n")
 
 
-def usage(directory, plan_type, *, age=0.0, available=True, error=None):
-    directory.mkdir(parents=True, exist_ok=True)
-    observed = datetime.now(timezone.utc) - timedelta(seconds=age)
-    (directory / "usage-codex.json").write_text(json.dumps({
-        "plan_type": plan_type, "available": available, "quota_error": error,
-        "observed_at": observed.isoformat()}), encoding="utf-8")
+def delegate(task_type, prompt, working_directory, files=None):
+    """The data half of one ``modelquad_delegate`` call."""
+    async def invoke():
+        return await mcp.modelquad_delegate(task_type=task_type, prompt=prompt,
+                                            working_directory=working_directory,
+                                            files=files, timeout=60.0)
+
+    return anyio.run(invoke).structured_content
+
+
+def package(task_type, prompt, working_directory, files=None):
+    """The data half of one ``modelquad_review_package`` call."""
+    async def invoke():
+        return await mcp.modelquad_review_package(task_type=task_type, prompt=prompt,
+                                                  working_directory=working_directory, files=files)
+
+    return anyio.run(invoke).structured_content
 
 
 @pytest.fixture
 def no_start(monkeypatch):
+    """The executor is a tripwire: ``started`` fills when a call gets as far as Codex."""
     started = []
 
     class Reached(Exception):
         pass
 
-    def tripwire(*args, **kwargs):
-        started.append(1)
-        raise Reached
+    class Tripwire:
+        def execute(self, request):
+            started.append(1)
+            raise Reached
 
-    monkeypatch.setattr(mcp, "_build_execution_manager", tripwire)
-    monkeypatch.setattr(mcp, "start_job", tripwire)
-    monkeypatch.setattr(ExecutionManager, "delegate", tripwire)
+    monkeypatch.setattr(mcp, "_executor", Tripwire)
     return started, Reached
+
+
+@pytest.fixture(autouse=True)
+def not_a_worker(monkeypatch):
+    """The suite's own ancestry never decides; the worker test sets the marker itself."""
+    real = worker_guard.is_worker
+    monkeypatch.setattr(worker_guard, "is_worker",
+                        lambda *args: os.environ.get("MODELQUAD_WORKER") == "1" and real(*args))
 
 
 # ------------------------------------------------ files in a nested repository
@@ -97,16 +115,17 @@ def test_a_submodule_pointer_file_counts_as_another_repository(tmp_path):
     assert rp.file_in_other_repository(outer, ["vendor/lib/code.py"]) is True
 
 
-def test_delegate_and_handoff_refuse_a_file_from_a_nested_repository(nested, no_start):
+def test_the_review_and_its_package_refuse_a_file_from_a_nested_repository(nested, no_start):
     started, _ = no_start
     parent, _ = nested
     assert rp.load(parent).refusal_for("review") is None, "the outer folder's policy alone would allow it"
-    payload = mcp._delegate_payload("review", "Review it.", str(parent), "codex",
-                                    supplied_files=["R/src/secret_logic.py"])
+    payload = delegate("review", "Review it.", str(parent), ["R/src/secret_logic.py"])
     assert payload["reason"] == rp.FILE_OUTSIDE_REPO and started == []
+    assert payload["refused"] is True and payload["started"] is False
     assert "another Git repository" in payload["message"]
-    refusal = mcp._handoff_refusal("review", None, None, str(parent), ["R/src/secret_logic.py"])
-    assert refusal["reason"] == rp.FILE_OUTSIDE_REPO
+    shown = package("review", "Review it.", str(parent), ["R/src/secret_logic.py"])
+    assert shown["reason"] == rp.FILE_OUTSIDE_REPO and shown["refused"] is True
+    assert "files" not in shown, "a refused package lists nothing"
 
 
 def test_a_nested_repository_the_user_turned_off_is_refused_too(tmp_path, no_start):
@@ -115,7 +134,7 @@ def test_a_nested_repository_the_user_turned_off_is_refused_too(tmp_path, no_sta
     inner = git_repo(parent / "R")
     (inner / "a.py").write_text("x = 1\n", encoding="utf-8")
     rs.write_mode(inner, "off")
-    payload = mcp._delegate_payload("review", "Review it.", str(parent), "codex", supplied_files=["R/a.py"])
+    payload = delegate("review", "Review it.", str(parent), ["R/a.py"])
     assert payload["reason"] == rp.FILE_OUTSIDE_REPO and started == []
 
 
@@ -155,113 +174,69 @@ def test_the_executor_rechecks_nested_repositories(worker, nested):
 # ------------------------------------------------------ the workspace account
 
 
-@pytest.mark.parametrize("plan_type,age,available,error,kind", [
-    ("team", 0, True, None, plans.WORKSPACE),
-    ("business", FRESH_SECONDS - 30, True, None, plans.WORKSPACE),
-    ("team", FRESH_SECONDS + 30, True, None, plans.UNKNOWN),      # an old reading
-    ("team", 0, False, "not logged in", plans.UNKNOWN),           # signed out, kept fields
-    ("team", 0, True, "app_server_failed", plans.UNKNOWN),        # a failed read
-    ("team", -3600, True, None, plans.UNKNOWN),                   # from the future
-    ("plus", 0, True, None, plans.PERSONAL),
-    ("reduced", 0, True, None, plans.UNKNOWN),                    # contains "edu"
-    ("steam", 0, True, None, plans.UNKNOWN),                      # contains "team"
-    ("enterprise-trial", 0, True, None, plans.UNKNOWN),
-])
-def test_only_a_fresh_signed_in_exact_plan_counts(tmp_path, plan_type, age, available, error, kind):
-    usage(tmp_path, plan_type, age=age, available=available, error=error)
-    assert plans.reported_codex_kind(tmp_path) == kind
-
-
-def test_the_account_window_is_the_quota_freshness_window():
-    assert plans.ACCOUNT_EVIDENCE_SECONDS == FRESH_SECONDS
-
-
-def test_an_old_workspace_reading_refuses_the_workspace_rule(tmp_path, no_start, isolate_usage_directory):
+def test_the_workspace_rule_refuses_because_the_account_is_unknown(tmp_path, no_start):
     started, _ = no_start
     repo = git_repo(tmp_path / "repo")
     write_policy(repo, 'schema = 1\n[codex]\naccount = "workspace"\n')
-    usage(isolate_usage_directory, "team", age=FRESH_SECONDS * 10)
-    payload = mcp._delegate_payload("review", "Review it.", str(repo), "codex")
+    payload = delegate("review", "Review it.", str(repo))
     assert payload["reason"] == rp.ACCOUNT_WORKSPACE_REQUIRED and started == []
-    assert "last 5 minutes" in payload["message"]
+    assert payload["refused"] is True and payload["started"] is False
+    assert "does not read which Codex account" in payload["message"]
+    # The way out it names must work: switching accounts would not, here.
+    assert "Use a work Codex account" not in payload["message"]
+    assert 'account = "any"' in payload["message"]
+    from modelquad.execution import noshell
+    assert "Use a work Codex account" not in noshell.REFUSAL_MESSAGES[rp.ACCOUNT_WORKSPACE_REQUIRED]
+    assert package("review", "Review it.", str(repo))["reason"] == rp.ACCOUNT_WORKSPACE_REQUIRED
 
 
 # ------------------------------------------------------- kinds and empty kinds
 
 
-def test_a_kind_that_is_not_read_only_is_not_blamed_on_a_repository_file(tmp_path, monkeypatch):
-    started = []
-    monkeypatch.setattr(mcp, "start_job", lambda *a, **k: started.append(1))
-    monkeypatch.setattr(ExecutionManager, "delegate", lambda *a, **k: started.append(1))
+def test_a_kind_that_is_not_read_only_is_not_blamed_on_a_repository_file(tmp_path, no_start):
+    started, _ = no_start
     repo = git_repo(tmp_path / "repo")
     assert rp.refusal(rp.load(repo), "implementation") is None
     assert rp.BUILTIN.refusal_for("implementation") is None
-    payload = mcp._delegate_payload("implementation", "Change it.", str(repo), "codex")
+    payload = delegate("implementation", "Change it.", str(repo))
     assert payload["refused"] is True and started == [], payload
-    # The capability check or the read-only gate answers, as with no file at all;
-    # on a machine without the Codex CLI (CI), the availability check answers first.
-    assert payload["reason"] in {
-        "routing_refused",
-        "task_type_not_read_only",
-        "provider_unavailable",
-    }
-    assert payload.get("reason") != rp.KIND_REMOVED
+    # The read-only gate answers, as with no file at all.
+    assert payload["reason"] == "task_type_not_read_only"
     assert "modelquad.toml" not in json.dumps(payload)
 
 
 @pytest.mark.parametrize("kind", ["mutation", "write", "shell", ""])
-def test_an_unknown_kind_is_a_closed_refusal_before_an_attempt_is_reserved(
-        tmp_path, monkeypatch, no_start, kind):
+def test_an_unknown_kind_is_a_closed_refusal_before_anything_starts(tmp_path, no_start, kind):
     started, _ = no_start
-    reserved = []
-    monkeypatch.setattr(mcp, "_reserve_launch", lambda *a, **k: reserved.append(1))
-    monkeypatch.setattr(disclosure, "notice_shown", lambda: True)
     repo = git_repo(tmp_path / "repo")
-    payload = mcp._delegate_payload(kind, "Change it.", str(repo), "codex")
+    # The tool itself answers with the refusal, not a raw ValueError.
+    payload = delegate(kind, "Change it.", str(repo))
     assert payload["refused"] is True and payload["reason"] == "task_type_not_read_only"
-    assert started == [] and reserved == []
-    # The tool itself answers with the same refusal, not a raw ValueError.
-    result = asyncio.run(mcp.modelquad_delegate(task_type=kind, prompt="Change it.",
-                                                working_directory=str(repo)))
-    assert result.structured_content["reason"] == "task_type_not_read_only"
-    assert result.structured_content["refused"] is True
-    assert started == [] and reserved == []
+    assert started == []
+    shown = package(kind, "Change it.", str(repo))
+    assert shown["refused"] is True and shown["reason"] == "task_type_not_read_only"
 
 
 EMPTY_KINDS = b"schema = 1\n[codex]\ntask_kinds = []\n"
 
 
-def test_empty_task_kinds_read_as_codex_off_everywhere(tmp_path):
+def test_empty_task_kinds_read_as_codex_off_everywhere(tmp_path, no_start):
+    started, _ = no_start
     policy = rp.parse(EMPTY_KINDS)
     assert policy.facts()["codex_allowed"] is False
     applied = rs.effective(global_proactive=False, user_mode=None, policy=policy)
     assert (applied.refusal, applied.offer) == (rp.KIND_REMOVED, rs.OFF)
     repo = git_repo(tmp_path / "repo")
     write_policy(repo, EMPTY_KINDS.decode())
-    assert rs.advice_line(repo) == rs.ADVICE[rs.OFF]
-    line = mcp._repo_policy_line(mcp._repo_policy_view(str(repo)))
-    assert line == "This repository: Codex is off (its .modelquad.toml allows no task kinds)."
+    rules = mcp.modelquad_status(str(repo)).structured_content["folder_rules"]
+    assert (rules["state"], rules["codex_allowed"], rules["task_kinds"]) == ("file", False, [])
+    for kind in rp.TASK_KINDS:
+        assert delegate(kind, "Review it.", str(repo))["reason"] == rp.KIND_REMOVED
+    assert started == []
 
 
 def test_the_shared_no_kinds_code_matches_the_repo_file_module():
     assert rs._REPO_FILE_NO_KINDS == rp.KIND_REMOVED
-
-
-# ------------------------------------------------------------- status lines
-
-
-@pytest.mark.parametrize("view,expected", [
-    ({"state": "unknown", "why": "no_project_directory"}, "no project folder given"),
-    ({"state": "unknown", "why": "project_directory_unusable"}, "not a local folder"),
-    ({"state": "unknown", "why": "unreadable"}, "could not be read"),
-])
-def test_the_status_line_says_why_the_repository_was_not_checked(view, expected):
-    assert expected in mcp._repo_policy_line(view)
-
-
-def test_the_broken_file_line_does_not_ask_claude_to_echo_doctor():
-    line = mcp._repo_policy_line({"state": "known", "refusal": rp.INVALID})
-    assert "in a terminal" in line and "Run: modelquad doctor" not in line
 
 
 # --------------------------------------------- one policy read per delegate
@@ -274,18 +249,10 @@ def test_a_delegate_reads_the_repository_file_once_before_the_executor(tmp_path,
     loads = []
     real = rp.load
     monkeypatch.setattr(rp, "load", lambda folder: loads.append(1) or real(folder))
-    with pytest.raises(reached):
-        mcp._delegate_payload("review", "Review it.", str(repo), "codex", supplied_files=["a.py"])
+    with pytest.raises(BaseException) as raised:
+        delegate("review", "Review it.", str(repo), ["a.py"])
+    assert raised.group_contains(reached) or raised.errisinstance(reached)
     assert started and len(loads) == 1
-
-
-# ------------------------------------------------------------ refusal shape
-
-
-def test_both_per_repository_refusals_carry_the_launch_state():
-    for reason in (rs.USER_CODEX_OFF, rp.CODEX_OFF):
-        payload = mcp._launch_refusal("review", reason)
-        assert "routing_mode" in payload and "routing_paused" in payload, reason
 
 
 # --------------------------------------------------------- the first notice
@@ -303,27 +270,19 @@ def fresh_install(monkeypatch, tmp_path):
     return root
 
 
-def test_a_worker_gets_its_refusal_not_the_notice(fresh_install, tmp_path, monkeypatch):
+def test_a_worker_gets_its_refusal_not_the_notice(fresh_install, tmp_path, monkeypatch, no_start):
+    started, _ = no_start
     monkeypatch.setenv("MODELQUAD_WORKER", "1")
-    result = asyncio.run(mcp.modelquad_delegate("review", "Review it.", str(tmp_path), files=None))
-    payload = result.structured_content
+    payload = delegate("review", "Review it.", str(tmp_path))
     assert payload.get("status") != "notice_first" and payload["refused"] is True
+    assert payload["reason"] == review.WORKER and started == []
     assert disclosure.notice_shown() is False, "no person saw a notice in a worker"
 
 
-def test_a_repository_refusal_comes_before_the_notice(fresh_install, tmp_path, monkeypatch):
+def test_a_repository_refusal_comes_before_the_notice(fresh_install, tmp_path, no_start):
+    started, _ = no_start
     repo = git_repo(tmp_path / "repo")
     write_policy(repo, "schema = 1\n[codex]\nallowed = false\n")
-    monkeypatch.setattr(mcp, "_delegate_observing_the_caller",
-                        lambda function, *a, **k: asyncio.sleep(0, result=function()))
-    result = asyncio.run(mcp.modelquad_delegate("review", "Review it.", str(repo), files=None))
-    assert result.structured_content["reason"] == rp.CODEX_OFF
+    payload = delegate("review", "Review it.", str(repo))
+    assert payload["reason"] == rp.CODEX_OFF and started == []
     assert disclosure.notice_shown() is False
-
-
-def test_the_handoff_form_is_not_asked_before_the_notice(fresh_install, tmp_path):
-    from types import SimpleNamespace
-
-    ctx = SimpleNamespace(client_capabilities=SimpleNamespace(elicitation=object()),
-                          protocol_version="2026-07-28", request_id=1)
-    assert mcp._handoff_question("review", "Review it.", str(tmp_path), None, None, ctx) == "not_asked"

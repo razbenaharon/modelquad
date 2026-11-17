@@ -22,8 +22,9 @@ import time
 
 from ..privacy import _CONTEXT_CREDENTIAL
 from . import file_rules
-from ..project_notes import MARKER as NOTES_SOURCE_MARKER, PACKET_MARKER as NOTES_PACKET_MARKER
-from ..project_notes import closed_limitations
+from .closed import closed_limitations
+#: A file carrying this line is a notes file of an earlier ModelQuad, not code to review.
+NOTES_SOURCE_MARKER = "<!-- modelquad-project-notes-v1 -->"
 #: The complete prompt a read-only worker accepts.
 WORKER_PROMPT_BYTES = 192 * 1024
 MAX_PATH_CHARS = 512
@@ -61,7 +62,9 @@ def canonical_path(value: str) -> str:
 #: probes (feature listing plus recorded event streams): 0.160.0, observed
 #: 2026-10-06 and 2026-10-09. Older releases lack flags the launch passes and
 #: are refused; newer ones are admitted when their own feature listing
-#: qualifies them, so an update does not need a ModelQuad release.
+#: qualifies them, so an update does not need a ModelQuad release. Real
+#: reviews were run by hand on 0.165.0-alpha.1.2 and 0.169.0 (2026-11-18);
+#: SECURITY.md lists what was run on which release.
 TESTED_CODEX_VERSION_RANGE = ("0.160.0", "0.160.0")
 MIN_CODEX_VERSION = TESTED_CODEX_VERSION_RANGE[0]
 
@@ -77,13 +80,27 @@ CRITICAL_FEATURES = (
 REQUIRED_FALSE = tuple(name for name in CRITICAL_FEATURES if name != "unified_exec")
 # Disabled when the listing shows them. A newer Codex that drops or renames
 # one is not refused: passing --disable for a name it does not know would
-# make it refuse every launch. Collaboration is still caught after the fact
-# by the event-stream check.
+# make it refuse every launch. The two multi_agent flags do not decide the
+# collaboration tools; AGENTS_OFF_ARGS below does.
 OPTIONAL_FEATURES = ("view_image", "multi_agent", "multi_agent_v2", "shell_snapshot", "image_generation")
 DISABLED_FEATURES = (*CRITICAL_FEATURES, *OPTIONAL_FEATURES)
+#: Turns Codex's collaboration tools (spawn_agent, send_message, list_agents
+#: and the rest) off. Codex takes the multi-agent version from its model
+#: catalog before it looks at the multi_agent and multi_agent_v2 features, and
+#: only agents.enabled=false overrides the catalog (Codex core
+#: config/mod.rs, multi_agent_version_override, read at rust-v0.160.0 and
+#: rust-v0.164.0). Observed 2026-11-16 with the provider-free
+#: `codex debug prompt-input` on 0.164.0 and 0.165.0-alpha.1.2: with every
+#: feature above disabled the model was still offered six collaboration
+#: tools, and with this setting none. No 0.160.0 executable was run with it.
+#: Codex rejects an unknown key under `agents` (exit 1 on both releases), so
+#: the feature listing is asked with the same setting: a Codex that no longer
+#: knows it is refused at qualification, never launched without it.
+AGENTS_OFF_ARGS = ("-c", "agents.enabled=false")
 QUALIFY_FEATURE_ARGS = tuple(token for feature in CRITICAL_FEATURES for token in ("--disable", feature))
+QUALIFY_ARGS = (*QUALIFY_FEATURE_ARGS, *AGENTS_OFF_ARGS)
 FEATURE_ARGS = tuple(token for feature in DISABLED_FEATURES for token in ("--disable", feature))
-CONFIG_ARGS = ("--ignore-user-config", "-c", 'web_search="disabled"')
+CONFIG_ARGS = ("--ignore-user-config", "-c", 'web_search="disabled"', *AGENTS_OFF_ARGS)
 LAUNCH_ARGS = (*CONFIG_ARGS, "--ignore-rules", "--strict-config", "--ephemeral", "--json",
                "--sandbox", "read-only")
 #: The complete argv tail when every known feature is listed.
@@ -147,7 +164,8 @@ REFUSAL_MESSAGES = {
         "was started. Ask for a kind it lists in [codex] task_kinds, or edit that line."),
     "repo_policy_account_workspace_required": (
         "This repository's .modelquad.toml allows Codex only on a work account, so nothing was "
-        "started. Use a work Codex account here, or change [codex] account."),
+        "started. This version cannot confirm an account, so no account passes: set [codex] "
+        "account = \"any\" or remove the line to use Codex here."),
     "repo_policy_invalid": (
         "This repository's .modelquad.toml is not valid, so ModelQuad refuses Codex here until "
         "it is fixed. Use the schema 1 format in docs/REPO-POLICY.md, or remove the file."),
@@ -377,8 +395,9 @@ def qualify(executable, version, *, cwd, env, runner) -> Qualification:
         # features list rejects --ignore-user-config (provider-free observation,
         # 2026-10-09). Only the critical disables are passed here: each must be
         # known to this executable. Config isolation and web-search settings
-        # are exec controls, not features.
-        completed = runner([executable, "features", "list", *QUALIFY_FEATURE_ARGS], cwd, env)
+        # are exec controls, not features. The agents setting rides along so
+        # an executable that rejects it fails here (AGENTS_OFF_ARGS).
+        completed = runner([executable, "features", "list", *QUALIFY_ARGS], cwd, env)
         states = parse_features(completed)
     except Exception:
         states = None
@@ -466,6 +485,15 @@ def verify_stream(raw) -> StreamVerification:
     ``error`` record) or tool-like field leaves the stream unverified. An
     unknown event type is skipped only when it holds nothing but plain values
     under names that suggest no action.
+
+    The stream is not a complete record of tool calls. ``codex exec --json``
+    reports a collaboration call only for spawn_agent, send_input, wait and
+    close_agent; it drops send_message, followup_task, interrupt_agent and
+    list_agents, and every item kind it does not map (exec
+    event_processor_with_jsonl_output.rs, rust-v0.164.0; a list_agents call
+    left no event in a 0.164.0 probe, 2026-11-16). A clean stream is evidence
+    that nothing listed here acted, not proof that no tool was called; the
+    launch flags are what keep the tools away from the model.
     """
     if type(raw) is not str or not raw or len(raw.encode("utf-8", "replace")) > MAX_STREAM_BYTES:
         return StreamVerification(False)
@@ -945,7 +973,7 @@ def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOT
         seen.add(name.casefold())
         parts = tuple(part.casefold() for part in name.split("/"))
         # Repository notes have their own bounded, frozen selection. Never
-        # reread their raw source via an incidental reference or capsule path.
+        # reread their raw source through the files list.
         if parts[-1] == "project_notes.md":
             skipped.append((name, "repository_notes_source"))
             continue
@@ -1001,15 +1029,7 @@ def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOT
     return packed
 
 
-_FILE_REFERENCE = re.compile(r'(?<![\w/\\])(?:[A-Za-z]:[\\/]|/)?[\w.-]+(?:[\\/][\w.-]+)*(?=[?!:;\s"\x27`),]|$)')
-_FILE_EXTENSIONS = frozenset({
-    '.py', '.pyi', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.json', '.yaml', '.yml',
-    '.toml', '.ini', '.cfg', '.conf', '.txt', '.md', '.rst', '.csv', '.tsv', '.xml',
-    '.html', '.htm', '.css', '.scss', '.sass', '.less', '.sql', '.sh', '.ps1', '.psm1',
-    '.psd1', '.bat', '.cmd', '.go', '.rs', '.java', '.kt', '.kts', '.swift', '.c', '.cc',
-    '.cpp', '.cxx', '.h', '.hpp', '.cs', '.rb', '.php', '.lua', '.vue', '.svelte', '.tex',
-})
-# A capsule entry may carry a location or a note after the path:
+# A files entry may carry a location or a note after the path:
 # "src/app.py:12", "src/app.py:12-40", "src/app.py#L12", "src/app.py (handler)",
 # "src/app.py - the handler". Only the path names the file.
 _ENTRY_NOTE = re.compile(r"\s+(?:\([^()\n]*\)|[-–—]\s.*)$")
@@ -1017,7 +1037,7 @@ _ENTRY_LOCATION = re.compile(r"(?::\d+(?:[-:]\d+)*|#L\d+(?:-L?\d+)?)$")
 
 
 def relevant_entry(entry, workspace=None):
-    """The path a Relevant files entry names, without its location or note."""
+    """The path a files entry names, without its location or note."""
     text = entry.strip()
     previous = None
     while text != previous:
@@ -1033,74 +1053,6 @@ def relevant_entry(entry, workspace=None):
     while text.startswith("./"):
         text = text[2:]
     return text.rstrip("/") or text
-
-
-def _file_reference(name, workspace):
-    if re.fullmatch(r'\d+\.\.\d+', name):
-        return False
-    if Path(name).suffix.lower() in _FILE_EXTENSIONS:
-        return True
-    if '/' not in name and '\\' not in name:
-        return False
-    try:
-        # Validate before observing existence: absolute/traversal names must
-        # never probe files outside the supplied workspace.
-        relative = canonical_path(name.replace('\\', '/'))
-        return (Path(workspace) / relative).is_file()
-    except (OSError, TargetError):
-        return False
-
-
-def named_files(prompt, workspace):
-    """Capsule references first, then literal failure/patch references only."""
-    names = []
-    # Extract the capsule independently of marker text quoted in its goal.
-    match = re.search(r"(?m)^Relevant files:\n((?:- [^\n]+\n?)+)", prompt)
-    if match:
-        names += [relevant_entry(line[2:], workspace) for line in match[1].splitlines()]
-        # Preserve the newline that may also start the appended boundary.
-        masked = re.sub(r"[^\n]", " ", match[0])
-        prompt = prompt[:match.start()] + masked + prompt[match.end():]
-    # attach() appends a standalone advisory after task evidence; only that
-    # boundary excludes advisory prose/linked paths from incidental selection.
-    task, boundary, _ = prompt.rpartition("\n\n" + NOTES_PACKET_MARKER + "\nAdvisory only. ")
-    if boundary:
-        prompt = task
-    # Git prefixes describe a patch only in recognized headers. Mask those
-    # lines so their a/b paths cannot be rediscovered as independent references.
-    remaining = []
-    for line in prompt.splitlines():
-        header = re.fullmatch(r'diff --git (a/\S+) (b/\S+)', line)
-        single = re.fullmatch(r'(?:---|\+\+\+) ([ab]/[^\t]+)(?:\t.*)?', line)
-        if header or single:
-            names.extend(value[2:] for value in (header.groups() if header else single.groups()))
-            remaining.append("")
-        else:
-            remaining.append(line)
-    prompt = "\n".join(remaining)
-    quoted_pattern = re.compile(r'["\x27`]([^"\x27`\n]+\.[A-Za-z0-9]{1,10})["\x27`]')
-    references = []
-    def quoted_reference(match):
-        references.append(match[1])
-        return " " * len(match[0])
-    prompt = quoted_pattern.sub(quoted_reference, prompt)
-    references.extend(match[0] for match in _FILE_REFERENCE.finditer(prompt))
-    for reference in references:
-        name = reference.strip().rstrip('.?!,;:)')
-        # Remove a literal traceback introducer, not arbitrary dependencies.
-        if name.startswith("File "):
-            name = name[5:].strip()
-        if not _file_reference(name, workspace):
-            continue
-        path = Path(name)
-        if path.is_absolute():
-            try:
-                name = path.relative_to(Path(workspace)).as_posix()
-            except ValueError:
-                names.append("<path>")
-                continue
-        names.append(name)
-    return tuple(names)
 
 
 def explicit_names(files, workspace=None):
@@ -1194,7 +1146,7 @@ def render_supplied(screened, pack, instruction, *, required=(), withheld=(),
                   - getattr(pack, "_examined_keys", frozenset()))
     for name, reason in pack.skipped:
         if name == "<remaining references, if any>" and unreported:
-            # Use only capsule strings already in memory, never consume the
+            # Use only names already in memory, never consume the
             # stopped packer's iterable or perform more reads. Retain the
             # omission bound plus one sentinel if required entries remain.
             slots = max(0, MAX_SKIPPED - (len(pack.skipped) - 1))
@@ -1277,12 +1229,6 @@ def sent_entry(name, text):
 
 #: The most files one answer may name for a follow-up call.
 MAX_NEEDED_FILES = 8
-#: Beside those files in a reply. The follow-up is a new call with its own
-#: approval; nothing is sent because an answer named a file.
-NEEDED_FILES_NOTE = (
-    "Codex said these files would have helped and they were not sent. You may offer the "
-    "user a follow-up call that passes them in files. Do not call without the user's "
-    "agreement.")
 
 
 def needed_files(output, workspace, sent=()):
@@ -1386,7 +1332,7 @@ AUDIT_REASONS = frozenset({
     "total_byte_cap", "read_byte_cap", "elapsed_work_cap", "file_unavailable",
     "candidate_count_cap", "omission_count_cap", "file_count_cap", "rendered_prompt_cap",
 })
-APPROVALS = frozenset({"delegate", "handoff"})
+APPROVALS = frozenset({"delegate"})
 
 
 def _audit_path(value):

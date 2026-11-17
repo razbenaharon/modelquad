@@ -89,7 +89,7 @@ def _source_checkout_root() -> Path | None:
 
 
 def _git_head(root: Path) -> str | None:
-    from .jobs.changes import _Unavailable, _git_exclude_roots
+    from .gitmeta import _Unavailable, _git_exclude_roots
     from .procutil import no_window_kwargs
 
     env = dict(os.environ)

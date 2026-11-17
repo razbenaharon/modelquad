@@ -60,10 +60,9 @@ REQUIRED_SENTENCE_FRAGMENTS = (
     "read-only",
     "asks the user before",
     "MODELQUAD_WORKER=1",
-    "`modelquad_handoff`",
-    "absolute project directory",
-    "`modelquad_job_*`",
-    "SessionStart reminder",
+    "`modelquad_review_package`",
+    "`completion_request`",
+    "`follows`",
 )
 EXCLUDED_CHECKPOINTS = {
     "every turn": r"\b(?:every|each)\s+turn\b",

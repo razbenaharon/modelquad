@@ -17,8 +17,7 @@ import time
 import pytest
 
 from modelquad import buildinfo, executable_resolution as resolver, procutil
-from modelquad.jobs import changes
-from modelquad.service import lifecycle
+from modelquad import gitmeta as changes
 
 
 win_only = pytest.mark.skipif(os.name != "nt", reason="Windows system-directory and extended-path semantics only")
@@ -284,7 +283,7 @@ def test_buildinfo_git_exclusion_lookup_failure_is_unavailable(tmp_path, monkeyp
 @pytest.fixture
 def synthetic_system(tmp_path, monkeypatch, isolated):
     directory = tmp_path / "synthetic system directory"
-    for name in ("tasklist", "taskkill", "schtasks"):
+    for name in ("tasklist", "taskkill"):
         _file(directory, name + ".exe")
         _file(isolated, name + ".exe")
     monkeypatch.setenv("PATH", str(isolated))
@@ -295,8 +294,7 @@ def synthetic_system(tmp_path, monkeypatch, isolated):
 
 
 @win_only
-@pytest.mark.parametrize("utility", ["tasklist", "taskkill"], ids=["tasklist", "taskkill"])
-def test_tasklist_and_taskkill_come_from_the_system_directory(utility, monkeypatch, synthetic_system):
+def test_taskkill_comes_from_the_system_directory(monkeypatch, synthetic_system):
     calls = []
 
     def run(argv, **kwargs):
@@ -306,143 +304,19 @@ def test_tasklist_and_taskkill_come_from_the_system_directory(utility, monkeypat
     monkeypatch.setattr(procutil.subprocess, "run", run)
 
     def invoke():
-        return procutil.process_image_name(4242, run=run) if utility == "tasklist" else procutil._taskkill_tree(4242)
+        return procutil._taskkill_tree(4242)
 
-    assert invoke() == ("python.exe" if utility == "tasklist" else "ok")
+    assert invoke() == "ok"
     (argv, kwargs), = calls
-    assert _canonical(argv[0]) == _canonical(synthetic_system / (utility + ".exe"))
-    arguments = ["/FI", "PID eq 4242", "/FO", "CSV", "/NH"] if utility == "tasklist" else ["/PID", "4242", "/T", "/F"]
-    assert argv[1:] == arguments
-    expected = {"capture_output": True, "timeout": procutil.IMAGE_NAME_SECONDS if utility == "tasklist" else 10.0,
-                **procutil.no_window_kwargs()}
-    if utility == "tasklist":
-        expected.update(text=True, shell=False)
-    assert kwargs == expected
+    assert _canonical(argv[0]) == _canonical(synthetic_system / "taskkill.exe")
+    assert argv[1:] == ["/PID", "4242", "/T", "/F"]
+    assert kwargs == {"capture_output": True, "timeout": 10.0, **procutil.no_window_kwargs()}
 
-    # A service may itself start in the system directory; no re-admission.
+    # A process may itself start in the system directory; no re-admission.
     monkeypatch.chdir(synthetic_system)
-    assert invoke() == ("python.exe" if utility == "tasklist" else "ok")
-    assert _canonical(calls[-1][0][0]) == _canonical(synthetic_system / (utility + ".exe"))
+    assert invoke() == "ok"
+    assert _canonical(calls[-1][0][0]) == _canonical(synthetic_system / "taskkill.exe")
     monkeypatch.setattr(resolver, "_system_directory", lambda: None)
     count = len(calls)
-    assert invoke() == (None if utility == "tasklist" else "launch_error: UnsafeExecutable")
+    assert invoke() == "launch_error: UnsafeExecutable"
     assert len(calls) == count
-
-
-def _scheduler_call(registrar, action, command, *, dry_run=False):
-    if action == "query":
-        return registrar.is_registered()
-    if action == "create":
-        return registrar.register(command=command, dry_run=dry_run)
-    return registrar.unregister(command=command, dry_run=dry_run)
-
-
-@pytest.fixture
-def scheduler_context(tmp_path, monkeypatch):
-    from modelquad import cli
-    monkeypatch.setattr(lifecycle.sys, "platform", "win32")
-    monkeypatch.setenv("USERDOMAIN", "SYNTHETIC")
-    monkeypatch.setenv("USERNAME", "Fixture")
-    # Identity now comes from the OS token; environment identity is untrusted.
-    monkeypatch.setattr("modelquad.service.auth.current_user_sid", lambda: "S-1-5-21-1")
-    monkeypatch.setattr(lifecycle.tempfile, "tempdir", str(tmp_path))
-    # Keep cwd validation independent of the schtasks-resolution fault below.
-    # The real service_working_directory still validates this existing path.
-    monkeypatch.setattr(lifecycle, "system_directory", lambda: str(tmp_path))
-    command = [str(_file(tmp_path / "synthetic product", "service.exe")), "serve"]
-    monkeypatch.setattr(cli, "_service_autostart_command", lambda port: command)
-    return command
-
-
-@win_only
-@pytest.mark.parametrize("action", ["query", "create", "delete"], ids=["query", "create", "delete"])
-def test_schtasks_comes_from_the_system_directory(action, monkeypatch, synthetic_system, scheduler_context):
-    calls = []
-    definitions = []
-
-    def run(argv, **kwargs):
-        calls.append((argv, kwargs))
-        if argv[1] == "/query":
-            if action == "create" and not definitions:
-                return subprocess.CompletedProcess(argv, 1, stdout="",
-                    stderr="ERROR: The system cannot find the file specified.")
-            raw = definitions[-1] if definitions else lifecycle.TaskSchedulerRegistrar._task_definition_xml(
-                scheduler_context, "S-1-5-21-1", cwd=lifecycle.service_working_directory())
-            return subprocess.CompletedProcess(argv, 0, stdout=raw, stderr="")
-        if argv[1] == "/create":
-            definition = Path(argv[argv.index("/xml") + 1])
-            definitions.append(definition.read_text(encoding="utf-16"))
-            assert "<UserId>S-1-5-21-1</UserId>" in definitions[-1]
-        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
-
-    registrar = lifecycle.TaskSchedulerRegistrar(run=run)
-    result = _scheduler_call(registrar, action, scheduler_context)
-    assert result.success is True
-    assert result.registered is (action != "delete")
-    # Uninstall checks ownership with the same query install uses, then deletes.
-    expected_operations = {"create": ["/query", "/create", "/query"], "query": ["/query"],
-                           "delete": ["/query", "/delete"]}[action]
-    assert [argv[1] for argv, _ in calls] == expected_operations
-    for actual, options in calls:
-        assert _canonical(actual[0]) == _canonical(synthetic_system / "schtasks.exe")
-        expected_options = {"capture_output": True, "text": True, "shell": False,
-                            "timeout": lifecycle.WINDOWS_COMMAND_TIMEOUT_SECONDS,
-                            **procutil.no_window_kwargs()}
-        if actual[1] != "/delete":
-            expected_options["cwd"] = lifecycle.service_working_directory()
-        assert options == expected_options
-    argv, kwargs = next(call for call in calls if call[0][1] == {
-        "query": "/query", "create": "/create", "delete": "/delete"}[action])
-    assert argv[1:] == list(result.command[1:])
-    assert argv[1] == {"query": "/query", "create": "/create", "delete": "/delete"}[action]
-    assert result.to_dict()["command"][0] == "schtasks"
-    assert str(synthetic_system) not in result.message
-    assert str(synthetic_system) not in repr(result.to_dict())
-    if action == "create":
-        assert not Path(argv[argv.index("/xml") + 1]).exists()
-
-    monkeypatch.setattr(resolver, "_system_directory", lambda: None)
-    count = len(calls)
-    refused = _scheduler_call(registrar, action, scheduler_context)
-    assert len(calls) == count
-    assert refused.success is False and refused.registered is None
-    assert refused.to_dict()["command"][0] == "schtasks"
-    # Every action, uninstall included, starts with the ownership query.
-    assert refused.message == lifecycle.SERVICE_DETAILS["background_startup_unknown"]
-    assert str(synthetic_system) not in repr(refused.to_dict())
-
-
-@pytest.mark.parametrize("action", ["create", "delete"], ids=["create", "delete"])
-def test_scheduler_dry_run_never_resolves(action, monkeypatch, scheduler_context):
-    def forbidden(*args, **kwargs):
-        pytest.fail("A dry run must not resolve or launch schtasks")
-
-    monkeypatch.setattr(lifecycle, "system_executable", forbidden)
-    result = _scheduler_call(lifecycle.TaskSchedulerRegistrar(run=forbidden), action, scheduler_context, dry_run=True)
-    assert result.success is True and result.dry_run is True
-    assert result.to_dict()["command"][0] == "schtasks"
-
-
-@pytest.mark.parametrize("action", ["query", "create", "delete"], ids=["query", "create", "delete"])
-def test_unsupported_scheduler_never_resolves(action, monkeypatch, scheduler_context):
-    monkeypatch.setattr(lifecycle.sys, "platform", "linux")
-
-    def forbidden(*args, **kwargs):
-        pytest.fail("An unsupported scheduler must not resolve or launch schtasks")
-
-    monkeypatch.setattr(lifecycle, "system_executable", forbidden)
-    result = _scheduler_call(lifecycle.TaskSchedulerRegistrar(run=forbidden), action, scheduler_context)
-    assert result.supported is False and result.success is False and result.registered is None
-
-
-@win_only
-@pytest.mark.parametrize("action", ["query", "create", "delete"], ids=["query", "create", "delete"])
-def test_scheduler_launch_error_does_not_publish_the_executable_path(action, synthetic_system, scheduler_context):
-    def run(argv, **kwargs):
-        raise OSError("cannot launch " + argv[0])
-
-    result = _scheduler_call(lifecycle.TaskSchedulerRegistrar(run=run), action, scheduler_context)
-    assert result.success is False and result.registered is None
-    assert result.to_dict()["command"][0] == "schtasks"
-    assert result.message == lifecycle.SERVICE_DETAILS["background_startup_unknown"]
-    assert str(synthetic_system) not in repr(result.to_dict())

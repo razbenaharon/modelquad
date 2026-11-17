@@ -27,12 +27,6 @@ if sys.platform == "win32":
     _ctypes.WinDLL("kernel32").SetErrorMode(0x0001 | 0x0002 | 0x8000)
 from modelquad import disclosure
 from modelquad.execution.base import WORKER_ENV_VAR
-from modelquad.service import db as service_db
-from modelquad.usage import background as usage_background
-# adapters.registry fixes CLIENT_NAMES when first imported. Import it here,
-# before any test sets MODELQUAD_TEST_EXECUTOR_PLUGIN, so a test subset does
-# not freeze it empty and fail tests that never asked for the plugin.
-import modelquad.adapters.registry  # noqa: E402,F401
 
 #: Set to run the ``ci_only`` tests locally; CI (``CI=true``) always runs them.
 FULL_SUITE_ENV_VAR = "MODELQUAD_FULL_SUITE"
@@ -154,49 +148,6 @@ def no_window_kwargs(os_name: str | None = None) -> dict[str, object]:
     return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", CREATE_NO_WINDOW)}
 
 
-@pytest.fixture
-def managed_service_child(monkeypatch, isolate_home_directory):
-    """Prepare exact child-record admission, without spawning or disabling it.
-
-    The real controller builder resolves the selected files; the real child
-    admission checks PID, image, creation time and those selected options.
-    Only process observation is synthetic. Callers fake app/server execution.
-    """
-    from datetime import datetime, timezone
-    from modelquad import cli
-    from modelquad.service import lifecycle
-    from modelquad.statecontext import STATE_ROOT_ENV_VAR, STATE_MODE_ENV_VAR
-
-    # cli.main applies the child selections directly to os.environ. Register
-    # the originals with monkeypatch, including absence, before that write.
-    for name in (STATE_ROOT_ENV_VAR, STATE_MODE_ENV_VAR):
-        previous = os.environ.get(name)
-        monkeypatch.setenv(name, previous if previous is not None else "")
-        if previous is None:
-            monkeypatch.delenv(name)
-
-    manager_type = lifecycle.ServiceProcessManager
-    created = 1791586800.0
-
-    def prepare(argv):
-        args = cli.build_parser().parse_args(argv)
-        command = cli._service_launch_command(args.port, args)
-        manager = manager_type(
-            state_dir=paths.state_root(),
-            process_image_path=lambda pid: command[0],
-            process_created_at=lambda pid: created,
-        )
-        manager.state_dir.mkdir(parents=True, exist_ok=True)
-        manager.pid_path.write_text(json.dumps({
-            "pid": os.getpid(), "argv": command,
-            "started_at": datetime.fromtimestamp(created, timezone.utc).isoformat(),
-        }), encoding="utf-8")
-        monkeypatch.setattr(cli, "ServiceProcessManager", lambda: manager)
-        return command[command.index("serve"):], manager
-
-    return prepare
-
-
 @pytest.fixture(autouse=True)
 def _loaded_runner_git_headroom():
     """Suite-wide headroom for Git-backed identity and observation budgets.
@@ -208,20 +159,9 @@ def _loaded_runner_git_headroom():
     budgets set their own values with monkeypatch, which wins. This fixture
     saves and restores by itself instead of requesting monkeypatch, so it does
     not move monkeypatch's teardown ahead of other fixtures' teardown."""
-    from modelquad import procutil
-    from modelquad.jobs import changes, recovery
-    saved = [(changes, "GIT_SECONDS", changes.GIT_SECONDS),  # _git clamps to its own module value
-             (procutil, "IMAGE_NAME_SECONDS", procutil.IMAGE_NAME_SECONDS),
-             (recovery, "DEADLINE_SECONDS", recovery.DEADLINE_SECONDS)]
+    from modelquad import gitmeta as changes
+    saved = [(changes, "GIT_SECONDS", changes.GIT_SECONDS)]  # _git clamps to its own module value
     changes.GIT_SECONDS = 60
-    # tasklist took 17 s under load, so a live service read as unverified.
-    procutil.IMAGE_NAME_SECONDS = 60
-    # One recovery pass on a test's own database is a handful of SQLite
-    # commits, but under load those commits alone took 10-13 s, so the pass
-    # deferred at its 10 s budget and a test read restored == 0 (Windows CI
-    # run 42400093763). Deferral is the designed outcome; the tests that
-    # claim it pin the product budget themselves.
-    recovery.DEADLINE_SECONDS = 60
     try:
         yield
     finally:
@@ -248,7 +188,7 @@ def isolate_worker_recursion_guard(monkeypatch):
 
     So the variable is cleared here, for every test, unconditionally. A test
     that wants worker semantics sets it itself with ``monkeypatch.setenv`` --
-    ``tests/test_worker_guard.py`` does exactly that at each entry point, so
+    ``tests/test_mcp_worker_guard.py`` does exactly that at each entry point, so
     clearing it here cannot quietly delete the guard's coverage.
 
     ``MODELQUAD_DEV_MODE`` and ``MODELQUAD_DEV`` are deliberately left
@@ -258,13 +198,6 @@ def isolate_worker_recursion_guard(monkeypatch):
     """
 
     monkeypatch.delenv(WORKER_ENV_VAR, raising=False)
-    # Same reason, another variable: a suite run from the desktop app's Code
-    # tab inherits CLAUDE_CODE_ENTRYPOINT=claude-desktop, which makes the
-    # handoff take Claude Code's approval card as the answer instead of asking
-    # with the form. The tests of that path set it themselves. (Kept in this
-    # fixture: a new fixture requesting monkeypatch moves its teardown after
-    # tmp_path cleanup, which then runs with a test's patches still on.)
-    monkeypatch.delenv("CLAUDE_CODE_ENTRYPOINT", raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -299,24 +232,10 @@ def isolate_home_directory(tmp_path, monkeypatch):
     # checks still read it, and this fixture's promise is that no test ever
     # resolves a real user directory.
     monkeypatch.setenv("LOCALAPPDATA", str(fake_home / "AppData" / "Local"))
-    # DEFAULT_DB_PATH is resolved from Path.home() once at import time (like
-    # DEFAULT_SESSIONS_PATH and DEFAULT_USAGE_DIRECTORY elsewhere), so setting
-    # HOME/USERPROFILE above has no effect on it -- a CLI command that omits
-    # --history-db would otherwise still hit the real ~/.modelquad even
-    # inside an isolated test. Patch the constant itself as a second layer of
-    # protection for any test that doesn't pass an explicit history db path.
-    #
-    # Resolved through paths.db_path() rather than hardcoding the dev-mode
-    # ``~/.modelquad`` construction, so the constant agrees with the
-    # resolver in whichever mode the suite is running. Hardcoding it silently
-    # tied the whole suite to dev mode; on the dev machine the two happened to
-    # coincide, so the coupling was invisible until CI installed non-editable.
-    monkeypatch.setattr(service_db, "DEFAULT_DB_PATH", paths.db_path())
     # A fresh home has never seen the data-flow notice, so every Codex call
     # would return the notice instead. The suite tests calls, not the notice:
     # treat it as shown. tests/test_first_use_notice.py restores the real check.
     monkeypatch.setattr(disclosure, "notice_shown", _notice_already_shown)
-    monkeypatch.setattr(usage_background, "notice_shown", _notice_already_shown)
     return fake_home
 
 
@@ -324,74 +243,14 @@ def _notice_already_shown() -> bool:
     return True
 
 
-@pytest.fixture
-def codex_user_config(isolate_home_directory):
-    """Opt-in real config under the isolated test HOME; never a user profile."""
-    path = isolate_home_directory / ".codex" / "config.toml"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('model = "gpt-6.1"\nmodel_reasoning_effort = "xhigh"\n',
-                    encoding="utf-8", newline="\n")
-    return path
-
-
-@pytest.fixture(autouse=True)
-def isolate_usage_directory(tmp_path, monkeypatch, isolate_home_directory):
-    """Redirect import-time usage defaults, including already imported aliases.
-
-    Later imports bind the patched base constant.
-    """
-    from modelquad.providers import base
-
-    directory = tmp_path / "usage"
-    monkeypatch.setattr(base, "DEFAULT_USAGE_DIRECTORY", directory)
-    for name, module in tuple(sys.modules.items()):
-        if name.startswith("modelquad.") and hasattr(module, "DEFAULT_USAGE_DIRECTORY"):
-            monkeypatch.setattr(module, "DEFAULT_USAGE_DIRECTORY", directory)
-    return directory
-
-
 @pytest.fixture(autouse=True)
 def isolate_provider_cli_spawns(monkeypatch):
     """Never let a test shell out to a provider CLI installed on this machine.
 
-    Same class of leak as ``isolate_windows_registry`` below: results must
-    not depend on which AI CLIs the developer happens to have installed, so
-    the suite means the same thing on every machine and in CI, where none
-    are. ``discover_codex_models`` and ``discover_claude_models`` read config
-    files and spawn nothing, so model discovery needs no patch.
-
-    ``refresh_all`` imports the Codex app-server collector at call time.
-    Neutralise it, including the package's exported alias. Claude Desktop and
-    passive Codex usage only read local files. Collector tests bind the real
-    function during collection and inject a fake runner; snapshot tests can
-    also opt in with an explicit runner.
+    Results must not depend on which AI CLIs the developer happens to have
+    installed, so the suite means the same thing on every machine and in CI,
+    where none are.
     """
-
-    from modelquad import usage
-    from modelquad.usage import codex_appserver
-
-    real_codex = codex_appserver.collect_codex_appserver_usage
-    reason = "Live provider usage is unobserved under default test isolation."
-
-    def isolated_codex(**kwargs):
-        if "popen" in kwargs:
-            return real_codex(**kwargs)
-        return codex_appserver._unobserved(
-            reason=reason, available=True, now=kwargs.get("now"),
-        )
-
-    for module in (codex_appserver, usage):
-        monkeypatch.setattr(module, "collect_codex_appserver_usage", isolated_codex)
-
-    # Same rule for the agent-version probe (V8 slice 3): it shells out to
-    # `<cli> --version`, so without this a delegation test would report a
-    # version on a developer machine that has the CLI and UNKNOWN in CI --
-    # the exact machine-dependent result this fixture exists to prevent.
-    # Tests that assert on version capture patch `_probe_version` themselves.
-    from modelquad import workerevidence
-
-    monkeypatch.setattr(workerevidence, "_probe_version", lambda _executable: None)
-    workerevidence.clear_version_cache()
 
     # Codex resolution prefers an official desktop install over PATH
     # (codexcli.py), so the same rule applies: a developer machine with the
@@ -416,48 +275,17 @@ def isolate_provider_cli_spawns(monkeypatch):
     )
 
 
-@pytest.fixture(autouse=True)
-def isolate_windows_registry(monkeypatch):
-    """Never let a test touch the real user PATH in HKCU.
-
-    ``provider_setup`` imports ``WindowsRegistryBackend`` lazily from
-    ``pathenv``, so replacing it there covers every caller; tests that want
-    registry behavior inject their own backend explicitly anyway.
-    """
-
-    class _IsolatedEnvBackend:
-        def __init__(self) -> None:
-            self.path: str | None = None
-            self.expandable = True
-
-        def get_path(self):
-            return self.path, self.expandable
-
-        def set_path(self, value: str, expandable: bool) -> None:
-            self.path = value
-            self.expandable = expandable
-
-        def broadcast_change(self) -> None:
-            pass
-
-    from modelquad import pathenv
-
-    monkeypatch.setattr(pathenv, "WindowsRegistryBackend", _IsolatedEnvBackend)
-
-
 def tool_payload(result) -> object:
     """The machine-readable payload of an MCP tool result, whichever channel it used.
 
-    Two shapes coexist deliberately, and this helper is why the difference is
-    stated once instead of in seven test modules:
+    Two shapes coexist deliberately:
 
-    - Most tools return a plain ``dict``. The SDK JSON-dumps it into the
+    - Some tools return a plain ``dict``. The SDK JSON-dumps it into the
       result's single text block and sets no ``structuredContent``.
-    - The decision surfaces (``modelquad_route`` / ``modelquad_delegate``)
-      return a ``CallToolResult`` whose text block is a short human summary
-      and whose ``structuredContent`` carries the canonical object. Parsing
-      their text as JSON is exactly the mistake the widget work was meant to
-      make impossible.
+    - Others (``modelquad_delegate`` among them) return a ``CallToolResult``
+      whose text block is a short human summary and whose
+      ``structuredContent`` carries the canonical object; their text is not
+      JSON.
 
     Tests asserting on the *human-visible* text must read ``result.content``
     directly -- this helper is for the data half.
@@ -468,107 +296,3 @@ def tool_payload(result) -> object:
     if getattr(result, "structured_content", None) is not None:
         return result.structured_content
     return json.loads(result.content[0].text)
-
-
-#: Keys the decision surfaces add ON TOP of the canonical routing/execution
-#: object: the derived user view, the text fallback, and whether this client
-#: can render the widget. They are additive by design -- every canonical key
-#: is still present and unchanged underneath -- so a parity assertion against
-#: a non-widget surface strips them rather than asserting they do not exist.
-DECISION_ENVELOPE_KEYS = ("presentation", "summary_text")
-
-
-def canonical_decision(payload: dict) -> dict:
-    """The canonical decision object, with the presentation envelope removed."""
-
-    return {key: value for key, value in payload.items() if key not in DECISION_ENVELOPE_KEYS}
-
-
-# --------------------------------------------------- what `platform` reports
-
-#: One hidden child per worker process, memoised: the probe is only worth
-#: spawning at all for the tests that need it, and never twice.
-_PLATFORM_REFERENCE: dict[str, str] | None = None
-
-
-def platform_reference() -> dict[str, str]:
-    """What CPython's ``platform`` really reports, read in a *hidden* child.
-
-    A test has to compare a spawn-free reading against ``platform``'s own
-    answer, because the popup fix replaced the mechanism and the whole point is
-    that the *values* did not change: ``platformcache``'s Windows facts
-    (``tests/test_windows_facts.py``). Asking ``platform`` in-process is exactly
-    what that change removed -- and is the call this Task forbids anywhere in its
-    own test path, which ``tests/test_no_platform_spawn.py`` now scans for. On
-    Windows every function that goes through
-    ``uname()`` reaches ``_syscmd_ver()``, which runs
-    ``subprocess.check_output('ver', shell=True)`` with no ``creationflags``,
-    so the reference reading could itself flash a console window on the
-    developer's desktop. Worse, whether it does depends on
-    ``platform._uname_cache``: it spawns when this process has not asked
-    before and is free when it has, so the test was nondeterministic in the
-    one dimension the Issue is about.
-
-    Read in a child launched with ``CREATE_NO_WINDOW`` instead. The child has
-    a cold cache, so the real code path is exercised every time rather than
-    accidentally skipped, and its ``cmd.exe`` inherits a console with no
-    window. Deterministic, and no desktop is touched either way.
-
-    **A review said the last sentence is wrong. It was measured, and it is
-    not.** The claim: ``CREATE_NO_WINDOW`` leaves this child with *no console
-    at all*, so the ``cmd.exe`` that ``platform`` spawns underneath it finds
-    none to inherit and allocates a new, visible one -- meaning this probe
-    still flashes a window on the default test path, in the fixture written to
-    stop exactly that.
-
-    Two arms on this machine, 2026-09-10, Windows 11 / CPython 3.11. Both were
-    launched from a genuinely console-less ``DETACHED_PROCESS`` parent that
-    asserted its own console-lessness (``GetConsoleWindow() == 0``) before
-    running anything, and both ran the probe below verbatim and got real
-    ``platform`` values back, so the ``cmd /c ver`` path really executed in
-    each::
-
-        control  no suppression flag       2 console-class windows,
-                                           both ever_visible=True
-                                           (CASCADIA_HOSTING_WINDOW_CLASS,
-                                            PseudoConsoleWindow)
-        treated  CREATE_NO_WINDOW,         0 windows
-                 exactly as below
-
-    The control is what makes the treated arm mean anything: it proves the
-    observer detects precisely this window, from precisely this parent. So
-    ``CREATE_NO_WINDOW`` gives the child a console that *has no window*, and
-    the ``cmd.exe`` grandchild inherits that console rather than allocating
-    one. Nothing is changed here, because the finding describes a window that
-    does not appear. Recorded so it is not raised a third time -- the same
-    treatment ``tests/test_windows_facts.py::
-    test_platform_version_is_rejected_because_it_disagrees_with_ver`` gives the
-    rejected ``platform_version`` finding.
-
-    The distinct case where a grandchild really does defeat a parent flag is
-    a process that creates its *own* console, which no parent flag can
-    prevent. That is a process choosing to allocate, not a process inheriting
-    -- and it is why this had to be measured rather than reasoned about.
-    """
-
-    global _PLATFORM_REFERENCE
-    if _PLATFORM_REFERENCE is None:
-        probe = (
-            "import json, platform; "
-            "print(json.dumps({"
-            "'system': platform.system(), 'release': platform.release(), "
-            "'version': platform.version(), 'machine': platform.machine(), "
-            "'platform': platform.platform(), "
-            "'python_version': platform.python_version()}))"
-        )
-        done = subprocess.run(
-            [sys.executable, "-c", probe],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=180,
-            **no_window_kwargs(),
-        )
-        assert done.returncode == 0, done.stderr
-        _PLATFORM_REFERENCE = json.loads(done.stdout)
-    return _PLATFORM_REFERENCE

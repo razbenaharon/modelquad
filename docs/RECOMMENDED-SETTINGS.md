@@ -63,7 +63,7 @@ in that folder yourself either.
 To keep ModelQuad's tools but limit what Codex does in one repository, commit
 a `.modelquad.toml` file at the repository's top folder. It can turn Codex off
 there, allow only some task kinds (for example reviews), lower how many files
-and how much text one call sends, or allow Codex only on a work account. It
+and how much text one call sends. It
 can only narrow: it never approves a call or adds files, and if the file is
 broken ModelQuad refuses Codex in that repository until it is fixed. The format
 and examples are in [REPO-POLICY.md](REPO-POLICY.md).
@@ -106,14 +106,21 @@ The standing grant (`modelquad settings auto on --yes`, for one repository or
 with `--global`) lets `modelquad_delegate` run without Claude Code's prompt
 for each call, once you add the allow rule it prints or choose "don't ask
 again". You turn it on yourself, in a terminal or by choosing automatic in
-`/modelquad:settings`; Claude never turns it on by itself. `modelquad_handoff`
-always asks, and `modelquad settings auto off` turns it off.
+`/modelquad:settings`; Claude never turns it on by itself.
+`modelquad settings auto off` turns it off.
+
+## Turn ModelQuad off everywhere
+
+`modelquad off` stops every Codex call on this computer, whatever the other
+settings say, and the plugin's hooks go quiet. `modelquad on` turns it back
+on. Only you turn it on again; Claude is told not to.
 
 ## Turn off model training in ChatGPT and Claude
 
-ModelQuad passes text between the two providers, and each provider's terms
-forbid using its output to train the other's models. Turn off model training
-with both while you use ModelQuad:
+ModelQuad passes text between the two providers. OpenAI's terms forbid using
+its output to develop models that compete with it, and Anthropic's forbid
+using Claude's output to train any AI model without its permission. Turn off
+model training with both while you use ModelQuad:
 
 - ChatGPT data controls: <https://chatgpt.com/#settings/DataControls>
 - Claude privacy settings: <https://claude.ai/settings/data-privacy-controls>
@@ -126,20 +133,6 @@ safety review.
 Before you let Claude Code use ModelQuad on such code, check that you may send
 it to OpenAI (through your Codex CLI) as well as to Anthropic. If you may not,
 deny ModelQuad in that repository (see above).
-
-## Turn off the background quota read
-
-While Claude Code runs ModelQuad, ModelQuad asks your Codex CLI for your Codex
-quota about every 4 minutes, with no prompt. To stop that, set the environment
-variable `MODELQUAD_CODEX_QUOTA_REFRESH` to `0` and restart Claude Code. In
-PowerShell, for your user account:
-
-```powershell
-[Environment]::SetEnvironmentVariable('MODELQUAD_CODEX_QUOTA_REFRESH', '0', 'User')
-```
-
-Codex's quota then updates only when you run `modelquad usage-refresh` or
-Claude calls the `modelquad_usage_refresh` tool.
 
 ## For administrators
 
@@ -162,11 +155,11 @@ which servers may run at all, use an allowlist with
 `allowManagedMcpServersOnly`, or a fixed `managed-mcp.json`.
 
 What makes a person approve each Codex call is Claude Code's own
-approval prompt: both tools that start Codex are marked as requiring user
-interaction, which no allow rule or mode skips, unless you turn the standing
-grant on for a folder (`modelquad settings auto on`): sessions there register
-`modelquad_delegate` without that mark, and your allow rule applies. The extra confirmation form
-the handoff tool shows is a second check, not the main one.
+approval prompt: `modelquad_delegate`, the one tool that starts Codex, is
+marked as requiring user interaction, which no allow rule or mode skips,
+unless you turn the standing grant on for a folder
+(`modelquad settings auto on`): sessions there register
+`modelquad_delegate` without that mark, and your allow rule applies.
 
 See Claude Code's documentation on managed settings and on controlling MCP
 server access (`managed-mcp`) for where the managed settings file lives on

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import re
 import sqlite3
@@ -35,16 +36,15 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 FILE_NAME = "review-ledger.db"
 MAX_CLAIM_CHARS = 300
 MAX_REASON_CHARS = 400
 MAX_NOTE_CHARS = 200
 MAX_FINDINGS = 50
 
-#: Why a Codex call was made. ``split_quota``: a step ``modelquad_split``
-#: proposed for Codex because Claude was near its limit (``split.QUOTA_TRIGGER``).
-TRIGGERS = ("review_gate", "pre_change", "user", "claude", "split_quota")
+#: Why a Codex call was made.
+TRIGGERS = ("review_gate", "pre_change", "user", "claude")
 VERDICTS = ("confirmed", "refuted", "undecidable")
 #: Evidence a verdict rests on. The first three are independent of Claude's
 #: own reading; ``code_reading`` is Claude's judgment and is never counted as
@@ -55,8 +55,7 @@ INDEPENDENT_EVIDENCE = frozenset({"test", "reproduced", "ci"})
 #: ``fixed``: recorded again after the fix, with ``fix_verified``.
 ACTIONS = ("to_fix", "fixed", "no_change", "deferred")
 SEVERITIES = ("high", "medium", "low")
-CONFIDENCES = ("high", "medium", "low")
-GATE_EVENTS = ("blocked", "review_done", "review_failed", "review_pending", "not_done_reported",
+GATE_EVENTS = ("blocked", "review_done", "review_failed", "not_done_reported",
                "consult_reminded", "consult_blocked", "consult_done", "consult_failed",
                "skipped_small")
 
@@ -107,6 +106,21 @@ CREATE TABLE IF NOT EXISTS gate_events (
     session TEXT NOT NULL,
     event TEXT NOT NULL,
     files INTEGER
+);
+CREATE TABLE IF NOT EXISTS packages (
+    decision_id TEXT PRIMARY KEY,
+    package_id TEXT,
+    workspace TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    follows TEXT,
+    file_count INTEGER,
+    total_bytes INTEGER,
+    skipped_count INTEGER,
+    files_needed INTEGER,
+    model_calls INTEGER,
+    cached_input_tokens INTEGER,
+    reasoning_output_tokens INTEGER,
+    manifest TEXT
 );
 """
 
@@ -354,11 +368,16 @@ WITHHELD = "withheld"
 FAILED = "failed"
 REFUSED = "refused"
 NOT_STARTED = "not_started"
-CALL_OUTCOMES = (ANSWERED, WITHHELD, FAILED, REFUSED, NOT_STARTED)
+#: ``unfinished``: Codex was started and no end was recorded. The row is
+#: written when Codex starts and replaced when the call ends, so it stays only
+#: for a call that is still running or whose session closed in the middle.
+UNFINISHED = "unfinished"
+CALL_OUTCOMES = (ANSWERED, WITHHELD, FAILED, REFUSED, NOT_STARTED, UNFINISHED)
 #: The outcomes of a call in which Codex was actually started: only these are "Codex calls".
-STARTED_OUTCOMES = frozenset({ANSWERED, WITHHELD, FAILED})
+STARTED_OUTCOMES = frozenset({ANSWERED, WITHHELD, FAILED, UNFINISHED})
 OUTCOME_WORDS = {ANSWERED: "answered", WITHHELD: "withheld (tool call seen)", FAILED: "not answered",
-                 REFUSED: "refused", NOT_STARTED: "not started for another reason"}
+                 REFUSED: "refused", NOT_STARTED: "not started for another reason",
+                 UNFINISHED: "no end recorded (still running, or the session closed mid-run)"}
 #: Reasons that are a plain problem with the request, not a rule that refused it.
 INPUT_REASONS = frozenset({
     "supplied_file_missing", "supplied_files_over_limit", "supplied_file_unavailable",
@@ -401,6 +420,77 @@ def _outcome(payload: dict) -> str:
         started=started if isinstance(started, bool) else None,
         delivered=isinstance(payload.get("output"), str) and bool(payload["output"].strip()),
         reason=reason if isinstance(reason, str) else None)
+
+
+MAX_MANIFEST_CHARS = 32_000
+
+
+def record_package(decision_id: str, manifest, *, working_directory, round_number: int = 0,
+                   follows: str | None = None, files_needed=(), usage=None,
+                   path: Path | None = None) -> None:
+    """Record what one call sent: the package manifest, its round and what it used.
+
+    The manifest holds relative paths, sizes, digest prefixes and skip
+    reasons only. A call that packed nothing (refused before the launch)
+    still gets its row, with no package id.
+    """
+    manifest = manifest if isinstance(manifest, dict) else {}
+    usage = usage if isinstance(usage, dict) else {}
+
+    def count(value):
+        return value if type(value) is int and 0 <= value < 10**10 else None
+
+    text = json.dumps(manifest, sort_keys=True, separators=(",", ":")) if manifest else None
+    if text is not None and len(text) > MAX_MANIFEST_CHARS:
+        text = None  # Counts and the id are kept; an oversized list is not.
+    conn = connect(path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO packages VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (decision_id, manifest.get("package_id"), workspace_id(working_directory),
+             int(round_number), follows if isinstance(follows, str) else None,
+             count(manifest.get("file_count")), count(manifest.get("total_bytes")),
+             len(manifest.get("skipped") or ()) if manifest else None,
+             len(tuple(files_needed or ())), count(usage.get("model_calls")),
+             count(usage.get("cached_input_tokens")), count(usage.get("reasoning_output_tokens")),
+             text))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def package_round(decision_id: str, working_directory, *, path: Path | None = None) -> int | None:
+    """The completion round of a recorded call in this folder; None when there is no such call."""
+    target = Path(path) if path is not None else ledger_path()
+    if not isinstance(decision_id, str) or not target.is_file():
+        return None
+    conn = connect(target)
+    try:
+        row = conn.execute("SELECT round FROM packages WHERE decision_id = ? AND workspace = ?",
+                           (decision_id, workspace_id(working_directory))).fetchone()
+    finally:
+        conn.close()
+    return None if row is None else int(row["round"])
+
+
+def record_start(decision_id: str, *, working_directory, task_type, trigger,
+                 path: Path | None = None) -> None:
+    """Record that Codex was started for this call, before anything comes back.
+
+    :func:`record_run` replaces the row when the call ends. A session that
+    closes in the middle never reaches that, and without this row a package
+    would have gone to Codex with no local record of it. Time, tokens and
+    findings are unknown at this point and are stored as unknown.
+    """
+    conn = connect(path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (decision_id, time.time(), workspace_id(working_directory), str(task_type)[:40],
+             trigger if trigger in TRIGGERS else "claude", None, UNFINISHED, None, None, None, None))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def record_run(payload: dict, *, working_directory, task_type, trigger, path: Path | None = None,
@@ -584,41 +674,6 @@ def record_gate_event(directory, session: str, event: str, files: int | None = N
 
 # ------------------------------------------------------------------ report
 
-def count_runs(*, trigger: str, since: float, until: float | None = None,
-               workspace: str | None = None, path: Path | None = None) -> dict | None:
-    """Calls recorded with one trigger in a period, by outcome; read-only.
-
-    ``since`` and ``until`` are epoch seconds; ``workspace`` a
-    :func:`workspace_id` (None: every project). No ledger file yet means no
-    call was recorded: zero. A ledger that cannot be read, or one a newer
-    build wrote, returns None (unknown), never zero. Nothing is created or written.
-    """
-    target = Path(path) if path is not None else ledger_path()
-    if not target.is_file():
-        return {"calls": 0, "by_outcome": {}}
-    try:
-        conn = sqlite3.connect(f"{target.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0)
-    except sqlite3.Error:
-        return None
-    try:
-        if conn.execute("PRAGMA user_version").fetchone()[0] > SCHEMA_VERSION:
-            return None
-        where, args = "trigger = ? AND created_at >= ?", [trigger, since]
-        if until is not None:
-            where += " AND created_at <= ?"
-            args.append(until)
-        if workspace is not None:
-            where += " AND workspace = ?"
-            args.append(workspace)
-        by_outcome = {row[0]: row[1] for row in conn.execute(
-            f"SELECT outcome, COUNT(*) FROM runs WHERE {where} GROUP BY outcome", args)}
-    except sqlite3.Error:
-        return None
-    finally:
-        conn.close()
-    return {"calls": sum(by_outcome.values()), "by_outcome": by_outcome}
-
-
 def report(*, days: float = 30.0, workspace: str | None = None, path: Path | None = None) -> dict:
     """Counts for the review report. Claude's agreement alone is never counted as proof."""
     since = time.time() - days * 86400
@@ -713,38 +768,6 @@ def location_label(file, line, line_end=None) -> str:
     if line is None:
         return str(file)
     return f"{file}:{line}-{line_end}" if line_end else f"{file}:{line}"
-
-
-def delivered_answers(decision_ids, *, path: Path | None = None) -> dict[str, bool] | None:
-    """{decision_id: whether an answer was delivered} for the calls the ledger recorded; read-only.
-
-    The ledger saw each reply, so it knows whether an answer reached Claude;
-    the history database does not keep that. A call the ledger has no row
-    for is absent from the result. None when the ledger cannot be read.
-    """
-    ids = [item for item in decision_ids if isinstance(item, str) and item]
-    target = Path(path) if path is not None else ledger_path()
-    if not ids or not target.is_file():
-        return {}
-    try:
-        conn = sqlite3.connect(f"{target.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0)
-    except sqlite3.Error:
-        return None
-    try:
-        if conn.execute("PRAGMA user_version").fetchone()[0] > SCHEMA_VERSION:
-            return None
-        found: dict[str, bool] = {}
-        for start in range(0, len(ids), 500):
-            chunk = ids[start:start + 500]
-            marks = ",".join("?" * len(chunk))
-            for row in conn.execute(
-                    f"SELECT decision_id, outcome FROM runs WHERE decision_id IN ({marks})", chunk):
-                found[row[0]] = row[1] == ANSWERED
-        return found
-    except sqlite3.Error:
-        return None
-    finally:
-        conn.close()
 
 
 def list_findings(*, days: float = 30.0, workspace: str | None = None, limit: int = 20,

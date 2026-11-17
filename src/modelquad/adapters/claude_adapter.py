@@ -8,17 +8,16 @@ each changed file once, backing up its original bytes immediately before that
 write (see :mod:`staging`). A file that cannot be read safely is skipped with a
 plain reason; the others still proceed.
 
-The global footprint is deliberately small: the ``/modelquad`` skill and six
-user-only command skills (``/modelquad-review``, ``/modelquad-handoff``,
-``/modelquad-quota``, ``/modelquad-setup``, ``/modelquad-split``,
-``/modelquad-settings``), the MCP
-server entry (which carries its own tool ``timeout``), the status line when the
-user has none, and the SessionStart reminder. The model guidance comes from the
-MCP server's ``instructions`` (``server_instructions.py``), so nothing is
-written into the user's global ``CLAUDE.md``. Install and uninstall also take
-back what earlier builds added -- the ``CLAUDE.md`` managed block, the global
-``env.MCP_TOOL_TIMEOUT`` and the advisory PreToolUse gate hook -- each only
-when it is provably ModelQuad's, and each with a backup.
+The global footprint is deliberately small: the ``/modelquad`` skill, three
+user-only command skills (``/modelquad-review``, ``/modelquad-setup``,
+``/modelquad-settings``) and the MCP server entry (which carries its own tool
+``timeout``). The model guidance comes from the MCP server's ``instructions``
+(``server_instructions.py``), so nothing is written into the user's global
+``CLAUDE.md``. Install and uninstall also take back what earlier builds added
+-- the quota status line, the SessionStart reminder, the command skills for
+handoff, quota and division of work, the ``CLAUDE.md`` managed block, the
+global ``env.MCP_TOOL_TIMEOUT`` and the advisory PreToolUse gate hook -- each
+only when it is provably ModelQuad's, and each with a backup.
 """
 
 from __future__ import annotations
@@ -32,7 +31,6 @@ from ..branding import CLI_COMMAND, MANAGED_BLOCK_TAG, MCP_COMMAND, MCP_SERVER_N
 from .backup import backup_if_exists
 from .cliintegration import (
     owns_cli_command,
-    plan_owned_status_line,
     plan_remove_owned_status_line,
 )
 from .codex_hooks import pending_action, plan_pending_hook
@@ -50,17 +48,17 @@ _MCP_KEY_PATH = ("mcpServers", MCP_SERVER_NAME)
 _SKILL_DIR = PRODUCT_SLUG
 # Commands only the user starts (``disable-model-invocation: true``). Each
 # still reaches Codex only through a tool Claude Code asks about.
-_COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("review", "handoff", "quota", "setup", "split",
-                                                                     "settings"))
+_COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("review", "setup", "settings"))
 _SKILL_DIRS = (_SKILL_DIR, *_COMMAND_SKILL_DIRS)
+# Commands earlier builds installed for features this build no longer has.
+# Install and uninstall remove a copy that carries ModelQuad's mark.
+_RETIRED_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("handoff", "quota", "split"))
 # Command skills sit in folders a user could also choose, so each copy carries
 # this line in its frontmatter; install and uninstall touch only a file that
 # has it.
 _COMMAND_SKILL_MARK = b"managed-by: modelquad"
 _NOT_OURS = "{} has no ModelQuad mark, so it is not ModelQuad's and was left unchanged."
 _STATUS_LINE_ARGUMENTS = ("usage-hook", "claude")
-#: The compact part a user adds to a status line of their own.
-SEGMENT_ARGUMENTS = ("usage-hook", "claude", "--segment")
 # Earlier builds installed an advisory PreToolUse hook that added one note per
 # session suggesting ModelQuad. The MCP server's instructions now carry that
 # guidance into every session that has the server, so the hook only repeated
@@ -69,14 +67,12 @@ SEGMENT_ARGUMENTS = ("usage-hook", "claude", "--segment")
 # name with exactly ``hook-gate``) and nothing else. ``modelquad hook-gate``
 # still answers, harmlessly, for a session started before the removal.
 _HOOK_EVENT = "PreToolUse"
-_HOOK_MATCHER = "Bash|Edit|Write|MultiEdit|NotebookEdit|Task"
 # Earlier builds raised Claude Code's tool timeout for EVERY MCP server through
 # the global ``env.MCP_TOOL_TIMEOUT``. The timeout now lives on the modelquad
 # server entry itself (``"timeout"`` in templates/claude/mcp/mcp-servers.json,
 # milliseconds, documented by Claude Code to override MCP_TOOL_TIMEOUT for that
-# server only). The constants below identify the old global value so that an
+# server only). The constant below identifies the old global value so that an
 # owned one can be removed; a value the user set is never touched.
-_MCP_TOOL_TIMEOUT_KEY_PATH = ("env", "MCP_TOOL_TIMEOUT")
 _MCP_TOOL_TIMEOUT_MS = "900000"  # what earlier builds wrote, and recorded as owned
 _HTML_MARKER = {"comment_prefix": "<!--", "marker_suffix": "-->"}
 
@@ -93,7 +89,7 @@ _REMOVED_GATE = (
     "ModelQuad's guidance now comes from its MCP server."
 )
 _LEFT_TO_PLUGIN = "Removed ModelQuad's server entry; the ModelQuad plugin supplies the server."
-_REMINDER_TO_PLUGIN = "Removed ModelQuad's SessionStart reminder; the ModelQuad plugin runs it."
+_REMINDER_TO_PLUGIN = "Removed the SessionStart reminder an earlier version added; this version has none."
 _FOREIGN_SERVER = (
     "A modelquad server entry that ModelQuad's install did not write was left in place. "
     "Claude Code starts it next to the plugin's server; remove it yourself to keep one."
@@ -110,14 +106,6 @@ def _status_line_command() -> str:
     return hostruntime.integration_command(*_STATUS_LINE_ARGUMENTS, shell="bash")
 
 
-def segment_command() -> str:
-    """``modelquad usage-hook claude --segment`` spelled for Claude Code's bash."""
-
-    from .. import hostruntime
-
-    return hostruntime.integration_command(*SEGMENT_ARGUMENTS, shell="bash")
-
-
 def mcp_config_path(target_dir: Path) -> Path:
     """``~/.claude.json`` for the default ``~/.claude`` target."""
 
@@ -125,43 +113,11 @@ def mcp_config_path(target_dir: Path) -> Path:
     return target.parent / f"{target.name}.json"
 
 
-def read_hook_commands(target_dir: Path) -> tuple[str, ...]:
-    """Expose Claude's recorded gate wiring without duplicating its settings path."""
-    return wired_commands(target_dir / "settings.json", _HOOK_EVENT)
-
-
 def read_status_line_command(target_dir: Path) -> str | None:
     """Read Claude's status line; ownership is a separate structural decision."""
     from .cliintegration import read_status_line_command as read_command
 
     return read_command(target_dir / "settings.json")
-
-
-def status_line_recipe(command: str | None) -> str | None:
-    """The one line that adds ModelQuad to a status line the user already has.
-
-    None when there is nothing to add: no status line (install writes its own),
-    ModelQuad's own, or a user line that already runs ``usage-hook claude``.
-    ccstatusline gets its Custom Command widget; any other command gets a
-    replacement that runs theirs and then ours on the same input, so a
-    multi-line status line (claude-hud) keeps every line.
-    """
-
-    if not isinstance(command, str) or not command.strip():
-        return None
-    if owns_cli_command(command, _STATUS_LINE_ARGUMENTS) or "usage-hook claude" in command:
-        return None
-    segment = segment_command()
-    if "ccstatusline" in command.casefold():
-        return (
-            "In ccstatusline (run it with no arguments to open its editor), add a "
-            f"Custom Command widget with this command: {segment}"
-        )
-    return (
-        "Set statusLine.command in ~/.claude/settings.json to: "
-        f"input=$(cat); printf '%s' \"$input\" | {command.strip()}; "
-        f"printf '%s' \"$input\" | {segment}"
-    )
 
 
 class _OwnedFile(StagedText):
@@ -243,6 +199,7 @@ def _remove_owned_file(
         return FileAction(
             destination, ActionKind.SKIPPED,
             detail=f"Could not remove {destination}: {exc.strerror or exc}. It was left in place.",
+            failed=True,
         )
     try:
         destination.parent.rmdir()
@@ -268,9 +225,16 @@ def _remove_skills(
         name: _remove_command_skill(
             destination / "skills" / name / "SKILL.md", dry_run=dry_run, installed=installed.get(name),
         )
-        for name in _COMMAND_SKILL_DIRS
+        for name in (*_COMMAND_SKILL_DIRS, *_RETIRED_SKILL_DIRS)
     })
     return skills
+
+
+def _remove_retired_skills(destination: Path, *, dry_run: bool) -> list[FileAction]:
+    """Take back the command skills of features this build no longer has."""
+
+    return [_remove_command_skill(destination / "skills" / name / "SKILL.md", dry_run=dry_run)
+            for name in _RETIRED_SKILL_DIRS]
 
 
 def _has_home_policy_block(path: Path) -> bool:
@@ -505,8 +469,9 @@ class ClaudeAdapter:
     """Install Claude Code's fully-owned skill and MCP configuration entry.
 
     With ``via_plugin`` the ModelQuad plugin supplies the server, the commands
-    and the reminder, so install keeps only the status line and takes back its
-    own copies of the rest: Claude Code would otherwise run each twice.
+    and the hooks, so install takes back its own copies: Claude Code would
+    otherwise run each twice. Either way install removes what earlier builds
+    wrote and this one no longer has (a quota status line, a SessionStart note).
     ``None`` reads the choice ``modelquad install claude --plugin`` saved.
     """
 
@@ -523,8 +488,6 @@ class ClaudeAdapter:
         if self.via_plugin:
             return self._install_beside_plugin(Path(target_dir), dry_run=dry_run)
         destination = Path(target_dir)
-        # Resolve the shell command before the first filesystem write.
-        status_line_command = _status_line_command()
         with adapters_template_dir(self.name) as templates:
             skill_contents = _skill_templates(templates)
             mcp_value = _mcp_template_value(templates)
@@ -546,12 +509,11 @@ class ClaudeAdapter:
         retire: tuple[str, ...] = ()
         if settings.refusal is None:
             payload = settings.payload
-            status_change = plan_owned_status_line(
-                payload, _STATUS_LINE_ARGUMENTS, status_line_command, status_type="command"
-            )
+            # Earlier builds wrote a quota status line and a SessionStart note; both go.
+            status_change = plan_remove_owned_status_line(payload, _STATUS_LINE_ARGUMENTS)
             gates = _plan_remove_gates(payload)
             timeout_change, retire = _plan_remove_tool_timeout(settings)
-            pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run)
+            pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run, remove=True)
 
         for staged in (*skills.values(), mcp, policy, settings):
             staged.commit(dry_run=dry_run)
@@ -566,17 +528,17 @@ class ClaudeAdapter:
             # The command skills come last so earlier report positions stay put.
             *(skills[name].action(skill_changes[name], dry_run=dry_run)
               for name in _COMMAND_SKILL_DIRS),
+            *_remove_retired_skills(destination, dry_run=dry_run),
         ]
         return InstallReport(self.name, dry_run, tuple(actions))
 
     def _install_beside_plugin(self, destination: Path, *, dry_run: bool) -> InstallReport:
-        """The status line only; ModelQuad's own server, commands and reminder go.
+        """ModelQuad's own server, commands and earlier hooks go; the plugin has them.
 
         Each removal takes only what is provably ModelQuad's, with a backup,
         exactly as uninstall does. The report keeps install's order.
         """
 
-        status_line_command = _status_line_command()
         with adapters_template_dir(self.name) as templates:
             mcp_value = _mcp_template_value(templates)
 
@@ -591,9 +553,8 @@ class ClaudeAdapter:
         retire: tuple[str, ...] = ()
         if settings.refusal is None:
             payload = settings.payload
-            status_change = plan_owned_status_line(
-                payload, _STATUS_LINE_ARGUMENTS, status_line_command, status_type="command"
-            )
+            # Earlier builds wrote a quota status line and a SessionStart note; both go.
+            status_change = plan_remove_owned_status_line(payload, _STATUS_LINE_ARGUMENTS)
             gates = _plan_remove_gates(payload)
             timeout_change, retire = _plan_remove_tool_timeout(settings)
             pending_change = plan_pending_hook(settings, self.name, dry_run=dry_run, remove=True)
@@ -612,7 +573,7 @@ class ClaudeAdapter:
             *_timeout_action(settings, timeout_change, retire, dry_run=dry_run),
             pending_action(settings, pending_change, dry_run=dry_run),
             *(settings.action(change, dry_run=dry_run) for change in gates),
-            *(skills[name] for name in _COMMAND_SKILL_DIRS),
+            *(skills[name] for name in (*_COMMAND_SKILL_DIRS, *_RETIRED_SKILL_DIRS)),
         ]
         return InstallReport(self.name, dry_run, tuple(actions))
 
@@ -649,7 +610,7 @@ class ClaudeAdapter:
             *_timeout_action(settings, timeout_change, retire, dry_run=dry_run),
             pending_action(settings, pending_change, dry_run=dry_run),
             *(settings.action(change, dry_run=dry_run) for change in gates),
-            *(skills[name] for name in _COMMAND_SKILL_DIRS),
+            *(skills[name] for name in (*_COMMAND_SKILL_DIRS, *_RETIRED_SKILL_DIRS)),
         ]
         return InstallReport(self.name, dry_run, tuple(actions))
 

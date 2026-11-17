@@ -6,14 +6,7 @@ import sys
 from pathlib import Path
 
 import modelquad.paths as paths_module
-from modelquad.paths import (
-    db_path,
-    is_dev_checkout,
-    logs_dir,
-    sessions_path,
-    state_root,
-)
-from modelquad.service import db as service_db
+from modelquad.paths import is_dev_checkout, state_root
 
 
 def test_dev_checkout_detection_follows_the_src_layout_rule(tmp_path, monkeypatch):
@@ -48,27 +41,15 @@ def test_dev_mode_state_root_uses_the_identical_construction_as_pre_v08_defaults
     editable is not a property of this test, and under a non-editable install
     (CI) the resolver correctly returns installed-mode paths instead -- which
     would fail this test for the wrong reason. The installed-mode counterpart
-    is covered by ``test_simulated_installed_windows_db_path_resolves_under_localappdata``.
+    is covered by ``test_installed_copy_keeps_its_state_outside_appdata_on_windows``.
 
     Compares against the *construction rule* -- ``Path.home() / ".modelquad"``
-    -- evaluated at test time, not against config.py's/service/db.py's own
-    ``DEFAULT_SESSIONS_PATH``/``DEFAULT_DB_PATH`` module constants: those are
-    resolved once at import time (a pre-existing gotcha this repo's own
-    tests/conftest.py already has to work around for DEFAULT_DB_PATH
-    specifically), so comparing against them directly under this file's
-    autouse home-isolation fixture would be comparing against whatever
-    Path.home() happened to be at collection time, not this test's fake one.
+    -- evaluated at test time, under this suite's home isolation.
     """
 
     monkeypatch.setattr(paths_module, "is_dev_checkout", lambda: True)
 
-    assert db_path() == Path.home() / ".modelquad" / "modelquad.db"
-    assert sessions_path() == Path.home() / ".modelquad" / "sessions.json"
     assert state_root() == Path.home() / ".modelquad"
-
-
-def test_logs_dir_is_under_state_root():
-    assert logs_dir() == state_root() / "logs"
 
 
 def test_installed_copy_keeps_its_state_outside_appdata_on_windows(monkeypatch):
@@ -80,7 +61,6 @@ def test_installed_copy_keeps_its_state_outside_appdata_on_windows(monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Someone\AppData\Local")
 
     assert state_root() == Path.home() / ".local" / "share" / "modelquad"
-    assert db_path() == Path.home() / ".local" / "share" / "modelquad" / "modelquad.db"
     # Relative to the home folder: the test's isolated home may itself sit
     # under AppData (a CI runner's temp folder does).
     assert "AppData" not in state_root().relative_to(Path.home()).parts
@@ -104,10 +84,6 @@ def test_installed_copy_does_not_need_localappdata(monkeypatch):
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
 
     assert state_root() == Path.home() / ".local" / "share" / "modelquad"
-
-
-def test_service_db_default_db_path_matches_paths_db_path():
-    assert service_db.DEFAULT_DB_PATH == db_path()
 
 
 def test_installed_and_development_state_never_share_a_folder(monkeypatch):

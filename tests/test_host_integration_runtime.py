@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Host integrations launch the ModelQuad on PATH by its bare command names."""
+"""The Claude Code install launches ModelQuad by its bare command names, and
+removes the gate and status line that earlier builds wrote."""
 
 from __future__ import annotations
 
@@ -39,12 +40,6 @@ def force_installed(monkeypatch, local_appdata: Path) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
 
 
-def scripts_which(tmp_path):
-    """A PATH on which pip put both console commands in one Scripts folder."""
-    scripts = tmp_path / "Python311" / "Scripts"
-    return lambda name: str(scripts / f"{name}.exe")
-
-
 def write_settings(home, payload):
     home.mkdir(parents=True, exist_ok=True)
     (home / "settings.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -67,25 +62,24 @@ def test_every_integration_uses_the_bare_command_names(monkeypatch, tmp_path, mo
     assert not hasattr(hostruntime, "installed_mcp_shim")
     assert not hasattr(hostruntime, "installed_cli_shim")
     home = tmp_path / ".claude"
-    ClaudeAdapter().install(home)
-    # The advisory gate is no longer installed.
+    ClaudeAdapter(via_plugin=False).install(home)
+    # Neither the advisory gate nor a status line is installed: settings.json is not even created.
     assert wired_commands(home / "settings.json", "PreToolUse") == ()
-    assert read_settings(home)["statusLine"]["command"] == "modelquad usage-hook claude"
+    assert not (home / "settings.json").exists()
     mcp = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
     assert mcp["mcpServers"]["modelquad"]["command"] == "modelquad-mcp"
 
 
 def test_installed_adapter_and_idempotence(tmp_path):
-    """Reinstalling must not rewrite either Claude surface."""
+    """Reinstalling must not rewrite any Claude surface."""
     home = tmp_path / ".claude"
-    adapter = ClaudeAdapter()
+    adapter = ClaudeAdapter(via_plugin=False)
     adapter.install(home)
-    settings = home / "settings.json"
     assert adapter.is_installed(home)
-    before = settings.read_bytes()
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     report = adapter.install(home)
     assert all(action.kind == ActionKind.UNCHANGED for action in report.actions)
-    assert settings.read_bytes() == before
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
 
 
 @pytest.mark.parametrize("old", [
@@ -157,9 +151,9 @@ def test_install_then_uninstall_leaves_no_status_line_or_empty_env(tmp_path):
     """A fresh install is undone exactly: no typeless statusLine, no env at all."""
     home = tmp_path / ".claude"
     write_settings(home, {"theme": "dark"})
-    ClaudeAdapter().install(home)
-    assert "statusLine" in read_settings(home) and "env" not in read_settings(home)
-    ClaudeAdapter().uninstall(home)
+    ClaudeAdapter(via_plugin=False).install(home)
+    assert read_settings(home) == {"theme": "dark"}
+    ClaudeAdapter(via_plugin=False).uninstall(home)
     settings = read_settings(home)
     assert "statusLine" not in settings
     assert "env" not in settings
@@ -176,181 +170,9 @@ def test_tolerant_split(command, expected):
     assert hostruntime.split_command(command) == expected
 
 
-def test_bare_registration_is_canonical_when_it_resolves(tmp_path):
-    """The normal pip install: the bare name resolves, so nothing is a finding."""
-    which = scripts_which(tmp_path)
-    for verdict in (
-        hostruntime.classify_cli_registration("modelquad hook-gate", which=which),
-        hostruntime.classify_registration("modelquad-mcp", which=which),
-    ):
-        assert verdict.canonical and not verdict.explicit and not verdict.reason
-    missing = hostruntime.classify_cli_registration("modelquad hook-gate", which=lambda _: None)
-    assert not missing.canonical and "not on this PATH" in missing.reason
-
-
-def test_an_absolute_registration_is_pinned_and_judged_without_a_lookup(tmp_path):
-    """A pinned path is reported, structurally: no PATH lookup may answer for it."""
-
-    def no_lookup(_name):
-        pytest.fail("an absolute registration must not consult PATH")
-
-    pinned = tmp_path / "Python311" / "Scripts" / "modelquad.exe"
-    verdict = hostruntime.classify_cli_registration(f'"{pinned.as_posix()}" hook-gate', which=no_lookup)
-    assert not verdict.canonical and verdict.explicit
-    assert "pinned" in verdict.reason and "'modelquad'" in verdict.reason
-    mcp = hostruntime.classify_registration(str(pinned.with_name("modelquad-mcp.exe")), which=no_lookup)
-    assert not mcp.canonical and mcp.explicit
-    blank = hostruntime.classify_cli_registration("   ", which=no_lookup)
-    assert not blank.canonical and blank.command == "   "
-    assert "No launch command" in blank.reason
-
-
-def cli_registry(tmp_path, host_ids=("claude",)):
-    from modelquad.registry import (
-        HostAdapterDescriptor, ProviderCapabilities, ProviderPlugin,
-        ProviderRegistry, UsageSourceKind,
-    )
-
-    adapters = {"claude": ClaudeAdapter}
-    return ProviderRegistry(tuple(
-        ProviderPlugin(
-            id=host, display_name=host, capabilities=ProviderCapabilities(),
-            usage_source_kind=UsageSourceKind.LOCAL_LOGS,
-            host_adapters=(HostAdapterDescriptor(
-                host, host, host, adapters[host], lambda host=host: tmp_path / host,
-                detect=lambda: True,
-            ),),
-        ) for host in host_ids
-    ))
-
-
-def cli_report(tmp_path, *, which, registry=None, claude_dir=None):
-    from modelquad.config import Config
-    from modelquad.doctor import run_doctor
-    from modelquad.service import control_plane as shell
-
-    return run_doctor(
-        Config(), registry=registry or cli_registry(tmp_path), which=which,
-        usage_directory=tmp_path / "usage", claude_dir=claude_dir,
-        control_plane_probe=lambda _: shell.ControlPlaneVerdict(shell.PROBE_ABSENT, "no listener"),
-    )
-
-
-_RUNTIME_CHECKS = ("claude MCP runtime", "claude status line runtime")
-
-
-def test_doctor_is_quiet_on_a_normal_pip_install(tmp_path):
-    """The runtime checks are OK when the commands resolve on PATH; no gate is wired."""
-    from modelquad.doctor import CheckStatus
-
-    ClaudeAdapter().install(tmp_path / "claude")
-    checks = {c.name: c for c in cli_report(tmp_path, which=scripts_which(tmp_path)).checks}
-    for name in _RUNTIME_CHECKS:
-        assert checks[name].status is CheckStatus.OK, checks[name].detail
-    assert "claude hook-gate runtime" not in checks
-
-
-def test_doctor_warns_when_the_commands_are_not_on_path(tmp_path):
-    from modelquad.doctor import CheckStatus
-
-    ClaudeAdapter().install(tmp_path / "claude")
-    checks = {c.name: c for c in cli_report(tmp_path, which=lambda _: None).checks}
-    for name in _RUNTIME_CHECKS:
-        assert checks[name].status is CheckStatus.WARN
-        assert "not on this PATH" in checks[name].detail
-        assert checks[name].detail.endswith("Run modelquad repair to point it at this installation.")
-
-
-@pytest.mark.parametrize("command", [None, "python my_modelquad_helper.py", "modelquad usage-hook other"])
-def test_doctor_leaves_user_status_lines_unjudged(tmp_path, command):
-    """A user's own status line must never become a runtime warning or repair target."""
-    payload = {} if command is None else {"statusLine": {"command": command}}
-    write_settings(tmp_path / "claude", payload)
-    names = {c.name for c in cli_report(tmp_path, which=lambda _: None).checks}
-    assert "claude status line runtime" not in names
-    assert "claude hook-gate runtime" not in names
-
-
-def test_leftover_gate_states(tmp_path):
-    """Only an owned gate an earlier version wrote is reported, and it asks for repair."""
-    from modelquad.doctor import CheckStatus, _leftover_gate_check
-
-    home = tmp_path / "claude"
-    assert _leftover_gate_check(home) is None
-    write_settings(home, {"hooks": {"PreToolUse": [{"hooks": [{"command": "python modelquad hook-gate"}]}]}})
-    assert _leftover_gate_check(home) is None
-    write_settings(home, {"hooks": {"PreToolUse": [{"hooks": [{"command": '"C:/old/modelquad.exe" hook-gate'}]}]}})
-    stale = _leftover_gate_check(home)
-    assert stale.status is CheckStatus.WARN and "earlier version" in stale.detail
-    assert stale.detail.endswith("run modelquad repair to remove it.")
-    ClaudeAdapter().install(home)
-    assert _leftover_gate_check(home) is None
-
-
-@pytest.mark.parametrize("name,host,arguments", [
-    ("claude hook-gate runtime", "claude", ("hook-gate",)),
-    ("claude status line runtime", "claude", ("usage-hook", "claude")),
-])
-def test_repair_cli_findings_and_byte_idempotence(monkeypatch, tmp_path, name, host, arguments):
-    """Each CLI warning must reinstall its real adapter once and leave every file stable thereafter."""
-    from modelquad import repair
-    from modelquad.config import Config
-    from modelquad.doctor import DoctorReport
-
-    registry = cli_registry(tmp_path, (host,))
-    home = tmp_path / host
-    settings = home / "settings.json"
-    stale_command = " ".join(('"C:/old runtime/modelquad.exe"', *arguments))
-    if arguments == ("hook-gate",):
-        payload = {"hooks": {"PreToolUse": [{"hooks": [{"command": stale_command}]}]}}
-    else:
-        payload = {"statusLine": {"command": stale_command}}
-    write_settings(settings.parent, payload)
-    which = scripts_which(tmp_path)
-
-    def doctor(config, **kwargs):
-        # Retain the real reader and classifier, isolating just this finding so
-        # another repairable warning cannot accidentally make the test pass.
-        report = cli_report(tmp_path, registry=registry, which=kwargs["which"])
-        return DoctorReport(tuple(c for c in report.checks if c.name == name))
-
-    monkeypatch.setattr(repair, "run_doctor", doctor)
-    before = settings.read_bytes()
-    first = repair.run_repair(config=Config(), registry=registry, which=which, print_fn=lambda *a: None)
-    assert first["before_warn_count"] == 1
-    assert first["repaired_hosts"] == [host] and first["after_warn_count"] == 0
-    assert settings.read_bytes() != before
-    if arguments == ("hook-gate",):
-        # Repair removes the gate: it is no longer installed.
-        assert wired_commands(settings, "PreToolUse") == ()
-    files = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    second = repair.run_repair(config=Config(), registry=registry, which=which, print_fn=lambda *a: None)
-    assert second["repaired_hosts"] == [] and second["before_warn_count"] == 0
-    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == files
-
-
-@pytest.mark.parametrize("stale_first", [False, True])
-def test_doctor_canonical_gate_cannot_hide_stale_sibling(tmp_path, stale_first):
-    """A duplicate stale gate still executes, so report consumers must never see only its healthy sibling."""
-    from modelquad.doctor import CheckStatus
-
-    stale = '"C:/old runtime/modelquad.exe" hook-gate'
-    commands = [hostruntime.integration_command("hook-gate"), stale]
-    if stale_first:
-        commands.reverse()
-    write_settings(tmp_path / "claude", {"hooks": {"PreToolUse": [
-        {"hooks": [{"command": command} for command in commands]},
-    ]}})
-    checks = [c for c in cli_report(tmp_path, which=scripts_which(tmp_path)).checks
-              if c.name == "claude hook-gate runtime"]
-    assert len(checks) == 1
-    assert checks[0].status is CheckStatus.WARN
-    assert checks[0].detail.endswith("run modelquad repair to remove it.")
-
-
 @pytest.mark.parametrize("payload", ["{", "[]", '{"statusLine": []}', '{"statusLine": {"command": 7}}'])
 def test_status_reader_tolerates_foreign_shapes(tmp_path, payload):
-    """Malformed host settings must not crash diagnostics or manufacture a repair target."""
+    """Malformed host settings must not crash the reader or be rewritten by the removal."""
     from modelquad.adapters.cliintegration import read_status_line_command, remove_owned_status_line
 
     settings = tmp_path / "settings.json"
@@ -365,71 +187,24 @@ def test_status_reader_tolerates_foreign_shapes(tmp_path, payload):
 @pytest.mark.parametrize("recorded", [
     None, "owned", "python my_status.py", "modelquad usage-hook other", "other-cli usage-hook claude",
 ])
-def test_install_status_line_ownership(tmp_path, recorded):
-    """An unrelated repair must preserve the user's status line and tell them it skipped it."""
+@pytest.mark.parametrize("via_plugin", [False, True], ids=["install", "plugin-install"])
+def test_install_status_line_ownership(tmp_path, recorded, via_plugin):
+    """Install writes no status line: it removes the one an earlier build wrote and keeps a user's."""
 
     home = tmp_path / "claude"
     command = '"C:/old/modelquad.exe" usage-hook claude' if recorded == "owned" else recorded
-    write_settings(home, {"statusLine": {"type": "command", **({"command": command} if command else {})}})
-    report = ClaudeAdapter().install(home)
-    status = read_settings(home)["statusLine"]
-    assert status["type"] == "command"
+    original = {"type": "command", **({"command": command} if command else {})}
+    write_settings(home, {"statusLine": original})
+    report = ClaudeAdapter(via_plugin=via_plugin).install(home)
     action = report.actions[2]
-    if recorded in (None, "owned"):
-        assert status["command"] == hostruntime.integration_command("usage-hook", "claude")
-        assert action.kind is ActionKind.UPDATED
+    assert action.path == home / "settings.json"
+    if recorded == "owned":
+        # Only the keys ModelQuad wrote were there, so the whole object goes.
+        assert "statusLine" not in read_settings(home)
+        assert action.kind is ActionKind.REMOVED
     else:
-        assert status["command"] == command
-        assert action.kind is ActionKind.SKIPPED
-        assert command in action.detail
-
-
-def test_shadowed_gate_has_exactly_one_warning(tmp_path):
-    """One stale gate must not falsely report an absent adapter or repeat its runtime defect."""
-    from modelquad import doctor
-
-    home = tmp_path / "claude"
-    ClaudeAdapter().install(home)
-    payload = read_settings(home)
-    payload["hooks"]["PreToolUse"] = [
-        {"matcher": "Bash", "hooks": [{"type": "command", "command": '"C:/old runtime/modelquad.exe" hook-gate'}]}]
-    write_settings(home, payload)
-    usage = tmp_path / "usage"
-    usage.mkdir()
-    for name in ("usage-claude.json", "usage-codex.json"):
-        (usage / name).write_text("{}", encoding="utf-8")
-    report = cli_report(tmp_path, which=scripts_which(tmp_path),
-                        registry=cli_registry(tmp_path, ("claude",)))
-    checks = {check.name: check for check in report.checks}
-    assert checks["claude adapter installed"].status is doctor.CheckStatus.OK
-    assert {check.name for check in report.checks if check.status is doctor.CheckStatus.WARN} - {
-        "setup: python command", "setup: Scripts folder on PATH",
-    } == {"claude hook-gate runtime"}
-
-
-@pytest.mark.parametrize("user_status", [False, True])
-def test_survey_cli_surfaces(monkeypatch, tmp_path, user_status):
-    """State must expose each managed CLI surface, even without MCP, and leave user commands unjudged."""
-    from modelquad import registry, statediag
-
-    monkeypatch.setattr(registry, "default_registry", lambda: cli_registry(tmp_path))
-    gate = hostruntime.integration_command("hook-gate")
-    status = "python my_status.py" if user_status else hostruntime.integration_command("usage-hook", "claude")
-    write_settings(tmp_path / "claude", {
-        "hooks": {"PreToolUse": [{"hooks": [{"command": gate}, {"command": "echo modelquad hook-gate"}]}]},
-        "statusLine": {"command": status},
-    })
-    survey = statediag.survey_state(which=scripts_which(tmp_path))
-    expected = {("claude", "hook")}
-    if not user_status:
-        expected.add(("claude", "status_line"))
-    assert {(host.host_id, host.surface) for host in survey.hosts} == expected
-    assert all(host.canonical for host in survey.hosts)
-    assert survey.hosts[0].label == "claude (gate hook)"
-    for host in survey.hosts:
-        assert host.to_dict()["surface"] == host.surface
-        if host.surface == "status_line":
-            assert host.label == f"{host.host_id} (status line)"
+        assert read_settings(home)["statusLine"] == original
+        assert action.kind is ActionKind.UNCHANGED
 
 
 @pytest.mark.parametrize(
@@ -500,7 +275,7 @@ def test_rendered_launcher_survives_posix_word_splitting(monkeypatch, tmp_path, 
 
     words = _bash_words(command)
     assert words == [executable.as_posix(), *arguments]
-    assert hostruntime._same_path(Path(words[0]), executable)
+    assert str(Path(words[0]).resolve()).casefold() == str(executable.resolve()).casefold()
     assert WINDOWS_SEPARATOR not in words[0]
     assert hostruntime.split_command(command) == (executable.as_posix(), tuple(arguments))
 
@@ -520,75 +295,6 @@ def test_rendered_launcher_survives_posix_word_splitting(monkeypatch, tmp_path, 
 def test_render_launcher_spellings(launcher, expected):
     """POSIX separators always; quotes only where whitespace makes them necessary."""
     assert hostruntime.render_launcher(launcher) == expected
-
-
-@pytest.mark.parametrize("arguments", [("hook-gate",), ("usage-hook", "claude")])
-def test_unexecutable_spelling_of_the_right_path_is_a_finding(tmp_path, arguments):
-    """A correct path bash cannot execute is not canonical."""
-    executable = _fake_exe(tmp_path, "Local")
-    which = lambda _: str(executable)
-    old = " ".join((str(executable), *arguments))
-    verdict = hostruntime.classify_cli_registration(old, which=which)
-    assert not verdict.canonical
-    if not any(character.isspace() for character in str(executable)):
-        assert "Windows separators" in verdict.reason and "bash" in verdict.reason
-        assert "fails open" in verdict.reason
-    good = hostruntime.render_launcher(str(executable), shell="bash") + " " + " ".join(arguments)
-    spelled = hostruntime.classify_cli_registration(good, which=which)
-    assert not spelled.canonical and "pinned" in spelled.reason, "a correct spelling is only pinned"
-
-
-@pytest.mark.parametrize("name,host,arguments", [
-    ("claude hook-gate runtime", "claude", ("hook-gate",)),
-    ("claude status line runtime", "claude", ("usage-hook", "claude")),
-])
-@pytest.mark.parametrize("root_name", ["Local$W09", "Local With Space$W09"], ids=["unspaced", "spaced"])
-def test_repair_migrates_the_unexecutable_spelling_once(
-    monkeypatch, tmp_path, name, host, arguments, root_name,
-):
-    """A machine carrying a pinned spelling bash cannot run converges: one repair, then byte-stable."""
-    from modelquad import repair
-    from modelquad.config import Config
-    from modelquad.doctor import DoctorReport
-
-    executable = _fake_exe(tmp_path, root_name)
-    which = lambda _: str(executable)
-    registry = cli_registry(tmp_path, (host,))
-    home = tmp_path / host
-    settings = home / "settings.json"
-    if not any(character.isspace() for character in str(executable)):
-        old_launcher = str(executable)  # The old unquoted separators.
-    else:
-        # Quoting alone does not protect the deterministic $W09 component.
-        old_launcher = f'"{executable.as_posix()}"'
-    old_command = " ".join((old_launcher, *arguments))
-    verdict = hostruntime.classify_cli_registration(old_command, which=which)
-    assert verdict.explicit and not verdict.canonical
-    if arguments == ("hook-gate",):
-        payload = {"hooks": {"PreToolUse": [{"hooks": [{"command": old_command}]}]}}
-    else:
-        payload = {"statusLine": {"command": old_command}}
-    write_settings(settings.parent, payload)
-
-    def doctor(config, **kwargs):
-        report = cli_report(tmp_path, registry=registry, which=kwargs["which"])
-        return DoctorReport(tuple(c for c in report.checks if c.name == name))
-
-    monkeypatch.setattr(repair, "run_doctor", doctor)
-    first = repair.run_repair(config=Config(), registry=registry, which=which, print_fn=lambda *a: None)
-    assert first["before_warn_count"] == 1
-    assert first["repaired_hosts"] == [host] and first["after_warn_count"] == 0
-    expected = hostruntime.integration_command(*arguments)
-    if arguments == ("hook-gate",):
-        # The gate is no longer installed: repair removes the old one.
-        assert wired_commands(settings, "PreToolUse") == ()
-    else:
-        assert read_settings(settings.parent)["statusLine"]["command"] == expected
-        assert hostruntime.classify_cli_registration(expected, which=which).canonical
-    files = {q: q.read_bytes() for q in tmp_path.rglob("*") if q.is_file()}
-    second = repair.run_repair(config=Config(), registry=registry, which=which, print_fn=lambda *a: None)
-    assert second["repaired_hosts"] == [] and second["before_warn_count"] == 0
-    assert {q: q.read_bytes() for q in tmp_path.rglob("*") if q.is_file()} == files
 
 
 def _git_bash() -> str | None:

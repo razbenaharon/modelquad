@@ -15,7 +15,7 @@ that goes through `uname()` reaches `platform.win32_ver()`, which calls
     subprocess.check_output('ver', ..., shell=True)   # no creationflags
 
 with no console suppression, so from a console-less parent -- an agent
-harness, a service, a detached job runner -- that `cmd.exe` allocates a console
+harness, an IDE test runner, a scheduled task -- that `cmd.exe` allocates a console
 and the user sees a window. It is CPython's spawn, not ModelQuad's, so the
 `creationflags` invariants in `test_procutil.py` and `test_scripts_no_window.py`
 cannot see it: both recognise a literal `subprocess.<method>(...)` call, and
@@ -46,7 +46,8 @@ for afterwards. There is therefore no ordinary spelling that reaches
 describing two different guards. What is true is narrower: the two functions
 are reachable exactly where the reference rule is the only rule left, which is
 inside a `PLATFORM_IMPORT_EXEMPT` module. Everywhere else the approved way to
-learn what `platform` reports is `conftest.platform_reference()`, for these two
+learn what `platform` reports is to ask it in a hidden child process
+(launched with `conftest.no_window_kwargs()`), for these two
 functions the same as for the nine.
 
 **Two rules, not one, because call-site matching alone cannot hold.**
@@ -64,8 +65,8 @@ code may not get its hands on the `platform` module at all. Every use, however
 it is spelled, needs the module first, and there are only so many ways to
 obtain it -- `import`, `from ... import`, `importlib.import_module`,
 `__import__`, `sys.modules`. All five are rejected. The approved way to learn
-what `platform` reports is `conftest.platform_reference()`, which reads it in
-a hidden child.
+what `platform` reports is to read it in a hidden child process (launched
+with `conftest.no_window_kwargs()`).
 
 **Each of those five is rejected under a rename, too.** The first
 version of the acquisition rule matched the importer by its callee name and
@@ -110,7 +111,7 @@ never saw) and `import_module(name="platform")` (both importers spell the
 parameter `name`), and stopped the three false positives, together.
 
 The call-site rule is kept as the second layer, because the acquisition rule
-needs exactly one exemption (`PLATFORM_IMPORT_EXEMPT`) and an exemption with no
+can need an exemption (`PLATFORM_IMPORT_EXEMPT`, empty today) and an exemption with no
 rule left inside it is a hole with a comment on it. Inside an exempt module the
 offence is *referencing* a spawning attribute, not calling it, so
 `f = platform.system` fails on its own line whether or not the scan can see
@@ -156,9 +157,8 @@ neither of which reaches it alone, are outside the claim. That is narrower than
 round 5's ambition and it is the width that is actually true; the list below is
 what falls outside it, by construction rather than by oversight.
 
-* Product code under `src/`. Scanning `src/` statically would not help here:
-  the `platform` calls in `platformcache.py` are deliberate cache reads
-  and a source scan cannot tell those from a live one.
+* Product code under `src/`. Its spawns are covered by the creationflags
+  scan in `test_procutil.py`.
 * **Third-party code the suite imports.** Nothing here reads site-packages, so
   a dependency that calls `platform.system()` at import time is invisible to
   it. The `pyreadline3` note below is exactly that case, and it is why the
@@ -190,9 +190,9 @@ what falls outside it, by construction rather than by oversight.
       # helper_b.py            from helper_a import load;  load("platform")
 
   Neither file is flagged: A only assigns, and B has no import that makes
-  `load` `importlib`'s. The one `PLATFORM_IMPORT_EXEMPT` entry can be re-exported
-  the same way -- `from tests.test_windows_facts import platform` binds the module
-  in the importing file under a name that file's syntax says nothing about.
+  `load` `importlib`'s. A `PLATFORM_IMPORT_EXEMPT` entry, were one added, could be
+  re-exported the same way -- `from tests.<exempt module> import platform` binds the
+  module in the importing file under a name that file's syntax says nothing about.
   Earlier rounds of this docstring claimed the opposite, that whichever file
   acquires the module is flagged there so a handoff cannot launder it. That was
   **false**, and it is retracted rather than reworded: neither file acquires the
@@ -227,7 +227,7 @@ what falls outside it, by construction rather than by oversight.
   provenance tracking stopped. Asserted in `test_the_guard_admits_the_expression_call_target`,
   beside the spelling that is caught.
 * **Code assembled at runtime.** `exec`, `eval`, a template rendered to a file
-  and imported, a `.pth`. Deliberate rather than missed: `conftest`'s probe
+  and imported, a `.pth`. Deliberate rather than missed: a hidden-child probe
   *is* source text for a child process, and running it there is the fix, so
   string contents must stay legal. A test that built a forbidden call at
   runtime would be defeating this guard on purpose rather than by accident,
@@ -293,13 +293,9 @@ PRUNED_DIRECTORIES = frozenset(
 #: weaker reference rule remains. The exemptions are themselves tested --
 #: a stale path or an entry that stopped needing it is a failure, not a
 #: comment that quietly went out of date.
-PLATFORM_IMPORT_EXEMPT: dict[str, str] = {
-    "tests/test_windows_facts.py": (
-        "sets `platform._uname_cache` to None so its no-spawn assertion measures "
-        "a cold cache rather than whatever an earlier test left warm; without the "
-        "module object it cannot, and the test it guards would pass vacuously"
-    ),
-}
+#: Empty since `platformcache` and its test (tests/test_windows_facts.py) were
+#: removed: no test-support module binds `platform` any more.
+PLATFORM_IMPORT_EXEMPT: dict[str, str] = {}
 
 
 class Offence(NamedTuple):
@@ -670,7 +666,7 @@ def _platform_offences(tree: ast.AST) -> list[Offence]:
        call-site scan cannot follow.
 
     A call written inside a string literal is invisible to ``ast`` and stays
-    legal on purpose: ``conftest``'s probe is source code for a *child*
+    legal on purpose: a hidden-child probe is source code for a *child*
     process, and running it there is the fix, not the offence.
     """
 
@@ -814,14 +810,14 @@ def test_no_test_module_calls_platform_in_process():
     assert not uses, (
         "these reach a `platform` function measured to spawn `cmd /c ver` on "
         "Windows from a cold `platform._uname_cache`, which is the popup "
-        "this guard exists to prevent -- use `conftest.platform_reference()`, "
-        f"which reads the same values in a CREATE_NO_WINDOW child: {uses}"
+        "this guard exists to prevent -- read the same values in a child "
+        f"launched with `conftest.no_window_kwargs()`: {uses}"
     )
     assert not acquisitions, (
         "test-support code may not obtain the `platform` module at all -- every "
         "spawning call needs it first, and banning the acquisition is the only "
         "rule an alias, a `getattr` or a star import cannot walk around. Read "
-        "what `platform` reports through `conftest.platform_reference()`; if a "
+        "what `platform` reports in a child launched with `conftest.no_window_kwargs()`; if a "
         "module genuinely needs the module object itself, add it to "
         f"PLATFORM_IMPORT_EXEMPT with the reason: {acquisitions}"
     )
@@ -874,8 +870,8 @@ def test_the_guard_detects_both_import_spellings():
     indistinguishable from a scan with a typo'd attribute name. These snippets
     are the cases that decide whether the test above means anything: the two
     ways to spell the call, the alias that would dodge a name-matching scan,
-    and the string literal that must *not* be flagged so ``conftest``'s
-    hidden-child probe stays legal.
+    and the string literal that must *not* be flagged so a hidden-child
+    probe stays legal.
     """
 
     def uses(source: str) -> list[str]:
@@ -1193,10 +1189,9 @@ def test_the_guard_follows_the_other_binding_forms_review_r9_f1_named():
         "platform.machine"
     ]
 
-    # The one exemption is where these matter most: inside it the acquisition
+    # An exemption is where these matter most: inside it the acquisition
     # is forgiven and only the reference rule is left, so a missed alias there
-    # is a hole with no second layer under it.
-    assert "tests/test_windows_facts.py" in PLATFORM_IMPORT_EXEMPT
+    # would be a hole with no second layer under it.
     assert uses("import platform\nshim: object = platform\nf = shim.system\n") == [
         "platform.system"
     ]
@@ -1482,11 +1477,12 @@ def test_the_guard_admits_the_cross_file_handoff():
         "use:platform.system",
     ]
 
-    # The same hole runs through the one exemption: an exempt module holds the
+    # The same hole would run through an exemption: an exempt module holds the
     # real module object, and re-exporting it binds `platform` in a file whose
-    # own syntax says only that some name came from some test module.
-    assert "tests/test_windows_facts.py" in PLATFORM_IMPORT_EXEMPT
-    assert offences('from tests.test_windows_facts import platform\nplatform.system()\n') == []
+    # own syntax says only that some name came from some test module. Today
+    # there is none, so no test module may hold it to re-export.
+    assert PLATFORM_IMPORT_EXEMPT == {}
+    assert offences('from tests.some_helper import platform\nplatform.system()\n') == []
     # Which is not a claim that `platform` is a word the scan ignores -- the
     # import that really names the module is still an acquisition.
     assert offences('import platform\nplatform.system()\n') == [

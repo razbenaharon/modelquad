@@ -31,21 +31,21 @@ from modelquad.adapters.registration import (
     recorded_replacement,
     restore_previous_registration,
 )
-from modelquad.onboarding import install_detected_hosts
 
 from test_host_registration_transaction import (  # noqa: F401 -- fixtures + helpers
     HOST_ID,
-    _config_path,
+    InstallOutcome,
     _read_registration,
-    _registry,
     _write_registration,
     claude_home,
+    install_host,
     state_root,
 )
 
 
-def _install(home: Path):
-    return install_detected_hosts([HOST_ID], dry_run=False, registry=_registry(home))[0]
+def _install(home: Path) -> InstallOutcome:
+    """``modelquad install claude``'s path: the real adapter inside the registration transaction."""
+    return install_host(home)
 
 
 def _relabel_installed_command(monkeypatch, command: str) -> None:
@@ -302,19 +302,32 @@ def test_the_secret_survives_only_where_a_faithful_restore_needs_it(
 def test_the_secret_never_reaches_the_outcome_object(state_root, claude_home):
     outcome = _install_with_secret(claude_home)
 
-    assert ENV_VALUE_SENTINEL not in json.dumps(outcome.to_dict())
+    assert outcome.status is RegistrationStatus.CONNECTED_REPLACED
+    assert ENV_VALUE_SENTINEL not in json.dumps(outcome.report.to_dict())
     assert ENV_VALUE_SENTINEL not in repr(outcome)
 
 
-def test_the_secret_never_reaches_the_onboarding_wording(state_root, claude_home):
-    from modelquad.onboarding import _host_step_wording
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+def test_the_secret_never_reaches_the_install_or_uninstall_output(
+    state_root, claude_home, capsys, as_json
+):
+    """What ``modelquad install`` and ``uninstall`` print is what a user pastes into a report."""
+    from modelquad import cli
 
-    host = _registry(claude_home).all()[0].host_adapters[0]
-    outcome = _install_with_secret(claude_home)
-    detail, user_detail = _host_step_wording(host, outcome, dry_run=False)
+    _write_registration(
+        claude_home, {"command": "modelquad-mcp", "env": {"ANTHROPIC_API_KEY": ENV_VALUE_SENTINEL}}
+    )
+    flags = ["--target-dir", str(claude_home), *(["--json"] if as_json else [])]
+    assert cli.main(["install", "claude", "--no-plugin", *flags]) == 0
+    assert ENV_VALUE_SENTINEL in backup_path().read_text(encoding="utf-8")
+    installed = capsys.readouterr()
+    assert ENV_VALUE_SENTINEL not in installed.out + installed.err
 
-    assert ENV_VALUE_SENTINEL not in detail
-    assert ENV_VALUE_SENTINEL not in user_detail
+    assert cli.main(["uninstall", "claude", *flags]) == 0
+    removed = capsys.readouterr()
+    assert "restored" in removed.out.lower()
+    assert ENV_VALUE_SENTINEL not in removed.out + removed.err
+    assert _read_registration(claude_home)["env"]["ANTHROPIC_API_KEY"] == ENV_VALUE_SENTINEL
 
 
 def test_the_secret_never_reaches_a_restore_result(state_root, claude_home):
@@ -331,24 +344,27 @@ def test_the_secret_never_reaches_a_restore_result(state_root, claude_home):
     assert ENV_VALUE_SENTINEL not in result.detail
 
 
-def test_the_secret_never_reaches_doctor(state_root, claude_home):
-    """A support artefact is exactly where a leaked key would end up."""
+def test_the_secret_never_reaches_doctor(state_root, monkeypatch, tmp_path):
+    """A support artefact is exactly where a leaked key would end up.
 
-    from modelquad.config import Config
-    from modelquad.service import control_plane as shell
-    from modelquad.doctor import run_doctor
+    ``modelquad doctor`` reads the Claude Code connection from the default
+    Claude folder, so the secret-bearing registration is installed there. The
+    Codex check is replaced: it would run the Codex CLI.
+    """
 
-    _install_with_secret(claude_home)
-    report = run_doctor(
-        Config(),
-        usage_directory=claude_home,
-        which=lambda _: "/fake/cli",
-        control_plane_probe=lambda port: shell.ControlPlaneVerdict(
-            shell.PROBE_ABSENT, "no listener"
-        ),
-    )
+    from modelquad import setupcheck
+    from modelquad.adapters.paths import default_target_dir
 
-    assert ENV_VALUE_SENTINEL not in json.dumps(report.to_dict())
+    home = default_target_dir("claude")
+    home.mkdir(parents=True, exist_ok=True)
+    _install_with_secret(home)
+    monkeypatch.setattr(setupcheck, "_codex", lambda: setupcheck._check("codex", None, "not run"))
+    report = setupcheck.run(str(tmp_path))
+
+    connection = next(check for check in report["checks"] if check["name"] == "claude_code")
+    assert connection["ok"] is True
+    assert ENV_VALUE_SENTINEL not in json.dumps(report)
+    assert ENV_VALUE_SENTINEL not in "\n".join(setupcheck.lines(report))
 
 
 def test_the_record_is_removed_once_the_obligation_is_discharged(

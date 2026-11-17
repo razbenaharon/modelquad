@@ -21,7 +21,7 @@ checks it here first, before any file-system call:
   whose target is a network path. Only the local parts are read, and the
   walk stops at the first link, so nothing remote is ever opened.
 
-Imports stay light: the SessionStart hook calls this.
+Imports stay light: the review hook calls this.
 """
 
 from __future__ import annotations

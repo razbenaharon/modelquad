@@ -25,6 +25,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import time
 from typing import Any, Callable
 
 from .atomicwrite import atomic_write
@@ -53,6 +54,27 @@ def is_link(path: Path) -> bool:
         attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
         and getattr(info, "st_reparse_tag", 0) & _NAME_SURROGATE
     )
+
+
+#: Waits between attempts to read a file another program holds open.
+_BUSY_READ_WAITS = (0.05, 0.15, 0.4)
+
+
+def read_settled(path: Path) -> bytes:
+    """Read ``path``, waiting briefly while another program holds it open.
+
+    On Windows a file that was written a moment ago can refuse to open for a
+    few milliseconds (a virus scanner or indexer has it). One failed open is
+    not a reason to leave the file out of an install, so a refused open is
+    tried again over about half a second; a file that stays unreadable raises.
+    """
+
+    for wait in _BUSY_READ_WAITS:
+        try:
+            return path.read_bytes()
+        except PermissionError:
+            time.sleep(wait)
+    return path.read_bytes()
 
 
 def link_refusal(path: Path) -> str:
@@ -84,6 +106,8 @@ class CommitResult:
     written: bool = False
     backup_path: Path | None = None
     error: str | None = None
+    #: The write was attempted and did not land.
+    failed: bool = False
 
 
 @dataclass
@@ -95,6 +119,8 @@ class StagedText:
     original: bytes | None = None
     text: str = ""
     refusal: str | None = None
+    #: The refusal is a failed read, not a judgement about the file.
+    unreadable: bool = False
     #: False only for a second write in one run, after the first saved a copy.
     backup: bool = True
     _undo: list[Callable[[], None]] = field(default_factory=list, repr=False)
@@ -121,9 +147,10 @@ class StagedText:
             self.refusal = f"{path} exists but is not a regular file, so ModelQuad left it unchanged."
             return
         try:
-            self.original = path.read_bytes()
+            self.original = read_settled(path)
         except OSError as exc:
             self.refusal = f"Could not read {path}: {exc.strerror or exc}. It was left unchanged."
+            self.unreadable = True
             return
         try:
             self.text = self.original.decode("utf-8")
@@ -177,7 +204,7 @@ class StagedText:
         try:
             if is_link(self.path):
                 raise _Refused(link_refusal(self.path))
-            current = self.path.read_bytes() if self.path.exists() else None
+            current = read_settled(self.path) if self.path.exists() else None
             if current != self.original:
                 raise _Refused(
                     f"{self.path} was changed by another program while ModelQuad was "
@@ -189,13 +216,14 @@ class StagedText:
             atomic_write(self.path, content)
         except _Refused as exc:
             self._rollback()
-            self.result = CommitResult(error=str(exc))
+            self.result = CommitResult(error=str(exc), failed=True)
             return self.result
         except (OSError, ValueError) as exc:
             self._rollback()
             reason = getattr(exc, "strerror", None) or str(exc) or type(exc).__name__
             self.result = CommitResult(
-                error=f"Could not write {self.path}: {reason}. It was left unchanged."
+                error=f"Could not write {self.path}: {reason}. It was left unchanged.",
+                failed=True,
             )
             return self.result
         self._undo.clear()
@@ -206,14 +234,16 @@ class StagedText:
         """Report one concern's outcome once the file has been committed."""
 
         if self.refusal is not None:
-            return FileAction(self.path, ActionKind.SKIPPED, detail=self.refusal)
+            return FileAction(self.path, ActionKind.SKIPPED, detail=self.refusal,
+                              failed=self.unreadable)
         if change.kind == "skipped":
             return FileAction(self.path, ActionKind.SKIPPED, detail=change.detail)
         if not change.changes_file:
             return FileAction(self.path, ActionKind.UNCHANGED, detail=change.detail)
         result = self.result or self.commit(dry_run=dry_run)
         if result.error is not None:
-            return FileAction(self.path, ActionKind.SKIPPED, detail=result.error)
+            return FileAction(self.path, ActionKind.SKIPPED, detail=result.error,
+                              failed=result.failed)
         if change.kind == "remove":
             kind = ActionKind.WOULD_REMOVE if dry_run else ActionKind.REMOVED
         elif self.existed:

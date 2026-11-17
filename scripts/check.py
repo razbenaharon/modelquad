@@ -398,20 +398,19 @@ def changed_paths() -> tuple[list[str], str]:
 #: helper that takes no arguments (one that does walks what it is handed).
 REPO_WIDE_SCANS = (
     "tests/test_adapter_template_packaging.py::test_packaged_adapter_templates_exist_without_project_duplicates",
-    "tests/test_delegation_workspace_liveness.py::test_every_path_that_opens_an_attempt_records_its_workspace",
-    "tests/test_delegation_workspace_liveness.py::test_every_result_boundary_that_closes_an_attempt_carries_the_note",
     "tests/test_devenv.py::test_every_repo_wide_scan_names_a_test_that_exists",
     "tests/test_devenv.py::test_every_test_that_walks_the_repository_is_a_repo_wide_scan",
     "tests/test_devenv.py::test_the_root_conftest_cannot_reach_the_product_runtime",
     "tests/test_docs_policy.py::test_no_document_carries_a_control_byte",
     "tests/test_executable_resolution_boundary.py::test_src_launches_use_central_resolution",
+    "tests/test_mcp_tool_surface.py::test_no_mcp_module_calls_a_protected_settings_writer",
+    "tests/test_mcp_tool_surface.py::test_the_writer_scan_covers_server_py_and_the_review_flow",
     "tests/test_procutil.py::test_no_subprocess_spawn_in_src_omits_window_suppression",
     "tests/test_procutil.py::test_no_subprocess_spawn_in_tests_omits_window_suppression",
     "tests/test_scripts_no_window.py::test_every_spawning_file_carries_the_same_helper",
-    "tests/test_service_entrypoints.py::test_every_cli_service_call_site_uses_managed_lifecycle",
-    "tests/test_service_entrypoints.py::test_installed_command_entry_has_no_service_call_sites",
-    "tests/test_startup_imports.py::test_runner_launch_sources_do_not_import_mcp",
+    "tests/test_startup_imports.py::test_execution_sources_do_not_import_mcp",
     "tests/test_third_party_notices.py::test_every_python_file_carries_the_spdx_identifier",
+    "tests/test_wheel_packaging.py::test_a_leftover_build_folder_adds_nothing_to_the_wheel",
 )
 
 
@@ -674,15 +673,13 @@ def check_focused() -> int:
 
 _LINK = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)]+)\)")
 
-#: `AGENTS.md` "Current state" states four numbers that live in code. A wrong
+#: `AGENTS.md` "Current state" states two numbers that live in code. A wrong
 #: number in the orientation document is worse than an absent one, because it
 #: is the file an arriving agent trusts first. Each entry is
 #: (label, module-relative path, constant name).
 CURRENT_STATE_FACTS = (
     ("Version", "__init__.py", "__version__"),
-    ("DB schema", "service/db.py", "SCHEMA_VERSION"),
-    ("router engine", "router.py", "ROUTER_ENGINE_VERSION"),
-    ("outcome assessor", "outcome.py", "ASSESSOR_VERSION"),
+    ("review ledger schema", "review_ledger.py", "SCHEMA_VERSION"),
 )
 
 #: `VAR=value command` -- POSIX-only. PowerShell rejects it outright, and this
@@ -734,11 +731,11 @@ def _check_current_state() -> list[str]:
     if not agents.is_file():
         return ["AGENTS.md is missing"]
     line = next(
-        (l for l in agents.read_text(encoding="utf-8").splitlines() if "DB schema" in l),
+        (l for l in agents.read_text(encoding="utf-8").splitlines() if "review ledger schema" in l),
         None,
     )
     if line is None:
-        return ["AGENTS.md states no 'DB schema' line in Current state"]
+        return ["AGENTS.md states no 'review ledger schema' line in Current state"]
 
     problems: list[str] = []
     for label, module_relpath, constant in CURRENT_STATE_FACTS:
@@ -823,36 +820,27 @@ WORDING_SERVER_INSTRUCTIONS = "src/modelquad/adapters/server_instructions.py"
 #: docstring of a `modelquad_*` function, which is an MCP tool's description.
 WORDING_CODE_SOURCES = (
     "src/modelquad/mcp/server.py",
-    "src/modelquad/mcp/jobs_tools.py",
-    "src/modelquad/mcp/presentation.py",
-    "src/modelquad/split.py",
-    "src/modelquad/split_summary.py",
+    "src/modelquad/review.py",
+    "src/modelquad/switch.py",
+    "src/modelquad/setupcheck.py",
+    "src/modelquad/settings_view.py",
+    "src/modelquad/grant.py",
     "src/modelquad/disclosure.py",
-    "src/modelquad/onboarding.py",
-    "src/modelquad/doctor.py",
     "src/modelquad/cli.py",
     "src/modelquad/repo_policy.py",
     "src/modelquad/repo_settings.py",
-    "src/modelquad/plans.py",
-    "src/modelquad/assistance.py",
-    "src/modelquad/adapters/pending_reminder.py",
+    "src/modelquad/adapters/review_reminder.py",
     "src/modelquad/adapters/file_security.py",
     "src/modelquad/execution/noshell.py",
     "src/modelquad/execution/base.py",
-    "src/modelquad/usage/claude.py",
 )
-#: Scanned as plain text: the desktop band's source.
-WORDING_PLAIN_CODE_SOURCES = ("plugin/hooks/",)
+#: Scanned as plain text; none at present (the desktop quota band is gone).
+WORDING_PLAIN_CODE_SOURCES = ()
 WORDING_PLAIN_CODE_SUFFIXES = frozenset({".tsx"})
 #: A stored value a scanned string must be able to name, quoted as code
 #: (`routing`, 'routing:7', "routing"). Only these exact quoted tokens are
 #: skipped; the bare word still fails. Keep this list tiny, and say why.
-BANNED_PHRASE_ALLOWED_IDENTIFIERS = frozenset({
-    # The history keeps two record kinds, "routing" and "execution"
-    # (service/db.py); `modelquad_activity_detail` and `modelquad history
-    # --detail` take the kind as typed. Renaming it would break stored data.
-    "routing",
-})
+BANNED_PHRASE_ALLOWED_IDENTIFIERS = frozenset()
 
 #: Between two words of a phrase: up to three other words, across line breaks.
 _GAP = r"(?:\W+\w+){0,3}?\W+"
@@ -943,10 +931,6 @@ BANNED_PHRASE_ALLOWED_LINES = frozenset({
     # unchanged"); "endorsed by or sponsored by" is the standard form a
     # reader looks for.
     "ModelQuad is an independent project. It is not affiliated with, endorsed by",
-    # presentation.py `_REFUSAL_LINES`: the start of a closed reason code that
-    # routing_policy.py writes and history stores; the table maps it to a
-    # plain sentence, so a person never reads it.
-    "routing is paused",
 })
 
 _BANNED = tuple((label, re.compile(pattern, re.IGNORECASE)) for label, pattern in BANNED_PHRASES)

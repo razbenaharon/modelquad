@@ -14,7 +14,7 @@ The rule: the newest version wins; on an equal version the official install
 wins; a PATH copy older than the chosen CLI is reported as stale, never
 updated or removed. With no official install, or no readable version, the
 PATH lookup stands exactly as before. Every Codex lookup -- worker launch,
-version capture, quota read and doctor -- resolves through here, so the CLI
+version capture and doctor -- resolves through here, so the CLI
 that runs is the CLI that is recorded.
 
 An npm install puts a batch launcher (``codex.cmd``) on PATH, and a batch
@@ -80,22 +80,13 @@ def official_candidates() -> list[Path]:
     return [path for path in found if path.is_file()]
 
 
-def is_desktop_version_path(path: str | Path) -> bool:
-    """Whether an executable lives in a disposable desktop version folder."""
-    root = os.environ.get("LOCALAPPDATA")
-    if not root:
-        return False
-    desktop = Path(root) / "OpenAI" / "Codex" / "bin"
-    return Path(path).parent.parent == desktop
-
-
 def project_roots() -> tuple[str, ...]:
     """The working folder, when its subfolders must not supply a Codex.
 
     Claude Code starts ModelQuad in the project folder. A project can carry a
     planted ``codex.exe`` in a folder an editor puts on PATH (an activated
     ``.venv\\Scripts``, say), and ModelQuad runs a found Codex for its version
-    and its quota without a prompt. So everything under the working folder is
+    check without a prompt. So everything under the working folder is
     refused for that lookup. The exception is a working folder that is the
     home folder or above it: excluding it would exclude the user's own install
     under AppData, and a project is never that high.

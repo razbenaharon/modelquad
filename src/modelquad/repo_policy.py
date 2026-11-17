@@ -239,7 +239,7 @@ def find_root(working_directory) -> Path:
         # started, and the caller refuses (load fails closed).
         raise OSError("git pointer leaves this machine")
     try:
-        from .jobs import changes
+        from . import gitmeta as changes
 
         deadline = time.monotonic() + DISCOVERY_SECONDS
         output = changes._git(directory, ["rev-parse", "--show-toplevel"], deadline)
@@ -256,8 +256,7 @@ def find_root(working_directory) -> Path:
 
 def _read(root: Path) -> bytes | RepoPolicy | None:
     """The file's bytes, None when there is no file, or a refusing policy."""
-    from .project_notes import ObservationError, open_regular
-    from .jobs.changes import _linked
+    from .gitmeta import ObservationError, _linked, open_regular
 
     path = root / FILE_NAME
     try:
@@ -435,7 +434,7 @@ def file_in_other_repository(working_directory, files) -> bool:
     return False
 
 
-def gate(working_directory, task_type, *, files=(), usage_directory=None):
+def gate(working_directory, task_type, *, files=()):
     """The per-repository gate for one Codex call, read fresh: ``(refusal, policy)``.
 
     ``refusal`` is None or the closed ``{"reason", "message"}``; ``policy`` is
@@ -448,11 +447,10 @@ def gate(working_directory, task_type, *, files=(), usage_directory=None):
     2. the user's own ``modelquad settings repo off``;
     3. a named file in another Git repository below the folder;
     4. the repository's ``.modelquad.toml``, including ``account =
-       "workspace"``, which needs a fresh plan Codex itself reported
-       (``plans.reported_codex_kind``) in ``usage_directory`` (ModelQuad's
-       default usage folder when None).
+       "workspace"``, which always refuses here: this build does not read
+       which account Codex is signed in to.
     """
-    from . import localpath, plans, repo_settings
+    from . import localpath, repo_settings
 
     if localpath.reason(working_directory) is not None:
         return {"reason": localpath.UNUSABLE, "message": UNUSABLE_MESSAGE}, None
@@ -465,15 +463,10 @@ def gate(working_directory, task_type, *, files=(), usage_directory=None):
     if file_in_other_repository(working_directory, files):
         return {"reason": FILE_OUTSIDE_REPO, "message": message(FILE_OUTSIDE_REPO)}, None
     policy = load(working_directory)
-    kind = plans.UNKNOWN
-    if policy.refusal is None and policy.account == "workspace":
-        try:
-            if usage_directory is None:
-                from .providers.base import DEFAULT_USAGE_DIRECTORY as usage_directory
-            kind = plans.reported_codex_kind(Path(usage_directory))
-        except Exception:  # noqa: BLE001 -- an unreadable account reads unknown, and refuses
-            kind = plans.UNKNOWN
-    return refusal(policy, task_type, account_kind=kind), policy
+    # This build does not read which account Codex is signed in to, so the
+    # account kind is unknown, and a repository that requires a work account
+    # refuses (unknown never passes for the account it requires).
+    return refusal(policy, task_type, account_kind="unknown"), policy
 
 
 UNUSABLE_MESSAGE = (
@@ -485,7 +478,7 @@ UNUSABLE_MESSAGE = (
 def load_from_root(root) -> RepoPolicy:
     """The policy of the file in ``root`` itself, read now; starts no process.
 
-    The SessionStart hook uses this with the nearest folder holding ``.git``
+    The review hook uses this with the nearest folder holding ``.git``
     (the fallback :func:`find_root` uses when Git cannot answer), so it stays
     within its time budget. Never raises; fails closed like :func:`load`.
     """
@@ -519,12 +512,13 @@ def message(code: str, policy: RepoPolicy | None = None, *, task_type=None, acco
                 "from that repository's own folder instead.")
     if code == ACCOUNT_WORKSPACE_REQUIRED:
         which = ("Codex reports a personal account" if account_kind == "personal" else
-                 "Codex has not reported a work account in the last 5 minutes (read it again "
-                 "with modelquad usage-refresh; a plan set with modelquad settings plan does "
-                 "not count)")
+                 "this version of ModelQuad does not read which Codex account is signed in "
+                 "(a reading an earlier version stored does not count)")
         return (f"This repository's {FILE_NAME} allows Codex only on a work account "
                 f"([codex] account = \"workspace\"), and {which}, so ModelQuad started nothing. "
-                "Use a work Codex account here, or change that line.")
+                + ("Use a work Codex account here, or change that line." if account_kind == "personal"
+                   else "No account passes this rule in this version: to use Codex here, set that "
+                        "line to account = \"any\" or remove it."))
     problem = policy.problem if policy is not None and policy.problem in PROBLEMS else None
     key = policy.problem_key if policy is not None and policy.problem_key in _KNOWN_KEYS else None
     what = _PROBLEM_TEXT.get(problem, "could not be used")

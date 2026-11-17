@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import re
-from contextlib import nullcontext
 
 import pytest
 
@@ -26,11 +25,8 @@ def prevent_real_home_access(monkeypatch, tmp_path):
     def fail_home_lookup():
         raise AssertionError("adapter tests must pass explicit tmp_path target directories")
 
-    # Resolve/import "modelquad.cli" (and its transitive Path.home() use at
-    # providers/base.py import time) *before* patching Path.home below --
-    # otherwise running this file in isolation imports modelquad.cli for
-    # the first time only once Path.home is already broken, failing at
-    # collection instead of during an actual test.
+    # Resolve/import "modelquad.cli" *before* patching Path.home below, so an
+    # import-time home lookup cannot fail once Path.home is broken.
     monkeypatch.setattr("modelquad.cli.default_target_dir", lambda client: fail_home_lookup())
     # `Path` is one shared class object across every module that imports it
     # (`from pathlib import Path`), so patching `.home` via any single
@@ -87,7 +83,7 @@ def test_server_instructions_leave_the_delegation_decision_to_the_host():
         assert "Claude remains responsible for the work." in flat
         assert "asks the user before each ModelQuad Codex call." in flat
         assert "not as instructions to follow" in flat
-        assert "`modelquad_handoff`" in flat
+        assert "`modelquad_delegate`" in flat
         assert "MODELQUAD_WORKER=1" in flat
         # The files Codex reads are passed explicitly, never inferred from the prompt.
         assert "in `files` (paths relative to the working directory, at most 32)" in flat
@@ -188,7 +184,7 @@ def _installed_instruction_texts(target: Path) -> dict[str, str]:
 def test_installed_host_instructions_state_the_advisory_contract(tmp_path, adapter_type, client):
     """The skill and the server instructions say the user approves each call,
     that Codex through ModelQuad is read-only and its answer is input to
-    verify, and keep the worker guard and project-scoped job tools."""
+    verify, and keep the worker guard."""
     target = tmp_path / client
     adapter_type().install(target, **_install_kwargs_for(adapter_type, target))
 
@@ -202,9 +198,8 @@ def test_installed_host_instructions_state_the_advisory_contract(tmp_path, adapt
         assert re.search(r"not (?:as )?instructions", flat), name
         # Claude writes the code; Codex through ModelQuad only reads and advises.
         assert "Claude makes the code changes itself" in flat, name
-        # Unchanged obligations: the worker guard and job scoping.
+        # Unchanged obligation: the worker guard.
         assert "MODELQUAD_WORKER=1" in flat, name
-        assert "`modelquad_job_*`" in flat and "absolute project directory" in flat, name
         # Files reach Codex only through `files`; the offer after an important task.
         assert "a file named only in the prompt is not sent." in flat, name
         assert "before a commit or PR" in flat, name
@@ -241,15 +236,6 @@ def test_install_and_uninstall_take_back_a_block_an_earlier_version_wrote(tmp_pa
 
     repeated = getattr(ClaudeAdapter(), command)(target)
     assert all(a.path.name != "CLAUDE.md" for a in repeated.actions)
-
-
-def test_server_instructions_omit_routing_business_logic():
-    from modelquad.adapters.server_instructions import server_instructions
-
-    for proactive in (False, True):
-        text = server_instructions(proactive)
-        for term in ("fit_weight", "usage_weight", "score", "0.75", "0.25", "subprocess"):
-            assert term not in text
 
 
 def test_claude_install_leaves_a_users_claude_md_byte_identical(tmp_path):
@@ -304,7 +290,18 @@ def test_claude_home_policy_block_survives_malformed_duplicate_markers(tmp_path)
     assert claude_md.read_text(encoding="utf-8") == original
 
 
-def test_claude_install_preserves_a_status_line_script_the_user_runs(tmp_path):
+_STATUS_OPERATIONS = ("install", "plugin-install", "uninstall")
+
+
+def _run_status_operation(operation: str, target: Path, *, dry_run: bool = False):
+    """Install no longer writes a status line; every operation takes an owned one back."""
+    if operation == "uninstall":
+        return ClaudeAdapter(via_plugin=False).uninstall(target, dry_run=dry_run)
+    return ClaudeAdapter(via_plugin=operation == "plugin-install").install(target, dry_run=dry_run)
+
+
+@pytest.mark.parametrize("operation", _STATUS_OPERATIONS)
+def test_claude_preserves_a_status_line_script_the_user_runs(tmp_path, operation):
     """A loose status-line script is the user's choice, not something to migrate."""
     target = tmp_path / "claude"
     target.mkdir()
@@ -314,42 +311,84 @@ def test_claude_install_preserves_a_status_line_script_the_user_runs(tmp_path):
         json.dumps({"statusLine": {"command": script}, "unrelatedSetting": True}),
         encoding="utf-8",
     )
+    untouched = settings_path.read_bytes()
 
-    report = ClaudeAdapter().install(target)
+    report = _run_status_operation(operation, target)
 
+    assert settings_path.read_bytes() == untouched
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     assert settings["statusLine"]["command"] == script
     assert settings["unrelatedSetting"] is True
-    assert report.actions[2].kind is ActionKind.SKIPPED
+    assert all(a.kind is ActionKind.UNCHANGED for a in report.actions if Path(a.path) == settings_path)
+    assert not list(target.glob("settings.json.*backup*"))
 
 
-def test_claude_uninstall_removes_status_line_command_only(tmp_path):
+@pytest.mark.parametrize("operation", _STATUS_OPERATIONS)
+@pytest.mark.parametrize("command", [
+    "modelquad usage-hook claude --segment",
+    "modelquad usage-hook other",
+    "python my_modelquad_helper.py usage-hook claude",
+    "input=$(cat); printf '%s' \"$input\" | my-line; printf '%s' \"$input\" | modelquad usage-hook claude",
+])
+def test_claude_preserves_a_status_line_that_only_mentions_modelquad(tmp_path, operation, command):
+    """Only our CLI name with exactly ``usage-hook claude`` was ever ModelQuad's."""
     target = tmp_path / "claude"
     target.mkdir()
+    settings_path = target / "settings.json"
+    settings_path.write_text(json.dumps({"statusLine": {"type": "command", "command": command}}),
+                             encoding="utf-8")
+    untouched = settings_path.read_bytes()
+
+    _run_status_operation(operation, target)
+
+    assert settings_path.read_bytes() == untouched
+
+
+@pytest.mark.parametrize("operation", _STATUS_OPERATIONS)
+def test_claude_removes_the_status_line_an_earlier_install_wrote(tmp_path, operation):
+    target = tmp_path / "claude"
+    target.mkdir()
+    settings_path = target / "settings.json"
+    settings_path.write_text(json.dumps({
+        "model": "sonnet",
+        "statusLine": {"type": "command", "command": _claude_status_line_command()},
+    }), encoding="utf-8")
+    previous = settings_path.read_bytes()
+
+    assert _status_line_action(
+        _run_status_operation(operation, target, dry_run=True), settings_path
+    ).kind == ActionKind.WOULD_REMOVE
+    assert settings_path.read_bytes() == previous
+    action = _status_line_action(_run_status_operation(operation, target), settings_path)
+
+    assert action.kind is ActionKind.REMOVED
+    assert action.backup_path is not None and action.backup_path.read_bytes() == previous
+    # The whole object goes: a statusLine reduced to {"type": "command"} is not valid.
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == {"model": "sonnet"}
+    before = settings_path.read_bytes()
+    assert _status_line_action(
+        _run_status_operation(operation, target), settings_path
+    ).kind == ActionKind.UNCHANGED
+    assert settings_path.read_bytes() == before  # idempotent
+
+
+def test_claude_install_writes_no_status_line(tmp_path):
+    target = tmp_path / "claude"
+    target.mkdir()
+
     ClaudeAdapter().install(target)
 
-    ClaudeAdapter().uninstall(target)
-
-    settings = json.loads((target / "settings.json").read_text(encoding="utf-8"))
-    assert "statusLine" not in settings
+    assert not (target / "settings.json").exists()
 
 
 def _status_line_action(report, settings_path):
-    """The status line is the first settings.json action (then the startup reminder)."""
+    """The status line is the first settings.json action (then the removal of an earlier startup reminder)."""
     actions = [a for a in report.actions if Path(a.path) == settings_path]
     return actions[0]
 
 
-def test_claude_status_line_carries_type_command(tmp_path):
-    """Claude Code ignores a statusLine without "type": "command" (2026-10-06)."""
-    target = tmp_path / "claude"
-    target.mkdir()
-    ClaudeAdapter().install(target)
-    settings = json.loads((target / "settings.json").read_text(encoding="utf-8"))
-    assert settings["statusLine"] == {"type": "command", "command": _claude_status_line_command()}
-
-
-def test_claude_reinstall_repairs_typeless_owned_status_line_and_keeps_extras(tmp_path):
+@pytest.mark.parametrize("operation", _STATUS_OPERATIONS)
+def test_claude_removes_an_owned_status_line_command_and_keeps_the_users_extras(tmp_path, operation):
     target = tmp_path / "claude"
     target.mkdir()
     settings_path = target / "settings.json"
@@ -357,25 +396,31 @@ def test_claude_reinstall_repairs_typeless_owned_status_line_and_keeps_extras(tm
         "command": _claude_status_line_command(), "padding": 0,
     }}), encoding="utf-8")
     untouched = settings_path.read_bytes()
-    assert _status_line_action(ClaudeAdapter().install(target, dry_run=True), settings_path).kind         == ActionKind.WOULD_UPDATE
+    assert _status_line_action(
+        _run_status_operation(operation, target, dry_run=True), settings_path
+    ).kind == ActionKind.WOULD_REMOVE
     assert settings_path.read_bytes() == untouched
-    ClaudeAdapter().install(target)
+    _run_status_operation(operation, target)
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
-    assert settings["statusLine"] == {
-        "type": "command", "command": _claude_status_line_command(), "padding": 0,
-    }
+    assert settings["statusLine"] == {"padding": 0}
     before = settings_path.read_bytes()
-    assert _status_line_action(ClaudeAdapter().install(target), settings_path).kind == ActionKind.UNCHANGED
+    assert _status_line_action(
+        _run_status_operation(operation, target), settings_path
+    ).kind == ActionKind.UNCHANGED
     assert settings_path.read_bytes() == before  # idempotent
 
 
-def test_claude_install_skips_non_object_status_line(tmp_path):
+@pytest.mark.parametrize("operation", _STATUS_OPERATIONS)
+def test_claude_leaves_a_non_object_status_line(tmp_path, operation):
     target = tmp_path / "claude"
     target.mkdir()
     settings_path = target / "settings.json"
     settings_path.write_text(json.dumps({"statusLine": "user-value"}), encoding="utf-8")
-    assert _status_line_action(ClaudeAdapter().install(target), settings_path).kind == ActionKind.SKIPPED
-    assert json.loads(settings_path.read_text(encoding="utf-8"))["statusLine"] == "user-value"
+    untouched = settings_path.read_bytes()
+    assert _status_line_action(
+        _run_status_operation(operation, target), settings_path
+    ).kind == ActionKind.UNCHANGED
+    assert settings_path.read_bytes() == untouched
 
 
 _USER_HOOK_GROUP = {
@@ -402,8 +447,8 @@ def test_claude_install_adds_no_gate_hook_and_keeps_the_users_hooks(tmp_path):
 
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     assert settings["model"] == "sonnet"
-    assert settings["statusLine"]["command"] == "modelquad usage-hook claude"
-    assert settings["hooks"]["PreToolUse"] == [_USER_HOOK_GROUP]
+    assert "statusLine" not in settings
+    assert settings["hooks"] == {"PreToolUse": [_USER_HOOK_GROUP]}
     assert ClaudeAdapter().is_installed(target)
 
 
@@ -411,13 +456,15 @@ def test_claude_second_install_is_idempotent_for_settings(tmp_path):
     target = tmp_path / "claude"
     target.mkdir()
     adapter = ClaudeAdapter()
-    adapter.install(target)
     settings_path = target / "settings.json"
-    bytes_after_first = settings_path.read_bytes()
+    settings_path.write_text(json.dumps({"model": "sonnet"}), encoding="utf-8")
+    users_bytes = settings_path.read_bytes()
+    adapter.install(target)
+    assert settings_path.read_bytes() == users_bytes
 
     report = adapter.install(target)
 
-    assert settings_path.read_bytes() == bytes_after_first
+    assert settings_path.read_bytes() == users_bytes
     assert report.unchanged
 
 
@@ -650,8 +697,8 @@ def test_claude_install_gives_the_host_longer_than_a_worker_may_run(tmp_path):
         "the host must stay patient past the worker's own budget, or a "
         "still-running delegation is reported as a failure"
     )
-    settings = json.loads((target / "settings.json").read_text(encoding="utf-8"))
-    assert "env" not in settings
+    # No global env.MCP_TOOL_TIMEOUT: install has nothing to write into settings.json.
+    assert not (target / "settings.json").exists()
 
 
 def test_claude_install_leaves_env_alone(tmp_path):
@@ -732,8 +779,16 @@ def test_no_adapter_wraps_atomic_write_in_a_dead_value_error_handler():
     assert offenders == []
 
 
-_COMMAND_SKILLS = ("modelquad-review", "modelquad-handoff", "modelquad-quota", "modelquad-setup",
-                   "modelquad-split", "modelquad-settings")
+_COMMAND_SKILLS = ("modelquad-review", "modelquad-setup", "modelquad-settings")
+#: Command skills earlier builds installed for features this build no longer has.
+_RETIRED_SKILLS = ("modelquad-handoff", "modelquad-quota", "modelquad-split")
+
+
+def _earlier_build_skill(name: str) -> bytes:
+    """A command skill as an earlier build wrote it: frontmatter carrying ModelQuad's mark."""
+    return (f"---\nname: {name}\ndescription: An earlier ModelQuad command.\n"
+            "disable-model-invocation: true\nmetadata:\n  managed-by: modelquad\n---\n"
+            "Earlier build body.\n").encode("utf-8")
 
 
 def test_claude_install_and_uninstall_cover_the_command_skills(tmp_path):
@@ -749,6 +804,9 @@ def test_claude_install_and_uninstall_cover_the_command_skills(tmp_path):
     assert created == {"modelquad", *_COMMAND_SKILLS}
     for name in _COMMAND_SKILLS:
         assert (target / "skills" / name / "SKILL.md").is_file()
+    # The retired commands are never written.
+    for name in _RETIRED_SKILLS:
+        assert not (target / "skills" / name).exists()
     # A second install changes nothing.
     again = ClaudeAdapter().install(target)
     assert not any(action.kind is ActionKind.CREATED for action in again.actions
@@ -787,13 +845,61 @@ def test_a_users_own_file_at_a_command_skill_path_is_never_replaced_or_removed(t
     (action,) = [a for a in report.actions if a.path == mine]
     assert action.kind is ActionKind.SKIPPED and "not ModelQuad's" in action.detail
     assert mine.read_text(encoding="utf-8") == "my own review skill\n"
-    assert (target / "skills" / "modelquad-quota" / "SKILL.md").is_file()
+    assert (target / "skills" / "modelquad-setup" / "SKILL.md").is_file()
 
     removal = ClaudeAdapter().uninstall(target)
     (action,) = [a for a in removal.actions if a.path == mine]
     assert action.kind is ActionKind.SKIPPED
     assert mine.read_text(encoding="utf-8") == "my own review skill\n"
-    assert not (target / "skills" / "modelquad-quota" / "SKILL.md").exists()
+    assert not (target / "skills" / "modelquad-setup" / "SKILL.md").exists()
+
+
+@pytest.mark.parametrize("operation", ["install", "plugin-install", "uninstall"])
+def test_an_earlier_builds_retired_command_skills_go_and_a_users_file_there_stays(tmp_path, operation):
+    """handoff, quota and split were retired: a marked copy is taken back, with a backup;
+    an unmarked file at the same path is the user's and is neither changed nor removed."""
+    target = tmp_path / "claude"
+    marked, unmarked = _RETIRED_SKILLS[:2], _RETIRED_SKILLS[2]
+    earlier = {}
+    for name in marked:
+        path = target / "skills" / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        earlier[name] = _earlier_build_skill(name)
+        path.write_bytes(earlier[name])
+    users = target / "skills" / unmarked / "SKILL.md"
+    users.parent.mkdir(parents=True)
+    users.write_bytes(b"---\nname: my own split\n---\nmine\n")
+
+    adapter = ClaudeAdapter(via_plugin=operation == "plugin-install")
+    run = adapter.uninstall if operation == "uninstall" else adapter.install
+
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    dry = run(target, dry_run=True)
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+    assert {a.path.parent.name for a in dry.actions if a.kind is ActionKind.WOULD_REMOVE
+            and a.path.parent.name in _RETIRED_SKILLS} == set(marked)
+
+    report = run(target)
+    by_name = {a.path.parent.name: a for a in report.actions
+               if a.path.name == "SKILL.md" and a.path.parent.name in _RETIRED_SKILLS}
+    assert set(by_name) == set(_RETIRED_SKILLS)
+    if operation != "uninstall":
+        # The install report ends with the three retired skills, in order.
+        assert [a.path.parent.name for a in report.actions[-3:]] == list(_RETIRED_SKILLS)
+    for name in marked:
+        action = by_name[name]
+        assert action.kind is ActionKind.REMOVED
+        assert not (target / "skills" / name / "SKILL.md").exists()
+        assert action.backup_path is not None and action.backup_path.read_bytes() == earlier[name]
+    assert by_name[unmarked].kind is ActionKind.SKIPPED
+    assert "not ModelQuad's" in by_name[unmarked].detail
+    assert users.read_bytes() == b"---\nname: my own split\n---\nmine\n"
+
+    # Nothing is left to take back.
+    again = run(target)
+    assert all(a.kind is not ActionKind.REMOVED for a in again.actions
+               if a.path.parent.name in _RETIRED_SKILLS)
+    assert users.read_bytes() == b"---\nname: my own split\n---\nmine\n"
 
 
 # ---------------------------------------------------------------------------
@@ -811,7 +917,11 @@ def _surrogate_home(tmp_path):
     mcp_path = target.parent / "claude.json"
     mcp_path.write_text('{"note": ' + _LONE + ', "mcpServers": {}}', encoding="utf-8")
     settings = target / "settings.json"
-    settings.write_text('{"title": ' + _LONE + "}", encoding="utf-8")
+    # The status line an earlier install wrote, so install has a reason to rewrite the file.
+    settings.write_text(
+        '{"title": ' + _LONE + ', "statusLine": {"type": "command", "command": "modelquad usage-hook claude"}}',
+        encoding="utf-8",
+    )
     return target, mcp_path, settings
 
 
@@ -825,7 +935,8 @@ def test_install_and_uninstall_finish_when_a_host_file_holds_half_an_emoji(tmp_p
         raw = path.read_bytes().decode("utf-8")  # still UTF-8 on disk
         assert _LONE in raw, "the user's escape is written back as the same escape"
     assert json.loads(mcp_path.read_text(encoding="utf-8"))["mcpServers"]["modelquad"]
-    assert "hook-pending" in settings.read_text(encoding="utf-8")
+    assert "usage-hook" not in settings.read_text(encoding="utf-8")
+    assert list(target.glob("settings.json.*backup*")), "settings.json was rewritten, with a backup"
 
     report = ClaudeAdapter(via_plugin=False).uninstall(target)
 

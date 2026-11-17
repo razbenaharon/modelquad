@@ -5,7 +5,8 @@ ModelQuad does with Codex in that repository. A team commits it once, and it
 applies to everyone who opens the repository with ModelQuad.
 
 The file can only make things narrower. It can turn Codex off, remove task
-kinds, lower the file limits, require a work Codex account, and make Claude's
+kinds, lower the file limits, require a work Codex account (which this build
+cannot confirm, so it refuses every call; see below), and make Claude's
 offers rarer. It cannot allow anything that ModelQuad does not already allow.
 
 There are two layers per repository:
@@ -41,7 +42,7 @@ task_kinds = ["review", "architecture"]
 max_files = 16
 # How much file text one call may send, in KiB (0 to 128; ModelQuad's own limit is 128).
 max_total_kib = 64
-# "workspace": refuse unless Codex itself reports a work (workspace) plan.
+# "workspace": in this build, refuse every call (see below).
 account = "any"
 
 [offers]
@@ -49,23 +50,21 @@ account = "any"
 codex = "default"
 ```
 
-- `account = "workspace"` allows Codex only when Codex itself reports a work
-  plan (`team`, `business`, `enterprise`, `edu`, `education` or `k12`, exactly as
-  Codex names it) in its quota read. A plan you
-  set with `modelquad settings plan codex <plan>` does not count here, because
-  a statement is not evidence. The reading must be a successful one from the
-  last 5 minutes (the background refresh keeps it that recent; `modelquad
-  usage-refresh` reads it again), because an older one may come from another
-  login. When Codex reports a personal plan, a plan name ModelQuad does not
-  know exactly, or no recent reading, the call is refused. The check runs at
-  the MCP tools and again right before the files are packed.
-- `[offers] codex = "on_request"` tells Claude, through a one-line reminder
-  when a Claude Code session starts in the repository, not to offer Codex on
-  its own and to call it only when you ask. It applies even when you turned
-  proactive use on, globally or for this repository. It does not apply in a
-  folder your standing grant covers: there you chose that Claude consults
-  Codex on its own, and the file's other limits (Codex off, task kinds, file
-  limits, account) still hold.
+- `account = "workspace"` was meant to allow Codex only when Codex itself
+  reports a work plan. This build does not read which Codex account is
+  signed in, so it can never confirm one, and the rule refuses every Codex
+  call in the repository (`repo_policy_account_workspace_required`).
+  `modelquad doctor` says so when it finds the line. Leave `account` out, or
+  set it to `"any"`, unless you want Codex off there.
+- `[offers] codex = "on_request"` asks Claude not to offer Codex on its own
+  in the repository and to call it only when you ask. In this build it acts
+  through the plugin's review reminder, which then neither prompts Claude to
+  ask Codex nor to offer it there; the MCP server's instructions, which
+  Claude reads when a session starts, do not know the repository. It applies
+  even when you turned proactive use on, globally or for this repository. It
+  does not apply in a folder your standing grant covers: there you chose that
+  Claude consults Codex on its own, and the file's other limits (Codex off,
+  task kinds, file limits, account) still hold.
 
 ## What it can never do
 
@@ -92,8 +91,9 @@ repository you might clone. So the file cannot:
 Other keys, such as `allow`, `auto_approve`, `permissions`, `proactive`,
 `trusted`, `include`, `files`, `model`, `effort` or `sandbox`, are unknown to
 schema 1. ModelQuad ignores them and acts on none of them. An unknown key
-alone does not refuse a call. `modelquad doctor` lists the keys it ignored, so
-a misspelt key does not go unnoticed, and shows what the file sets.
+alone does not refuse a call. `modelquad doctor` shows what the file sets,
+and `modelquad_status` reports how many keys were ignored, so a misspelt key
+can be noticed.
 
 ## Examples
 
@@ -106,7 +106,7 @@ schema = 1
 allowed = false
 ```
 
-Reviews only, at most 8 small files, and only on a work account:
+Reviews only, at most 8 small files:
 
 ```toml
 schema = 1
@@ -115,7 +115,6 @@ schema = 1
 task_kinds = ["review"]
 max_files = 8
 max_total_kib = 32
-account = "workspace"
 ```
 
 ## When the file is broken
@@ -145,7 +144,7 @@ The reason codes are:
 |---|---|
 | `repo_policy_codex_off` | `[codex] allowed = false` |
 | `repo_policy_kind_removed` | the task kind is not in `task_kinds` |
-| `repo_policy_account_workspace_required` | `account = "workspace"` and Codex has not reported a work plan |
+| `repo_policy_account_workspace_required` | `account = "workspace"`; this build cannot confirm a work account, so every call is refused |
 | `repo_policy_invalid` | not UTF-8 text, not valid TOML, a missing or unknown schema, or a wrong value |
 | `repo_policy_unreadable` | a link, not a plain file, larger than 8 KiB, or unreadable |
 | `repo_policy_file_outside_repo` | a file named for Codex sits in another Git repository (a nested clone or a submodule) below the working folder, whose own file and settings that call would skip |
@@ -154,8 +153,7 @@ A file applies to its own repository only. A call from a parent folder that
 names a file inside a nested repository is refused rather than sent under the
 parent's rules: ask from that repository's own folder.
 
-Only the reason code is written to ModelQuad's local history. The file's
-contents, its path and its key names are never stored.
+The file's contents, its path and its key names are never stored.
 
 ## Your own setting for a repository
 
@@ -203,22 +201,20 @@ as that repository, for this setting and for its `.modelquad.toml`.
 ### What Claude is told
 
 The MCP server's instructions are built once per Claude Code session and do
-not know the repository, so the per-repository mode reaches Claude through
-ModelQuad's SessionStart reminder as one line, and only when it differs from
-your global setting:
+not know the repository. The per-repository mode reaches Claude in two ways:
 
-- "In this repository, you may ask Codex on your own; Claude Code still asks
-  the user each time."
-- "In this repository, offer Codex in one short sentence when it would help,
-  and call it only when the user agrees or asks."
-- "In this repository, do not offer Codex on your own; call it only when the
-  user asks for it."
-- "In this repository, Codex is off. Do not offer or call it."
-- "In this repository, Codex is off until its .modelquad.toml is fixed. Do not
-  offer or call it."
+- a refused call: when your `off` or the file refuses Codex, the reply
+  carries a fixed reason code and a fixed sentence;
+- with the plugin, the review reminder: after a multi-file change it tells
+  Claude to call Codex, to offer Codex in one sentence, or nothing, according
+  to the mode that applies in the folder.
 
-The reminder is advisory. It reads only `preferences.json`, the installation
-id, the `.git` entry of the repository and its `.modelquad.toml`; it never
-opens the conversation transcript, starts no process for this line, and never
-blocks or approves anything. The refusals above are enforced at the tools
-whatever the reminder said.
+`modelquad_status` and `modelquad settings` show what applies in a folder.
+Earlier builds also added one line at session start through a `SessionStart`
+hook; this build has no such hook.
+
+The reminder is advisory. To choose its wording it reads only
+`preferences.json`, the installation id, the `.git` entry of the repository
+and its `.modelquad.toml`; it never opens the conversation transcript,
+starts no process and never approves anything. The refusals above are
+enforced at the tools whatever the reminder said.

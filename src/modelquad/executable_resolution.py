@@ -295,11 +295,6 @@ def _system_directory() -> str | None:
     return None
 
 
-def system_directory() -> str | None:
-    """Expose the typed OS resolver; callers validate the directory identity."""
-    return _system_directory() if os.name == "nt" else None
-
-
 def system_executable(name: str) -> Resolution:
     """Resolve only the pinned OS utilities; never consult environment roots."""
     utility = name.lower()

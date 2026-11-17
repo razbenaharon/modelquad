@@ -1,11 +1,19 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
+"""The ``modelquad`` command: install and uninstall argument handling, ``mcp``,
+``privacy``, ``review package``, ``doctor`` and the retired commands.
+
+``--version`` is in tests/test_cli_version.py, ``on``/``off`` in
+tests/test_switch.py, ``settings`` in tests/test_settings_show.py,
+tests/test_repo_settings.py and tests/test_standing_grant.py, and ``review
+report``/``review verdict`` in tests/test_review_ledger.py.
+"""
 from __future__ import annotations
 
 import io
 import json
-import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -13,46 +21,13 @@ import pytest
 import modelquad.cli as cli_module
 
 from modelquad.adapters import ActionKind, FileAction, InstallReport
+from modelquad.adapters.registry import HostAdapterDescriptor
 from modelquad.cli import main
-from modelquad.doctor import CheckStatus, DoctorCheck, DoctorReport
-from modelquad.execution import ExecutionResult
-from modelquad.registry import HostAdapterDescriptor
-from routing_mode_fixtures import save_legacy_mode
 
 
 @pytest.fixture(autouse=True)
 def isolated_cleanup_home(tmp_path, monkeypatch, isolate_home_directory):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    # Keep the import-time DB default aligned with this module's later home
-    # override.
-    from modelquad import paths
-    monkeypatch.setattr(cli_module.service_db, "DEFAULT_DB_PATH", paths.db_path())
-
-
-def write_usage_fixtures(tmp_path):
-    (tmp_path / "usage-claude.json").write_text(
-        json.dumps({"five_hour_used_percentage": 10, "seven_day_used_percentage": 20}), encoding="utf-8"
-    )
-    (tmp_path / "usage-codex.json").write_text(
-        json.dumps({"available": True, "five_hour_remaining_percentage": 80, "seven_day_remaining_percentage": 70}),
-        encoding="utf-8",
-    )
-
-
-def test_status_and_json_route_use_injected_usage_directory(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
-    write_usage_fixtures(tmp_path)
-
-    assert main(["--usage-directory", str(tmp_path), "status"]) == 0
-    status_output = capsys.readouterr().out
-    assert "Provider" in status_output
-    assert "claude" in status_output
-
-    assert main(["--usage-directory", str(tmp_path), "route", "implementation", "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["task_type"] == "implementation"
-    # Codex is intentionally restricted to read-only work in the public build.
-    assert payload["recommendation"] == "claude"
 
 
 def test_install_all_uses_the_explicit_target_directory(tmp_path):
@@ -84,7 +59,9 @@ def test_install_all_dry_run_reports_actions_without_creating_directories(tmp_pa
         for report in payload["reports"]
         for action in report["actions"]
     }
-    assert kinds == {ActionKind.WOULD_CREATE.value}
+    # Install now also takes back an earlier build's status line, pending hook
+    # and retired skills; on a fresh folder those steps are no-ops.
+    assert kinds == {ActionKind.WOULD_CREATE.value, ActionKind.UNCHANGED.value}
 
 
 class _RecordingAdapter:
@@ -111,10 +88,10 @@ def test_global_install_dry_run_uses_lazy_detection_and_skips_undetected_host(tm
     detected_target = tmp_path / "detected"
     descriptors = {
         "detected": HostAdapterDescriptor(
-            "detected", "Detected Host", "synthetic", _RecordingAdapter, lambda: detected_target, detect=lambda: True
+            "detected", "Detected Host", _RecordingAdapter, lambda: detected_target, detect=lambda: True
         ),
         "missing": HostAdapterDescriptor(
-            "missing", "Missing Host", "synthetic", _RecordingAdapter, lambda: tmp_path / "missing", detect=lambda: False
+            "missing", "Missing Host", _RecordingAdapter, lambda: tmp_path / "missing", detect=lambda: False
         ),
     }
     _patch_global_hosts(monkeypatch, descriptors)
@@ -139,7 +116,6 @@ def test_global_install_dry_run_uses_lazy_detection_and_skips_undetected_host(tm
                 # schema is the same shape whichever command produced it. An
                 # install displaces nothing, so it is always null here.
                 "restore": None,
-                "status_line_recipe": None,
                 "report": {
                     "actions": [
                         {"backup_path": None, "detail": None, "kind": "would_create", "path": str(detected_target / "managed")}
@@ -149,8 +125,7 @@ def test_global_install_dry_run_uses_lazy_detection_and_skips_undetected_host(tm
                     "unchanged": True,
                 },
             },
-            {"client": "missing", "detected": False, "error": None, "report": None, "restore": None,
-             "status_line_recipe": None},
+            {"client": "missing", "detected": False, "error": None, "report": None, "restore": None},
         ],
     }
 
@@ -159,7 +134,7 @@ def test_global_install_then_uninstall_round_trips_only_test_targets(tmp_path, m
     from modelquad.adapters.claude_adapter import ClaudeAdapter
 
     descriptors = {
-        "claude": HostAdapterDescriptor("claude", "Claude Code", "claude", ClaudeAdapter, lambda: tmp_path / "claude", detect=lambda: True),
+        "claude": HostAdapterDescriptor("claude", "Claude Code", ClaudeAdapter, lambda: tmp_path / "claude", detect=lambda: True),
     }
     _patch_global_hosts(monkeypatch, descriptors)
 
@@ -168,344 +143,20 @@ def test_global_install_then_uninstall_round_trips_only_test_targets(tmp_path, m
     assert all(not descriptor.adapter_cls().is_installed(descriptor.default_target_dir()) for descriptor in descriptors.values())
 
 
-def test_status_global_json_uses_doctor_adapter_checks_and_detection(tmp_path, monkeypatch, capsys):
-    write_usage_fixtures(tmp_path)
-    descriptors = {
-        "detected": HostAdapterDescriptor(
-            "detected", "Detected Host", "claude", _RecordingAdapter, lambda: tmp_path / "detected", detect=lambda: True
-        ),
-        "missing": HostAdapterDescriptor(
-            "missing", "Missing Host", "codex", _RecordingAdapter, lambda: tmp_path / "missing", detect=lambda: False
-        ),
-    }
-    _patch_global_hosts(monkeypatch, descriptors)
-    report = DoctorReport(
-        (
-            DoctorCheck("ModelQuad package", CheckStatus.OK, "0.2.0"),
-            DoctorCheck("detected adapter installed", CheckStatus.OK, "Installed."),
-            DoctorCheck("missing adapter installed", CheckStatus.WARN, "Not installed."),
-        )
-    )
-    monkeypatch.setattr(cli_module, "run_doctor", lambda *args, **kwargs: report)
-    monkeypatch.setattr(
-        cli_module,
-        "ServiceProcessManager",
-        lambda: type(
-            "FakeServiceProcessManager",
-            (),
-            {
-                "status": lambda self: cli_module.ProcessStatus(
-                    running=False,
-                    pid=None,
-                )
-            },
-        )(),
-    )
-
-    assert main(["--usage-directory", str(tmp_path), "status", "--global", "--json"]) == 0
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["service"] == "not running"
-    assert payload["overall"] == "HEALTHY"
-    assert payload["hosts"] == [
-        {"detected": True, "display_name": "Detected Host", "id": "detected", "installed": True, "verified": True},
-        {"detected": False, "display_name": "Missing Host", "id": "missing", "installed": False, "verified": True},
-    ]
-
-
-def test_activity_cli_filters_and_renders_project_without_an_absolute_path(tmp_path, capsys):
-    from modelquad.service import history
-
-    db_path = tmp_path / "history.db"
-    history.record_execution(
-        db_path,
-        "implementation",
-        ExecutionResult(provider="codex", success=True, output="", exit_code=0),
-        project=str(tmp_path / "nested" / "project-one"),
-    )
-    history.record_execution(
-        db_path,
-        "debugging",
-        ExecutionResult(provider="claude", success=False, output="", exit_code=1),
-        project=str(tmp_path / "nested" / "project-two"),
-    )
-
-    assert main(["--history-db", str(db_path), "activity", "--provider", "codex", "--json"]) == 0
-
-    entries = json.loads(capsys.readouterr().out)
-    assert len(entries) == 1
-    assert entries[0]["provider"] == "codex"
-    assert entries[0]["project"] == "project-one"
-    assert os.sep not in entries[0]["project"]
-
-
-def test_usage_hook_claude_writes_snapshot_and_prints_summary(tmp_path, capsys, monkeypatch):
-    payload = {
-        "rate_limits": {
-            "five_hour": {"used_percentage": 25, "resets_at": 100},
-            "seven_day": {"used_percentage": 60, "resets_at": 200},
-        }
-    }
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
-
-    assert main(["--usage-directory", str(tmp_path), "usage-hook", "claude"]) == 0
-
-    # Both windows reset in 1970, so the line gives no number for a window
-    # that no longer exists -- the next message brings a new reading -- and
-    # the snapshot keeps the facts.
-    assert capsys.readouterr().out.strip() == (
-        "Claude 5h shows after your next message / 7d shows after your next message"
-        " | Codex 5h unknown / 7d unknown")
-    written = json.loads((tmp_path / "usage-claude.json").read_text(encoding="utf-8"))
-    collected_at = written.pop("collected_at")
-    assert collected_at
-    # A push carrying real percentages is an observation made now, and is
-    # stamped as one so it can outrank an older Claude Desktop reading.
-    assert written.pop("observed_at") == collected_at
-    assert written == {
-        "provider": "claude",
-        "source": "claude_statusline",
-        "five_hour_used_percentage": 25,
-        "seven_day_used_percentage": 60,
-        "five_hour_remaining_percentage": 75.0,
-        "seven_day_remaining_percentage": 40.0,
-        "five_hour_resets_at": 100,
-        "seven_day_resets_at": 200,
-    }
-
-
-def test_usage_hook_degrades_gracefully_on_malformed_stdin(tmp_path, capsys, monkeypatch):
-    monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
-
-    assert main(["--usage-directory", str(tmp_path), "usage-hook", "claude"]) == 0
-
-    assert capsys.readouterr().out.strip() == (
-        "Claude: shows after your first message | Codex 5h unknown / 7d unknown")
-    assert (tmp_path / "usage-claude.json").is_file()
-
-
-def _rerun_hook_gate(monkeypatch, capsys, payload) -> dict:
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
-    assert main(["hook-gate"]) == 0
-    return json.loads(capsys.readouterr().out)
-
-
 def test_build_parser_accepts_mcp_subcommand():
     parser = cli_module.build_parser()
     args = parser.parse_args(["mcp"])
     assert args.command == "mcp"
 
 
-def test_run_mcp_command_reports_error_when_mcp_extra_missing(capsys, monkeypatch):
-    import sys
-
-    monkeypatch.setitem(sys.modules, "modelquad.mcp.server", None)
-
-    parser = cli_module.build_parser()
-    args = parser.parse_args(["mcp"])
-    assert cli_module._run_mcp_command(args) == 1
-    captured = capsys.readouterr()
-    assert 'Install the mcp extra: pip install -e ".[mcp]"' in captured.err
-
-
-def test_run_mcp_command_invokes_mcp_main_on_success(monkeypatch):
-    import sys
-    import types
-
+def test_main_dispatches_to_mcp_server_main(monkeypatch):
     called = []
     fake_module = types.ModuleType("modelquad.mcp.server")
     fake_module.main = lambda: called.append(True)
     monkeypatch.setitem(sys.modules, "modelquad.mcp.server", fake_module)
 
-    parser = cli_module.build_parser()
-    args = parser.parse_args(["mcp"])
-    assert cli_module._run_mcp_command(args) == 0
-    assert called == [True]
-
-
-def test_main_dispatches_to_mcp_command(monkeypatch):
-    called = []
-    monkeypatch.setattr(cli_module, "_run_mcp_command", lambda args: called.append(args.command) or 0)
-
     assert main(["mcp"]) == 0
-    assert called == ["mcp"]
-
-
-def _expected_service_options(port):
-    from modelquad.statecontext import resolve_state_context
-    args = cli_module.build_parser().parse_args(["serve"])
-    context = resolve_state_context()
-    expected = ["--port", str(port),
-                "--db", str(cli_module.service_db.DEFAULT_DB_PATH.expanduser().resolve()),
-                "--poll-interval", "60.0", "--state-root", str(context.state_root.expanduser().resolve()),
-                "--state-mode", context.mode.value]
-    if args.config is not None:
-        expected += ["--config", str(args.config.expanduser().resolve())]
-    if args.usage_directory is not None:
-        expected += ["--usage-directory", str(args.usage_directory.expanduser().resolve())]
-    return expected
-
-
-def test_service_launch_command_uses_the_isolated_bootstrap(monkeypatch):
-    cmd = cli_module._service_launch_command(8765)
-    executable = Path(cli_module.sys.executable)
-    image = Path(getattr(cli_module.sys, "_base_executable", executable)
-                 if cli_module.sys.platform == "win32" else executable)
-    expected = [str(image.resolve()), "-I"]
-    installation = cli_module.sys.platform == "win32" and executable != image
-    if installation:
-        expected.append("-S")
-    # The isolated bootstrap imports the CLI module from its own package root;
-    # neither cwd nor inherited PYTHONPATH selects another checkout.
-    expected.append(str(Path(cli_module.__file__).resolve().parent / "service" / "entry.py"))
-    if installation:
-        expected += ["--installation-python", str(executable.resolve())]
-    assert cmd == expected + ["serve", "--managed-child"] + _expected_service_options(8765)
-
-
-def _pe_subsystem(path) -> int:
-    """The PE optional header's Subsystem field: 2 is GUI, 3 is console.
-
-    The whole console-window finding is a property of the image rather than of any
-    argument, so the test that holds it reads the image. Offsets: the PE
-    signature's location lives at 0x3C, the COFF header is 20 bytes, and
-    Subsystem sits 68 bytes into the optional header that follows.
-    """
-
-    import struct
-
-    head = Path(path).read_bytes()[:0x400]
-    pe = struct.unpack_from("<I", head, 0x3C)[0]
-    assert head[pe:pe + 4] == b"PE\0\0", f"{path} is not a PE image"
-    return struct.unpack_from("<H", head, pe + 24 + 68)[0]
-
-
-def test_windowless_launcher_is_never_offered_off_windows(monkeypatch):
-    monkeypatch.setattr(cli_module.sys, "platform", "linux")
-
-    assert cli_module._windowless_launcher() is None
-
-
-def test_windowless_launcher_resolves_the_interpreters_w_sibling(monkeypatch, tmp_path):
-    monkeypatch.setattr(cli_module.sys, "platform", "win32")
-    (tmp_path / "python.exe").write_bytes(b"")
-    (tmp_path / "pythonw.exe").write_bytes(b"")
-    monkeypatch.setattr(cli_module.sys, "executable", str(tmp_path / "python.exe"))
-
-    assert cli_module._windowless_launcher() == tmp_path / "pythonw.exe"
-
-
-def test_windowless_launcher_keeps_an_already_windowless_interpreter(monkeypatch, tmp_path):
-    monkeypatch.setattr(cli_module.sys, "platform", "win32")
-    (tmp_path / "pythonw.exe").write_bytes(b"")
-    monkeypatch.setattr(cli_module.sys, "executable", str(tmp_path / "pythonw.exe"))
-
-    assert cli_module._windowless_launcher() == tmp_path / "pythonw.exe"
-
-
-def test_service_autostart_command_targets_the_windowless_interpreter(monkeypatch, tmp_path):
-    monkeypatch.setattr(cli_module.sys, "platform", "win32")
-    for name in ("python.exe", "pythonw.exe"):
-        image = tmp_path / name
-        image.write_bytes(b"fixture; never execute")
-        image.chmod(0o700)
-    monkeypatch.setattr(cli_module.sys, "executable", str(tmp_path / "python.exe"))
-    monkeypatch.setattr(cli_module.sys, "_base_executable", str(tmp_path / "python.exe"), raising=False)
-    assert cli_module._service_autostart_command(8765) == [
-        str(tmp_path / "pythonw.exe"), "-I",
-        str(Path(cli_module.__file__).resolve().parent / "service" / "entry.py"),
-        "service", "start", "--supervise",
-    ] + _expected_service_options(8765)
-
-
-def test_service_autostart_command_degrades_when_no_windowless_sibling_exists(monkeypatch, tmp_path):
-    """An absent admitted windowless image refuses, with no console fallback."""
-    from modelquad.executable_resolution import UnsafeExecutable
-    monkeypatch.setattr(cli_module.sys, "platform", "win32")
-    (tmp_path / "python.exe").write_bytes(b"fixture")
-    monkeypatch.setattr(cli_module.sys, "executable", str(tmp_path / "python.exe"))
-    monkeypatch.setattr(cli_module.sys, "_base_executable", str(tmp_path / "python.exe"), raising=False)
-    with pytest.raises(UnsafeExecutable, match="not_found"):
-        cli_module._service_autostart_command(8765)
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="PE subsystems are a Windows fact")
-def test_the_registered_autostart_image_is_not_console_subsystem_on_this_machine():
-    """The invariant, read off the image rather than off a path string.
-
-    A subsystem-3 action in a logon task holds a console window on
-    the desktop for the life of the service, and nothing in the task definition
-    overrides it. So what `service install` would register must be subsystem 2.
-    """
-
-    launcher = cli_module._windowless_launcher()
-    if launcher is None:
-        pytest.skip("this interpreter layout ships no windowless sibling")
-    assert _pe_subsystem(launcher) == 2
-    assert _pe_subsystem(cli_module.sys.executable) == 3, (
-        "the console interpreter is the thing being avoided; if it is not "
-        "subsystem 3 this test is no longer measuring anything"
-    )
-
-
-@pytest.mark.parametrize("redirected", [True, False])
-def test_managed_service_stream_binding_discards_existing_or_absent_streams(monkeypatch, redirected):
-    import modelquad.windowless_diagnostics as diagnostics
-    sentinel_out, sentinel_err = io.StringIO(), io.StringIO()
-    monkeypatch.setattr(cli_module.sys, 'stdout', sentinel_out if redirected else None)
-    monkeypatch.setattr(cli_module.sys, 'stderr', sentinel_err if redirected else None)
-    monkeypatch.setattr(diagnostics, '_active', False)
-    monkeypatch.setattr(diagnostics, '_sink', None)
-    events = []
-    monkeypatch.setattr(diagnostics, 'bind_selected_state', lambda role: False)
-    monkeypatch.setattr(diagnostics, 'emit', lambda event: events.append(event))
-    cli_module._bind_absent_std_streams()
-    print('private-content-canary', file=cli_module.sys.stdout)
-    print('private-error-canary', file=cli_module.sys.stderr)
-    assert cli_module.sys.stdout.isatty() is False
-    assert sentinel_out.getvalue() == sentinel_err.getvalue() == ''
-    assert events == ['entry']
-
-
-def test_service_binding_does_not_roll_or_append_to_legacy_log(monkeypatch, tmp_path):
-    import modelquad.windowless_diagnostics as diagnostics
-    log_path = tmp_path / 'service.log'
-    log_path.write_text('old legacy content', encoding='utf-8')
-    monkeypatch.setattr(cli_module.sys, 'stdout', None)
-    monkeypatch.setattr(cli_module.sys, 'stderr', None)
-    monkeypatch.setattr(diagnostics, '_active', False)
-    monkeypatch.setattr(diagnostics, '_sink', None)
-    monkeypatch.setattr(diagnostics, 'bind_selected_state', lambda role: False)
-    cli_module._bind_absent_std_streams()
-    print('raw output canary', file=cli_module.sys.stdout)
-    assert log_path.read_text(encoding='utf-8') == 'old legacy content'
-
-
-def test_service_diagnostic_binding_failure_does_not_break_streams(monkeypatch):
-    import modelquad.windowless_diagnostics as diagnostics
-    monkeypatch.setattr(cli_module.sys, 'stdout', None)
-    monkeypatch.setattr(cli_module.sys, 'stderr', None)
-    monkeypatch.setattr(diagnostics, '_active', False)
-    monkeypatch.setattr(diagnostics, '_sink', None)
-    monkeypatch.setattr(diagnostics, 'bind_selected_state', lambda role: False)
-    cli_module._bind_absent_std_streams()
-    assert cli_module.sys.stdout is not None
-    assert cli_module.sys.stdout.isatty() is False
-
-
-def test_run_service_command_binds_absent_streams_before_touching_uvicorn(monkeypatch):
-    """Ordering is the whole point: uvicorn reads sys.stdout on the way in."""
-    import uvicorn
-    import modelquad.service.app as service_app_module
-
-    order = []
-    monkeypatch.setattr(cli_module, "_bind_absent_std_streams", lambda: order.append("bind"))
-    monkeypatch.setattr(service_app_module, "create_app", lambda **kw: order.append("app") or object())
-    monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: order.append("uvicorn"))
-    monkeypatch.setattr(cli_module.ServiceProcessManager, "admit_child", lambda self, **kw: True)
-    args = cli_module.build_parser().parse_args(["serve", "--managed-child"])
-    assert cli_module._run_service_command(args) == 0
-    assert order == ["bind", "app", "uvicorn"]
+    assert called == [True]
 
 
 def test_dev_command_is_removed(capsys):
@@ -517,165 +168,130 @@ def test_dev_command_is_removed(capsys):
     assert "invalid choice" in capsys.readouterr().err
 
 
-def test_run_service_command_has_no_static_serving(monkeypatch):
-    import uvicorn
-    import modelquad.service.app as service_app_module
-
-    captured = {}
-
-    def fake_create_app(**kwargs):
-        captured.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(service_app_module, "create_app", fake_create_app)
-    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
-    monkeypatch.setattr(cli_module.ServiceProcessManager, "admit_child", lambda self, **kw: True)
-
-    parser = cli_module.build_parser()
-    args = parser.parse_args(["serve", "--managed-child"])
-    assert cli_module._run_service_command(args) == 0
-    assert "static_dir" not in captured
-    with pytest.raises(SystemExit):
-        parser.parse_args(["dashboard"])
-    with pytest.raises(SystemExit):
-        parser.parse_args(["serve", "--static-dir", "."])
-
-
-def test_build_parser_accepts_onboard_subcommand():
-    parser = cli_module.build_parser()
-    args = parser.parse_args(
-        ["onboard", "--providers", "claude,codex", "--yes", "--dry-run", "--json"]
-    )
-    assert args.command == "onboard"
-    assert args.providers == "claude,codex"
-    assert args.assume_yes is True
-    assert args.dry_run is True
-    assert args.as_json is True
-
-
-def test_cli_network_command(tmp_path, capsys):
-    db_path = tmp_path / "cli_network.db"
-
-    assert main(["--history-db", str(db_path), "network"]) == 0
-    out = capsys.readouterr().out
-    assert "connects only to loopback addresses" in out
-    assert "audit hook" in out
-    assert "Codex CLI" in out
-
-    assert main(["--history-db", str(db_path), "network", "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert set(payload) == {"modelquad_process", "enforcement", "codex_cli"}
-    assert "loopback" in payload["modelquad_process"]
-
-
 def test_cli_privacy_command_reports_no_telemetry_and_the_loopback_rule(tmp_path, capsys, monkeypatch):
     import modelquad.paths as paths_module
 
     monkeypatch.setattr(paths_module, "state_root", lambda: tmp_path / "state")
-    db_path = tmp_path / "cli_privacy.db"
 
-    assert main(["--history-db", str(db_path), "privacy"]) == 0
+    assert main(["privacy"]) == 0
     out = capsys.readouterr().out
     assert "ModelQuad has no telemetry." in out
     assert "loopback" in out
     assert "consent" not in out.lower()
 
-    assert main(["--history-db", str(db_path), "privacy", "--json"]) == 0
+    assert main(["privacy", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["telemetry"] == "none"
     assert "loopback" in payload["network"]
     assert not any("consent" in key for key in payload)
 
 
-def test_cli_privacy_delete_steps_and_retention_match_privacy_md(tmp_path, capsys, monkeypatch):
-    """`modelquad privacy` says what PRIVACY.md's "Everything" says, store by store."""
+def test_cli_privacy_lists_retention_earlier_builds_and_delete_steps(tmp_path, capsys, monkeypatch):
+    """`modelquad privacy` names every store, what earlier builds left and how to delete it all."""
     import modelquad.paths as paths_module
 
     monkeypatch.setattr(paths_module, "state_root", lambda: tmp_path / "state")
-    doc = (Path(__file__).resolve().parents[1] / "PRIVACY.md").read_text(encoding="utf-8")
-    everything = doc.split("- **Everything**:", 1)[1].split("Deleting files is ordinary", 1)[0]
 
     assert main(["privacy", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    steps = " ".join(payload["delete_everything"])
-    for needed in ("modelquad service stop", "modelquad service uninstall", "modelquad uninstall claude",
-                   "claude plugin uninstall modelquad", "*.modelquad-backup-*", "secrets",
-                   str(tmp_path / "state"), *cli_module.PRIVACY_QUOTA_FILES):
-        assert needed in steps, needed
-    for name in cli_module.PRIVACY_QUOTA_FILES:
-        assert f"`{name}`" in everything, name
-    assert "--global" not in steps
-    assert payload["retention"]["answers waiting to be collected (pending-output)"] == "7 days by default"
+    assert payload["retention"] == dict(cli_module.PRIVACY_RETENTION)
+    assert payload["retention"]["review ledger (review-ledger.db)"] == "no automatic expiry"
     assert payload["retention"]["review reminders (review-reminder)"] == "deleted after 2 days"
-    assert "7 days by default" in doc and "Deleted after 2 days" in doc
+    assert "running-worker records (active-workers)" in payload["retention"]
+    assert payload["left_by_earlier_builds"] == list(cli_module.PRIVACY_LEGACY)
+    steps = " ".join(payload["delete_everything"])
+    for needed in ("modelquad uninstall claude", "claude plugin uninstall modelquad",
+                   "*.modelquad-backup-*", "secrets", str(tmp_path / "state")):
+        assert needed in steps, needed
+    # The service is gone, so deleting everything never sends anyone to it.
+    assert "service" not in steps
+    assert "--global" not in steps
 
     assert main(["privacy"]) == 0
     out = capsys.readouterr().out
-    assert "no automatic expiry; there is" not in out
-    assert "7 days by default" in out
-    assert "4. Delete usage-claude.json" in out
+    for store, rule in cli_module.PRIVACY_RETENTION:
+        assert f"{store}: {rule}." in out
+    for item in cli_module.PRIVACY_LEGACY:
+        assert item in out
+    assert "3. Delete the *.modelquad-backup-* files" in out
 
 
-def test_service_refusal_carries_no_secret_path(monkeypatch):
-    """An unverifiable secret's problem names its path; the service gets fixed text."""
-    import uvicorn
-    import modelquad.service.app as service_app_module
-    import modelquad.service.auth as auth_module
-    import modelquad.windowless_diagnostics as diagnostics
-
-    captured = {}
-    leaky = auth_module.ServiceSecret(problem=r"Delete C:\Users\Dana Cohen\.modelquad\service-secret")
-    monkeypatch.setattr(auth_module, "ensure_service_secret", lambda root: leaky)
-    monkeypatch.setattr(diagnostics, "emit", lambda *a, **k: None)
-    monkeypatch.setattr(service_app_module, "create_app",
-                        lambda **kwargs: captured.update(kwargs) or object())
-    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
-    monkeypatch.setattr(cli_module.ServiceProcessManager, "admit_child", lambda self, **kw: True)
-    args = cli_module.build_parser().parse_args(["serve", "--managed-child"])
-    assert cli_module._run_service_command(args) == 0
-    secret = captured["write_secret"]
-    assert not secret.usable
-    assert secret.problem == cli_module.SERVICE_SECRET_UNAVAILABLE
-    assert "Dana" not in secret.problem and ":\\" not in secret.problem
-
-# --- recorded routing evidence agrees with the route taken -----
+def test_cli_privacy_retention_and_delete_steps_match_privacy_md():
+    """`modelquad privacy` says what PRIVACY.md says, store by store."""
+    doc = (Path(__file__).resolve().parents[1] / "PRIVACY.md").read_text(encoding="utf-8")
+    everything = doc.split("- **Everything**:", 1)[1].split("Deleting files is ordinary", 1)[0]
+    rows = {line.split("|")[1].strip(): line for line in doc.splitlines()
+            if line.startswith("| `")}
+    for store, rule in cli_module.PRIVACY_RETENTION:
+        name = store.split("(", 1)[1].rstrip(")")
+        row = next((line for key, line in rows.items() if name in key), None)
+        assert row is not None, name
+        assert rule.split(";")[0].lower() in row.lower(), (name, rule)
+    for needed in ("modelquad uninstall claude", "claude plugin uninstall modelquad",
+                   "*.modelquad-backup-*", "secrets"):
+        assert needed in everything, needed
+    assert "modelquad service" not in everything
 
 
-def test_run_service_command_discards_raw_logs_for_exactly_the_life_of_the_run(monkeypatch):
-    """No raw log/watchdog; quiet uvicorn on success and interruption."""
-
-    import uvicorn
-    import modelquad.service.app as service_app_module
-
-    order: list[str] = []
-
-    monkeypatch.setattr(service_app_module, "create_app", lambda **kwargs: object())
-    def quiet_run(*a, **kwargs):
-        assert kwargs['log_config'] is None and kwargs['access_log'] is False
-        assert kwargs['log_level'] == 'critical'
-        order.append('uvicorn')
-    monkeypatch.setattr(uvicorn, "run", quiet_run)
-    monkeypatch.setattr(cli_module.ServiceProcessManager, "admit_child", lambda self, **kw: True)
-
-    parser = cli_module.build_parser()
-    assert cli_module._run_service_command(parser.parse_args(["serve", "--managed-child"])) == 0
-
-    assert order == ["uvicorn"]
-
-    order.clear()
-
-    def explode(*a, **k):
-        quiet_run(*a, **k)
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(uvicorn, "run", explode)
-    with pytest.raises(KeyboardInterrupt):
-        cli_module._run_service_command(parser.parse_args(["serve", "--managed-child"]))
-
-    assert order == ["uvicorn"]
+def _project(tmp_path: Path) -> Path:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    (project / ".env").write_text("API_TOKEN=not-a-real-value\n", encoding="utf-8")
+    return project
 
 
-def test_local_only_is_no_longer_a_command(tmp_path, capsys):
+def test_review_package_prints_the_package_and_starts_nothing(tmp_path, capsys):
+    project = _project(tmp_path)
+
+    assert main(["review", "package", "app.py", "--project", str(project)]) == 0
+    out = capsys.readouterr().out
+    assert "- app.py (" in out
+    assert "Limits:" in out
+
+    assert main(["review", "package", "app.py", "--project", str(project), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [item["path"] for item in payload["files"]] == ["app.py"]
+    assert payload["file_count"] == 1
+    assert not payload.get("refused")
+
+
+def test_review_package_refuses_a_secret_file(tmp_path, capsys):
+    project = _project(tmp_path)
+
+    assert main(["review", "package", ".env", "--project", str(project)]) == 1
+    out = capsys.readouterr().out
+    assert out.startswith("This package cannot be sent.")
+    assert "not-a-real-value" not in out
+
+    assert main(["review", "package", ".env", "--project", str(project), "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["refused"] is True and payload["started"] is False
+    assert "not-a-real-value" not in json.dumps(payload)
+
+
+def _check(name, ok):
+    return {"name": name, "ok": ok, "detail": f"{name} detail", "next": None}
+
+
+@pytest.mark.parametrize("codex_ok, code", [(True, 0), (None, 0), (False, 1)])
+def test_doctor_json_reports_every_check_without_starting_codex(tmp_path, capsys, monkeypatch, codex_ok, code):
+    from modelquad import setupcheck
+
+    monkeypatch.setattr(setupcheck, "_codex", lambda: _check("codex", codex_ok))
+    monkeypatch.setattr(setupcheck, "_connection", lambda: _check("claude_code", True))
+    project = tmp_path / "project"
+    project.mkdir()
+
+    assert main(["doctor", "--json", "--project", str(project)]) == code
+    payload = json.loads(capsys.readouterr().out)
+    assert [item["name"] for item in payload["checks"]] == [
+        "platform", "codex", "claude_code", "settings", "folder"]
+    assert payload["ok"] is (code == 0)
+    assert payload["checks"][1]["ok"] is codex_ok
+
+
+def test_local_only_is_no_longer_a_command(capsys):
     """Regression: the Local Only switch is removed.
 
     ``modelquad local-only`` is not a subcommand any more, with or without
@@ -683,10 +299,9 @@ def test_local_only_is_no_longer_a_command(tmp_path, capsys):
     from the help text.
     """
 
-    db_path = tmp_path / "cli_retired_switch.db"
     for argv in (["local-only"], ["local-only", "--enable"], ["local-only", "--json"]):
         with pytest.raises(SystemExit) as exc_info:
-            main(["--history-db", str(db_path), *argv])
+            main(argv)
         assert exc_info.value.code == 2, argv
         assert "invalid choice: 'local-only'" in capsys.readouterr().err
 
@@ -702,8 +317,11 @@ def test_delegate_is_rejected_by_parser(capsys):
     assert "invalid choice: 'delegate'" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("argv", [["hook-gate"], ["hook-pending", "claude"], ["usage-hook", "claude"],
+                                  ["--usage-directory", "x", "usage-hook", "claude"]])
 @pytest.mark.parametrize("stdin", ['{"tool_name": "Bash", "session_id": "s1"}', "not json", ""])
-def test_hook_gate_is_a_silent_no_op_for_sessions_from_before_the_upgrade(capsys, monkeypatch, stdin):
+def test_retired_hooks_are_a_silent_no_op_for_sessions_from_before_the_upgrade(capsys, monkeypatch, stdin, argv):
     monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
-    assert main(["hook-gate"]) == 0
-    assert capsys.readouterr().out == ""
+    assert main(argv) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""

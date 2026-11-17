@@ -7,9 +7,10 @@ writes and the MCP registration is one of the first, so this sequence is real
 and was demonstrated live:
 
 1. the registration is replaced -- the user's original is now overwritten;
-2. a later write in the same install (CLAUDE.md, settings.json) fails;
-3. onboarding catches the failure and retires the recovery record;
-4. the result is reported ``FAILED``.
+2. a later step in the same install fails;
+3. the install transaction (``install_with_registration``) catches the failure
+   and retires the recovery record;
+4. the install fails.
 
 Which leaves the machine in exactly the state the transaction work exists to
 make unreachable:
@@ -38,14 +39,13 @@ from modelquad.adapters.registration import (
     recorded_replacement,
     restore_previous_registration,
 )
-from modelquad.onboarding import install_detected_hosts
-
 from test_host_registration_transaction import (  # noqa: F401 -- fixtures + helpers
     HOST_ID,
+    InstallOutcome,
     _read_registration,
-    _registry,
     _write_registration,
     claude_home,
+    install_host,
     state_root,
 )
 
@@ -53,8 +53,9 @@ from test_host_registration_transaction import (  # noqa: F401 -- fixtures + hel
 ORIGINAL = {"command": "modelquad-mcp", "args": ["--the-users-own"]}
 
 
-def _install(home: Path):
-    return install_detected_hosts([HOST_ID], dry_run=False, registry=_registry(home))[0]
+def _install(home: Path) -> InstallOutcome:
+    """``modelquad install claude``'s path: the real adapter inside the registration transaction."""
+    return install_host(home)
 
 
 def _fail_after_the_registration_write(monkeypatch) -> None:
@@ -65,7 +66,7 @@ def _fail_after_the_registration_write(monkeypatch) -> None:
     """
 
     def explode(*a, **k):
-        raise OSError("CLAUDE.md is not writable")
+        raise OSError("a later install step failed")
 
     monkeypatch.setattr(
         "modelquad.adapters.claude_adapter.pending_action", explode
@@ -215,7 +216,7 @@ def test_an_unreadable_registration_after_failure_keeps_the_record(
 
     def explode(*a, **k):
         state["install_failed"] = True
-        raise OSError("CLAUDE.md is not writable")
+        raise OSError("a later install step failed")
 
     monkeypatch.setattr(
         "modelquad.adapters.claude_adapter.pending_action", explode

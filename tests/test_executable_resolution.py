@@ -591,7 +591,7 @@ def test_system_directory_must_be_absolute_and_utility_regular(case, tmp_path, m
 
 @win_only
 def test_system_utility_resolves_when_the_process_cwd_is_the_system_directory(tmp_path, monkeypatch, isolated):
-    # A scheduled task or service often starts in System32; the location comes
+    # A process may start with System32 as its current directory; the location comes
     # from the OS API, so the current directory does not exclude it.
     path = _file(tmp_path / "synthetic system", "cmd.exe")
     monkeypatch.setattr(resolver, "_system_directory", lambda: str(path.parent))

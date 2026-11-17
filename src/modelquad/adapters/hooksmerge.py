@@ -128,37 +128,6 @@ def drop_hook_entry(payload: dict[str, Any], event: str, owned_command: str) -> 
     return Change("remove")
 
 
-def upsert_hook_entry(
-    path: Path,
-    event: str,
-    entry: dict[str, Any],
-    owned_command: str,
-    *,
-    dry_run: bool,
-) -> FileAction:
-    """File-level :func:`merge_hook_entry`, written once with a backup."""
-
-    staged = StagedJson.load(path)
-    change = (
-        merge_hook_entry(staged.payload, event, entry, owned_command)
-        if staged.refusal is None else UNCHANGED
-    )
-    return staged.action(change, dry_run=dry_run)
-
-
-def remove_hook_entry(path: Path, event: str, owned_command: str, *, dry_run: bool) -> FileAction:
-    """File-level :func:`drop_hook_entry`, written once with a backup."""
-
-    if not path.exists():
-        return FileAction(path, ActionKind.UNCHANGED)
-    staged = StagedJson.load(path)
-    change = (
-        drop_hook_entry(staged.payload, event, owned_command)
-        if staged.refusal is None else UNCHANGED
-    )
-    return staged.action(change, dry_run=dry_run)
-
-
 def has_hook_entry(path: Path, event: str, owned_command: str) -> bool:
     """Structural check: does our owned hook entry exist in this settings file?
 

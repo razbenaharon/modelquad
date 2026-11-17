@@ -13,17 +13,12 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
-import json
 import os
 from pathlib import Path
-import sys
-from types import ModuleType
 
 import pytest
 
 from modelquad import executable_resolution as resolver, hostruntime
-from modelquad.adapters.claude_adapter import ClaudeAdapter
-from modelquad.adapters.cliintegration import owns_cli_command
 
 
 win_only = pytest.mark.skipif(os.name != "nt", reason="Windows system-directory/batch discovery semantics")
@@ -226,12 +221,8 @@ ALLOW_LIST = (
      "already-admitted value passed in: CodexExecutor admits the native executable and forwards through run_inventory"),
     ("execution/codex_worker_mcp.py", "run_inventory", "launch", 1,
      "resolver call: prepare_codex_launch admits argv and pins the batch system cmd"),
-    ("jobs/changes.py", "_git", "launch", 1,
+    ("gitmeta.py", "_git", "launch", 1,
      "resolver call: resolve_executable admits Git with all enclosing repository exclusions"),
-    ("jobs/handle.py", "_probe_breakaway", "launch", 1,
-     "fixed self-launch sys.executable: the interpreter via _runner_executable"),
-    ("jobs/handle.py", "launch_reserved", "launch", 1,
-     "fixed self-launch sys.executable: _runner_command uses the interpreter"),
     ("procutil.py", "_taskkill_tree", "launch", 1,
      "system_executable: Windows taskkill.path is pinned by the system-directory API"),
     ("procutil.py", "_windows_system_directory", "lookup", 1,
@@ -242,74 +233,22 @@ ALLOW_LIST = (
     ("procutil.py", "process_creation_epoch", "launch", 2,
      "resolver call: POSIX resolve_executable pins ps argv[0] or returns unknown without launch; "
      "Windows reads the process handle; includes default reference"),
-    ("procutil.py", "process_image_name", "launch", 2,
-     "resolver call: POSIX resolve_executable pins ps argv[0] or returns unknown without launch; "
-     "Windows tasklist remains pinned through system_executable; includes default reference"),
-    ("project_notes.py", "_observe", "launch", 1,
-     "forwarding wrapper, guard inside: jobs.changes._git resolves/excludes Git; literal metadata queries share a deadline"),
+    ("setupcheck.py", "_codex", "launch", 1,
+     "forwarding wrapper, guard inside: CodexExecutor.unavailable_reason admits the native executable "
+     "first, then run_inventory prepares the bounded provider-free listing argv in an empty folder"),
     ("repo_policy.py", "find_root", "launch", 1,
-     "forwarding wrapper, guard inside: jobs.changes._git resolves/excludes Git; one rev-parse under a deadline"),
-    ("service/collector.py", "Scheduler.start", "launch", 1,
-     "non-launch classification: self._run is an async in-process collection coroutine"),
-    ("service/job_maintenance.py", "JobMaintenance.start", "launch", 1,
-     "non-launch classification: self._run is an async in-process maintenance coroutine"),
-    ("service/lifecycle.py", "TaskSchedulerRegistrar.__init__", "launch", 1,
-     "system_executable: stored runner receives API-pinned schtasks argv in each scheduler method"),
-    ("service/lifecycle.py", "TaskSchedulerRegistrar._scheduler", "launch", 1,
-     "system_executable: shared query/create/run resolves absolute schtasks; shell=False, bounded, system cwd"),
-    ("service/lifecycle.py", "TaskSchedulerRegistrar.unregister", "launch", 1,
-     "system_executable: delete resolves schtasks before the runner"),
-    ("usage/codex_appserver.py", "collect_codex_appserver_usage", "launch", 2,
-     "resolver call: which_codex/admit_executable precede the contained app-server start or injected popen"),
-    ("workerevidence.py", "_probe_version", "launch", 1,
-     "resolver call: probe_which/which_codex and admit_executable precede version argv"),
+     "forwarding wrapper, guard inside: gitmeta._git resolves/excludes Git; one rev-parse under a deadline"),
     # Classification of the sites an earlier pass left unlisted.
-    ("jobs/runner.py", "_execute", "launch", 1,
-     "test-only: product creators pass argv=() (mcp/server.py, second_opinion.py) and jobs_api "
-     "refuses argv; run_job guards _execute with _synthetic_jobs_allowed(): non-frozen "
-     "source checkout or MODELQUAD_TEST_SINK_OK=1; frozen builds always refuse raw argv"),
     ("procutil.py", "run_with_tree_kill", "launch", 1,
-     "forwarding wrapper, guard at callers: run_worker and jobs/runner._execute (test-only, see its row)"),
+     "forwarding wrapper, guard at callers: run_worker"),
     ("procutil.py", "run_worker", "launch", 1,
      "forwarding wrapper, guard at callers: CodexExecutor default runner "
      "(argv from prepare_codex_launch) and codex_worker_mcp.run_inventory (prepare_codex_launch)"),
-    ("procutil.py", "start_contained", "launch", 1,
-     "forwarding wrapper, guard at callers: codex_appserver resolves and admits the Codex executable first"),
-    ("service/lifecycle.py", "ServiceProcessManager.__init__", "launch", 2,
-     "non-launch classification: popen default stored for start; run stored and unused"),
-    ("service/lifecycle.py", "ServiceProcessManager.start", "launch", 1,
-     "resolver admission: cli._service_launch_command pins the absolute interpreter with -I/entry.py "
-     "or the frozen main image; private managed-child marker precedes binding"),
-    ("service/lifecycle.py", "_launch_background_child", "launch", 2,
-     "forwarding wrapper, guard at callers: ServiceProcessManager.start (self-launch) and "
-     "installer._relaunch_tray_if_stopped (_admit_constructed)"),
 )
 
 # Sites that are NOT admitted. Pinned with the same exact counts so a new or
 # removed site still fails, but never presented as safe (task rule 1).
 OPEN_FINDINGS = ()
-
-
-def test_service_bootstrap_and_system_cwd_use_admitted_absolute_shapes(tmp_path, monkeypatch):
-    from modelquad import cli, background_cwd
-    from modelquad.service import lifecycle
-    image = tmp_path / "python.exe"
-    image.write_bytes(b"synthetic interpreter; never execute")
-    image.chmod(0o700)
-    directory = tmp_path / "api-system"
-    directory.mkdir()
-    monkeypatch.setattr(cli.sys, "executable", str(image))
-    monkeypatch.setattr(cli.sys, "_base_executable", str(image), raising=False)
-    monkeypatch.setattr(lifecycle, "system_directory", lambda: str(directory))
-    command = cli._service_launch_command(8765)
-    assert command[0] == str(image.resolve())
-    assert command[1] == "-I" and Path(command[2]).is_absolute()
-    assert command[3:5] == ["serve", "--managed-child"]
-    kwargs = background_cwd.background_child_kwargs(command, cwd=lifecycle.service_working_directory())
-    assert kwargs["cwd"] == str(directory.resolve())
-    monkeypatch.setattr(lifecycle, "system_directory", lambda: None)
-    with pytest.raises(OSError, match="service_cwd_unavailable"):
-        lifecycle.service_working_directory()
 
 
 def _inventory_problems(found, allowed):

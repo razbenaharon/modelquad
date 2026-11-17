@@ -1,194 +1,166 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""The installed ``modelquad`` entry runs the hooks exactly as ``cli.main`` does.
+"""What the installed ``modelquad`` entry answers before the full CLI is loaded.
 
-``cli_entry.main`` answers ``usage-hook`` and ``hook-gate`` on a light path
-that never imports the full CLI. Each test runs both entries in a fresh
-process with a fake HOME/USERPROFILE/LOCALAPPDATA -- the usage directory and
-the state root are resolved once at import, so only a fresh process sees the
-fake home -- and compares the files and output they produce.
+``cli_entry`` has two early answers. A hook command an earlier build wrote
+into Claude Code's settings (the status line, the SessionStart note, the
+PreToolUse note) exits 0 with no output, reading and importing nothing. The
+review hook runs its handler, except in a worker, which exits before the
+handler is imported. Every other command goes on to ``cli.main``.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import json
-import os
-from pathlib import Path
-import subprocess
+import io
 import sys
-import time
 
-import modelquad
 import pytest
 
-from conftest import no_window_kwargs
+from modelquad import cli_entry
 
-_RUN = """
-import json, sys
-from pathlib import Path
-mode, argv, out = sys.argv[1], json.loads(sys.argv[2]), Path(sys.argv[3])
-if mode == 'pause':
-    from modelquad.service import db, history
-    history.put_routing_paused(db.DEFAULT_DB_PATH, True)
-    code = 0
-else:
-    if mode == 'entry':
-        from modelquad.cli_entry import main
-    else:
-        from modelquad.cli import main
-    code = main(argv)
-from modelquad import paths
-from modelquad.providers.base import DEFAULT_USAGE_DIRECTORY
-out.write_text(json.dumps({
-    'code': code, 'state_root': str(paths.state_root()),
-    'usage_directory': str(DEFAULT_USAGE_DIRECTORY),
-    'modules': sorted(name for name in sys.modules
-                      if name.startswith('modelquad') or name == 'yaml'),
-}), encoding='utf-8')
-"""
+RETIRED = [
+    ["hook-pending", "claude"],
+    ["hook-gate"],
+    ["usage-hook", "claude", "--quiet"],
+    ["usage-hook", "claude", "--segment"],
+    # The global options earlier builds accepted before the command.
+    ["--usage-directory", "DIR", "usage-hook", "claude"],
+    ["--history-db", "old.db", "hook-pending", "claude"],
+    ["--config", "old.yaml", "--no-history", "hook-gate"],
+]
 
-# Never imported by the light entry: the whole point of the fast path.
-_HEAVY = ("modelquad.cli", "modelquad.router", "modelquad.registry", "yaml",
-          "modelquad.providers.factory", "modelquad.service.history")
+#: The modules the full CLI, the hook handler and the MCP server bring in.
+_HEAVY = ("modelquad.cli", "modelquad.adapters.review_reminder", "modelquad.mcp.server",
+          "modelquad.switch", "modelquad.review_ledger")
 
 
-def _run(home: Path, mode: str, argv: list[str], stdin: bytes = b"{}") -> dict:
-    env = {key: value for key, value in os.environ.items()
-           if key not in {"MODELQUAD_STATE_ROOT", "MODELQUAD_STATE_MODE", "CODEX_HOME"}}
-    env.update(HOME=str(home), USERPROFILE=str(home),
-               APPDATA=str(home / "AppData" / "Roaming"),
-               LOCALAPPDATA=str(home / "AppData" / "Local"),
-               PYTHONPATH=str(Path(modelquad.__file__).resolve().parent.parent))
-    out = home / "result.json"
-    home.mkdir(parents=True, exist_ok=True)
-    completed = subprocess.run(
-        [sys.executable, "-c", _RUN, mode, json.dumps(argv), str(out)],
-        input=stdin, env=env, capture_output=True, timeout=60, **no_window_kwargs())
-    assert completed.returncode == 0, completed.stderr.decode("utf-8", "replace")
-    result = json.loads(out.read_text(encoding="utf-8"))
-    out.unlink()
-    result["stdout"] = completed.stdout.decode("utf-8")
-    return result
+class _ForbiddenInput:
+    """Standing in for stdin where nothing may be read."""
+
+    def read(self, *args):
+        raise AssertionError("stdin was read")
+
+    @property
+    def buffer(self):
+        raise AssertionError("stdin was read")
 
 
-def _files(home: Path) -> set[str]:
-    return {path.relative_to(home).as_posix() for path in home.rglob("*")
-            if path.is_file() and not path.name.endswith(".lock")}
+def _forget(monkeypatch) -> None:
+    for name in _HEAVY:
+        monkeypatch.delitem(sys.modules, name, raising=False)
 
 
-def _status_payload(now: int | None = None) -> bytes:
-    now = int(time.time()) if now is None else now
-    return json.dumps({
-        "session_id": "session-one",
-        "version": "2.1.280",
-        "model": {"id": "claude-opus-5-5", "display_name": "Opus"},
-        "rate_limits": {
-            "five_hour": {"used_percentage": 85, "resets_at": now + 3600},
-            "seven_day": {"used_percentage": 40, "resets_at": now + 300000},
-        },
-    }).encode("utf-8")
+def _loaded() -> list[str]:
+    return [name for name in _HEAVY if name in sys.modules]
 
 
-def _seed_codex(home: Path) -> None:
-    usage = home / ".claude"
-    usage.mkdir(parents=True)
-    (usage / "usage-codex.json").write_text(json.dumps({
-        "provider": "codex", "source": "codex_app_server",
-        "observed_at": datetime.now(timezone.utc).isoformat(),
-        "five_hour_used_percentage": 30, "five_hour_remaining_percentage": 70,
-    }), encoding="utf-8")
+@pytest.mark.parametrize("argv", RETIRED, ids=" ".join)
+def test_a_retired_hook_command_exits_zero_silently(argv, monkeypatch, capsys):
+    _forget(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", _ForbiddenInput())
+    assert cli_entry.dispatch_retired(argv) == 0
+    assert cli_entry.main(argv) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+    assert _loaded() == []
 
 
-def _resets_clock(now: int) -> str:
-    from modelquad.assistance import local_clock
-
-    return local_clock(datetime.fromtimestamp(now + 3600, timezone.utc),
-                       datetime.fromtimestamp(now, timezone.utc))
-
-
-def test_installed_status_line_writes_and_prints_what_the_full_cli_does(tmp_path):
-    results, files = {}, {}
-    now = int(time.time())
-    for mode in ("entry", "cli"):
-        home = tmp_path / mode
-        _seed_codex(home)
-        results[mode] = _run(home, mode, ["usage-hook", "claude"], _status_payload(now))
-        files[mode] = _files(home)
-        assert results[mode]["code"] == 0
-
-    entry, home = results["entry"], tmp_path / "entry"
-    # The real usage directory (~/.claude), separate from ModelQuad state.
-    assert Path(entry["usage_directory"]) == home / ".claude"
-    assert (home / ".claude" / "usage-claude.json").is_file()
-    # A development checkout keeps state in ~/.modelquad, an installed wheel in
-    # ~/.local/share/modelquad (CI runs the installed one); the light entry
-    # must pick the same one the full CLI does.
-    state_root = Path(entry["state_root"])
-    assert state_root in {home / ".modelquad", home / ".local" / "share" / "modelquad"}
-    assert state_root.relative_to(home) == Path(results["cli"]["state_root"]).relative_to(tmp_path / "cli")
-    # The host observation the MCP server reads.
-    assert (Path(entry["state_root"]) / "host-observation-claude.json").is_file()
-    assert files["entry"] == files["cli"]
-    # Both providers, "used" labels, and the near-limit note -- the same line.
-    assert entry["stdout"] == results["cli"]["stdout"]
-    assert entry["stdout"].strip() == (
-        f"Claude 5h 15% left, resets {_resets_clock(now)} / 7d 60% left"
-        " | Codex 5h 70% left / 7d unknown"
-        f" | Claude 5h near its limit, resets {_resets_clock(now)}: you can wait, or ask Codex for a review")
-    # The import budget: the status line never pays for the full CLI.
-    assert not set(_HEAVY) & set(entry["modules"])
+@pytest.mark.parametrize("argv", RETIRED, ids=" ".join)
+def test_a_retired_hook_command_writes_no_file(argv, tmp_path, monkeypatch, isolate_home_directory):
+    monkeypatch.chdir(tmp_path)
+    before = sorted(tmp_path.rglob("*"))
+    assert cli_entry.main(argv) == 0
+    assert sorted(tmp_path.rglob("*")) == before
+    assert not isolate_home_directory.exists()
 
 
-def test_the_segment_runs_on_the_installed_path_and_matches_the_full_cli(tmp_path):
-    """``--segment`` is the compact part for a status line the user already has."""
-    results, files = {}, {}
-    now = int(time.time())
-    for mode in ("entry", "cli"):
-        home = tmp_path / mode
-        _seed_codex(home)
-        results[mode] = _run(home, mode, ["usage-hook", "claude", "--segment"], _status_payload(now))
-        files[mode] = _files(home)
-        assert results[mode]["code"] == 0
-    assert files["entry"] == files["cli"]
-    assert results["entry"]["stdout"] == results["cli"]["stdout"]
-    assert results["entry"]["stdout"].strip() == (
-        "Claude 5h 15% left | Codex 5h 70% left"
-        f" | Claude 5h near its limit, resets {_resets_clock(now)}: you can wait, or ask Codex for a review")
-    assert results["entry"]["stdout"].strip().isascii()
-    assert not set(_HEAVY) & set(results["entry"]["modules"])
-    written = json.loads((tmp_path / "entry" / ".claude" / "usage-claude.json").read_text(encoding="utf-8"))
-    assert written["five_hour_used_percentage"] == 85
+@pytest.mark.parametrize("argv", [
+    [], ["--version"], ["settings", "show"], ["on"], ["off"], ["mcp"], ["doctor"],
+    ["hook-review", "claude"], ["review", "report"], ["install", "claude"],
+    # A retired name that is an argument, not the command, retires nothing.
+    ["settings", "repo", "off", "--project", "usage-hook"],
+    ["review", "package", "hook-gate"],
+    # An option that takes a value hides only its own value.
+    ["--usage-directory", "usage-hook", "settings"],
+    ["--usage-directory"],
+])
+def test_every_other_command_is_not_retired(argv):
+    assert cli_entry.dispatch_retired(argv) is None
 
 
-@pytest.mark.parametrize("mode", ["entry", "cli"])
-@pytest.mark.parametrize("argv", [["usage-hook", "claude", "--quiet"],
-                                  ["usage-hook", "--quiet", "claude"],
-                                  ["usage-hook", "claude", "--segment", "--quiet"]])
-def test_quiet_records_the_same_files_and_prints_nothing(tmp_path, mode, argv):
-    home = tmp_path / "home"
-    _seed_codex(home)
-    result = _run(home, mode, argv, _status_payload())
-    assert result["code"] == 0
-    assert result["stdout"] == ""
-    written = json.loads((home / ".claude" / "usage-claude.json").read_text(encoding="utf-8"))
-    assert written["five_hour_used_percentage"] == 85
-    assert (Path(result["state_root"]) / "host-observation-claude.json").is_file()
+def test_the_retired_names_are_exactly_the_three_earlier_hooks():
+    assert cli_entry.RETIRED_HOOK_COMMANDS == {"hook-pending", "hook-gate", "usage-hook"}
+    # No retired name is a command of this build: nothing live is silenced.
+    from modelquad.cli import build_parser
+
+    commands = build_parser()._subparsers._group_actions[0].choices
+    assert not cli_entry.RETIRED_HOOK_COMMANDS & set(commands)
 
 
-def test_an_explicit_usage_directory_is_honoured_by_the_installed_entry(tmp_path):
-    home, chosen = tmp_path / "home", tmp_path / "chosen"
-    result = _run(home, "entry", ["--usage-directory", str(chosen), "usage-hook", "claude"],
-                  _status_payload())
-    assert result["stdout"].startswith("Claude 5h 15% left, resets ")
-    assert "/ 7d 60% left | Codex 5h unknown" in result["stdout"]
-    assert (chosen / "usage-claude.json").is_file()
-    assert not (home / ".claude" / "usage-claude.json").exists()
+def test_the_review_hook_in_a_worker_exits_before_the_handler_is_imported(monkeypatch, capsys):
+    _forget(monkeypatch)
+    monkeypatch.setenv("MODELQUAD_WORKER", "1")
+    monkeypatch.setattr(sys, "stdin", _ForbiddenInput())
+    assert cli_entry.dispatch_review(["hook-review", "claude"]) == 0
+    assert cli_entry.main(["hook-review", "claude"]) == 0
+    assert capsys.readouterr().out == ""
+    assert _loaded() == []
 
 
-@pytest.mark.parametrize("stdin", [b"not json", b"[1, 2]", b""])
-def test_installed_gate_always_exits_zero(tmp_path, stdin):
-    result = _run(tmp_path / "home", "entry", ["hook-gate"], stdin)
-    assert result["code"] == 0
-    assert result["stdout"] == ""
-    assert "modelquad.cli" not in result["modules"]
+@pytest.mark.parametrize("argv", [
+    ["hook-review"], ["hook-review", "codex"], ["hook-review", "claude", "extra"],
+])
+def test_a_malformed_review_hook_call_exits_zero_without_the_handler(argv, monkeypatch, capsys):
+    _forget(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", _ForbiddenInput())
+    assert cli_entry.dispatch_review(argv) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+    assert _loaded() == []
+
+
+def test_the_review_hook_hands_stdin_and_stdout_to_the_handler(monkeypatch):
+    from modelquad.adapters import review_reminder
+
+    seen = []
+    stdin = io.TextIOWrapper(io.BytesIO(b"{}"))
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(review_reminder, "run_hook",
+                        lambda host, source, out: seen.append((host, source, out)) or 0)
+    assert cli_entry.dispatch_review(["hook-review", "claude"]) == 0
+    # Bytes in, so the handler decodes UTF-8 itself; the real stdout out.
+    assert seen == [("claude", stdin.buffer, sys.stdout)]
+
+
+def test_a_failing_review_handler_is_silent(monkeypatch, capsys):
+    from modelquad.adapters import review_reminder
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("private failure text")
+
+    monkeypatch.setattr(review_reminder, "run_hook", fail)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    assert cli_entry.dispatch_review(["hook-review", "claude"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+
+
+@pytest.mark.parametrize("argv", [
+    [], ["--version"], ["settings", "show"], ["on"], ["mcp"], ["hook-gate"],
+    ["usage-hook", "claude"], ["review", "report"], ["settings", "hook-review"],
+])
+def test_only_the_review_hook_is_dispatched_as_one(argv, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", _ForbiddenInput())
+    assert cli_entry.dispatch_review(argv) is None
+
+
+def test_the_full_cli_gives_the_same_early_answers(monkeypatch, capsys):
+    """``cli.main`` is reachable directly (``python -m``-style); it answers the same."""
+    from modelquad import cli
+
+    monkeypatch.setattr(sys, "stdin", _ForbiddenInput())
+    for argv in RETIRED:
+        assert cli.main(argv) == 0
+    monkeypatch.setenv("MODELQUAD_WORKER", "1")
+    assert cli.main(["hook-review", "claude"]) == 0
+    assert capsys.readouterr().out == ""

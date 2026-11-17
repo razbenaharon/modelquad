@@ -3,28 +3,26 @@
 """A folder that is not local is refused before anything opens it.
 
 Statting ``\\\\host\\share`` makes Windows connect to that host and send the
-user's NTLM response, outside the loopback guard's sight. Every entry point
-that takes a folder (status, split, delegate, handoff, the job tools, the
-SessionStart hook, ``settings repo`` and ``split summary``) refuses such a
-path before any file-system call, and a ``.git`` pointer to a share is never
-followed.
+user's NTLM response, outside the loopback guard's sight. The entry points
+tested here (the status, package and review tools, the review flow's own
+gate, ``settings repo``, ``settings show``, ``review package`` and ``doctor``)
+refuse such a path before any file-system call, and a ``.git`` pointer to a
+share is never followed.
 """
 
 from __future__ import annotations
 
-import asyncio
+import json
 import os
 import stat
-from pathlib import Path
 from types import SimpleNamespace
 
+import anyio
 import pytest
 
-from modelquad import localpath, repo_policy as rp, repo_settings as rs
-from modelquad.adapters import pending_reminder
+from modelquad import localpath, repo_policy as rp, repo_settings as rs, review
 from modelquad.cli import main
 from modelquad.mcp import server as mcp
-from modelquad.mcp.server import ToolError
 from modelquad.procutil import no_window_kwargs
 
 REMOTE = [r"\\attacker.example\share", r"\\attacker.example@80\x", "//attacker.example/share",
@@ -124,31 +122,61 @@ def share_tripwire(monkeypatch):
 @pytest.mark.parametrize("path", REMOTE[:4])
 def test_status_does_not_open_a_share(share_tripwire, path):
     result = mcp.modelquad_status(project_directory=path)
-    view = result.structured_content["repo_policy"]
-    assert view == {"state": "unknown", "why": localpath.UNUSABLE}
-    assert "not a local folder" in result.content[0].text
+    # Nothing about the folder is read or reported: not its mode, not its rules.
+    assert "folder_rules" not in result.structured_content
+    assert "own_grant" not in result.structured_content
     assert share_tripwire == []
 
 
-def test_split_does_not_open_a_share(share_tripwire):
-    with pytest.raises(ToolError):
-        mcp.modelquad_split(REMOTE[0], [{"title": "Review", "task_type": "review", "needs": "none"}])
-    assert share_tripwire == []
+class _Started:
+    """Stands in for Codex: notes each request that passed the gates."""
+
+    def __init__(self):
+        self.requests = []
+
+    def execute(self, request):
+        self.requests.append(request)
+        raise AssertionError("a share reached the executor")
 
 
-def test_delegate_refuses_a_share_before_recording_or_opening_it(share_tripwire, monkeypatch):
-    started = []
-    monkeypatch.setattr(mcp, "_delegate_observing_the_caller", lambda *a, **k: started.append(1))
-    result = asyncio.run(mcp.modelquad_delegate("review", "Review it.", REMOTE[0], files=["a.py"]))
+@pytest.mark.parametrize("path", REMOTE)
+def test_delegate_refuses_a_share_before_opening_it(share_tripwire, monkeypatch, path):
+    executor = _Started()
+    monkeypatch.setattr(mcp, "_executor", lambda: executor)
+
+    async def invoke():
+        return await mcp.modelquad_delegate(task_type="review", prompt="Review it.",
+                                            working_directory=path, files=["a.py"], timeout=60.0)
+
+    result = anyio.run(invoke)
     payload = result.structured_content
-    assert payload["reason"] == localpath.UNUSABLE and payload["recorded"] is False
-    assert started == [] and share_tripwire == []
+    assert payload["reason"] == localpath.UNUSABLE
+    assert payload["refused"] is True and payload["started"] is False
+    assert result.content[0].text.splitlines()[0] == "Codex was not started."
+    assert executor.requests == [] and share_tripwire == []
 
 
-def test_handoff_refuses_a_share_before_asking(share_tripwire):
-    assert mcp._handoff_refusal("review", None, None, REMOTE[0])["reason"] == localpath.UNUSABLE
-    result = asyncio.run(mcp.modelquad_handoff("review", "Review it.", REMOTE[0]))
-    assert result.structured_content["reason"] == localpath.UNUSABLE
+@pytest.mark.parametrize("path", REMOTE)
+def test_the_package_tool_refuses_a_share_before_opening_it(share_tripwire, path):
+    async def invoke():
+        return await mcp.modelquad_review_package(task_type="review", prompt="Review it.",
+                                                  working_directory=path, files=["a.py"])
+
+    payload = anyio.run(invoke).structured_content
+    assert payload["reason"] == localpath.UNUSABLE and payload["refused"] is True
+    assert "files" not in payload and share_tripwire == []
+
+
+@pytest.mark.parametrize("path", REMOTE)
+@pytest.mark.parametrize("starts_codex", [True, False])
+@pytest.mark.parametrize("standing", [True, False])
+def test_the_review_gate_refuses_a_share_before_any_other_rule_reads_it(
+        share_tripwire, path, starts_codex, standing):
+    request = review.ReviewRequest(task_type="review", prompt="Review it.", working_directory=path,
+                                   files=("a.py",))
+    session = review.Session(standing=standing, project=path)
+    refused = review.gate(request, session, starts_codex=starts_codex)
+    assert refused["reason"] == localpath.UNUSABLE and refused["message"] == rp.UNUSABLE_MESSAGE
     assert share_tripwire == []
 
 
@@ -158,22 +186,31 @@ def test_the_gate_and_the_repository_readers_never_open_a_share(share_tripwire):
     assert rp.load(REMOTE[0]).refusal == rp.UNREADABLE
     assert rs.local_policy(REMOTE[0]).refusal == rp.UNREADABLE
     assert rs.repo_key(REMOTE[0], "0" * 32) is None
-    assert rs.advice_line(REMOTE[0]) is None
-    assert share_tripwire == []
-
-
-def test_the_hook_and_the_job_tools_never_open_a_share(share_tripwire):
-    assert pending_reminder.valid_cwd(REMOTE[0]) is False
-    assert pending_reminder.project_key(REMOTE[0]) is None
-    assert pending_reminder.repo_advice(REMOTE[0]) is None
     assert share_tripwire == []
 
 
 @pytest.mark.parametrize("argv", [["settings", "repo", "off", "--project", REMOTE[0]],
-                                  ["split", "summary", "--project", REMOTE[0]]])
+                                  ["settings", "repo", "--project", REMOTE[0]],
+                                  ["settings", "show", "--project", REMOTE[0]]])
 def test_the_cli_refuses_a_share(share_tripwire, capsys, argv):
     assert main(argv) == 2
     assert "not a local folder" in capsys.readouterr().err
+    assert share_tripwire == []
+
+
+def test_the_cli_package_refuses_a_share(share_tripwire, capsys):
+    assert main(["review", "package", "a.py", "--project", REMOTE[0], "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["reason"] == localpath.UNUSABLE and payload["refused"] is True
+    assert "files" not in payload
+    assert share_tripwire == []
+
+
+def test_doctor_reports_a_share_without_opening_it(share_tripwire):
+    from modelquad import setupcheck
+
+    check = setupcheck._folder(REMOTE[0])
+    assert check["ok"] is False and check["detail"] == rp.UNUSABLE_MESSAGE
     assert share_tripwire == []
 
 
@@ -200,7 +237,7 @@ def test_a_commondir_pointer_to_a_share_is_not_followed(tmp_path, share_tripwire
 
 
 def test_git_is_not_started_in_a_folder_whose_pointer_leads_to_a_share(tmp_path, monkeypatch, share_tripwire):
-    from modelquad.jobs import changes
+    from modelquad import gitmeta as changes
 
     monkeypatch.setattr(changes, "_git", lambda *a, **k: pytest.fail("Git would follow the pointer"))
     worktree = tmp_path / "worktree"

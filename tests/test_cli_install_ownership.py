@@ -10,7 +10,6 @@ import pytest
 from modelquad import cli, hostruntime
 from modelquad.adapters import registration as reg
 from modelquad.adapters.claude_adapter import ClaudeAdapter, _timeout_env_key, _timeout_ownership_key
-from modelquad.onboarding import install_detected_hosts
 
 from test_host_registration_transaction import state_root  # noqa: F401 -- fixture
 
@@ -28,10 +27,6 @@ def targets(tmp_path, monkeypatch, state_root):
         ),
     )
     monkeypatch.setattr(cli, "default_target_dir", lambda host: homes[host])
-    monkeypatch.setattr(
-        "modelquad.onboarding._find_host_descriptor",
-        lambda host, registry=None: cli.get_host_descriptor(host),
-    )
     return homes
 
 
@@ -180,12 +175,13 @@ def test_cli_install_partial_failure_keeps_backup_and_restores_original(targets,
 def test_cli_install_sets_the_timeout_on_the_server_entry_only(targets):
     assert cli.main(["install", "claude"]) == 0
     settings = targets["claude"] / "settings.json"
-    assert "env" not in json.loads(settings.read_text())
+    # Install writes nothing into settings.json, so it does not even create it.
+    assert not settings.exists()
     assert _timeout_ownership_key(settings) not in reg.read_owned_settings()
     entry = hostruntime.read_registered_entry("claude", targets["claude"])
     assert entry["timeout"] == 900000
     assert cli.main(["uninstall", "claude"]) == 0
-    assert "env" not in json.loads(settings.read_text())
+    assert not settings.exists()
     assert reg.recorded_replacement("claude") is None
 
 
@@ -215,7 +211,7 @@ def test_timeout_record_failure_does_not_skip_registration_lineage(targets, monk
         patch.setattr(reg, "write_owned_settings", fail)
         cli.main(["install", "claude"])
     assert reg.recorded_replacement("claude")["installed_lineage"]
-    assert "MCP_TOOL_TIMEOUT" not in json.loads((home / "settings.json").read_text()).get("env", {})
+    assert not (home / "settings.json").exists(), "no global MCP_TOOL_TIMEOUT, nor anything else"
     assert hostruntime.read_registered_entry("claude", home)["timeout"] == 900000
     assert cli.main(["uninstall", "claude"]) == 0
     assert hostruntime.read_registered_entry("claude", home) == (original if prior else None)

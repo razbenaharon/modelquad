@@ -16,8 +16,8 @@ It changes nothing:
     modelquad settings show --project "<this session's absolute project directory>"
 
 Show the user its three numbered items in plain words: whether ModelQuad is on
-in Claude Code, the mode (automatic or approve each call, and whether this
-folder is excluded), and the history line. Where it says unknown, say unknown;
+in Claude Code, the mode (automatic or approve each call, whether this folder
+is excluded, and any limits its repository sets), and the history line. Where it says unknown, say unknown;
 do not guess.
 
 ## 2. Ask what to change
@@ -38,8 +38,8 @@ anything else, change nothing and say so.
 
 ## 3. Run only the command for the option the user picked
 
-- Turn ModelQuad off: `modelquad host disconnect claude`
-- Turn ModelQuad on: `modelquad host connect claude`
+- Turn ModelQuad off: `modelquad off`
+- Turn ModelQuad on: `modelquad on`
 - Change to approve each call: `modelquad settings auto off --global`, and also
   the `modelquad settings auto off --project ...` command when the output of
   step 1 printed one.
@@ -64,7 +64,7 @@ the user that a change takes effect in new Claude Code sessions.
   `modelquad settings repo off [--project DIR]` (its help,
   `modelquad settings repo --help`, says how to undo it); the user runs that
   in their own terminal.
-- Never turn the grant on or reconnect ModelQuad unless the user picked that
+- Never turn the grant on or turn ModelQuad back on unless the user picked that
   option in this run.
 - Never open a browser or a web page for settings.
 - Run no other command and call no ModelQuad tool.

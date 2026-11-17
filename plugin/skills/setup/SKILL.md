@@ -8,19 +8,21 @@ metadata:
 
 # ModelQuad setup check
 
-Call `modelquad_doctor`. Then, for the user:
+Run this with the Bash tool, with this session's absolute project directory.
+It changes nothing and starts no review:
 
-1. Say in one line whether everything is ready.
+    modelquad doctor --project "<this session's absolute project directory>"
+
+Then, for the user:
+
+1. Say in one line whether a review can run.
 2. For each check that is not ok, explain what it means in plain words and
-   give the exact command or setting that fixes it.
+   give the exact command or setting that fixes it. Where a check says
+   unknown, say unknown; do not guess.
 3. Mention, briefly, the privacy settings in ModelQuad's
    docs/RECOMMENDED-SETTINGS.md: Read deny rules for secret files, a
    `.modelquadignore` for files Codex should never see, keeping ModelQuad out
    of a sensitive repository, and turning off model training with both
    providers.
 
-4. For your plans and this repository's `.modelquad.toml` (valid, invalid
-   with its fix, or unknown keys), suggest the user runs `modelquad doctor`
-   in a terminal: those details are shown to the person, not to Claude.
-
-This check starts no Codex work and changes no settings.
+Run no other command and change no setting.

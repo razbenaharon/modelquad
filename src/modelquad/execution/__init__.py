@@ -17,7 +17,6 @@ if TYPE_CHECKING:
         ExecutionRequest,
         ExecutionResult,
         Executor,
-        OutcomeEvidence,
         WORKER_ENV_VAR,
         WorkerTaskStatus,
         append_completion_protocol,
@@ -26,14 +25,12 @@ if TYPE_CHECKING:
         parse_completion_envelope,
     )
     from .codex import CodexExecutor
-    from .manager import ExecutionManager
 
 _EXPORTS = {
     "DEFAULT_TIMEOUT_SECONDS": ".base",
     "ExecutionRequest": ".base",
     "ExecutionResult": ".base",
     "Executor": ".base",
-    "OutcomeEvidence": ".base",
     "WORKER_ENV_VAR": ".base",
     "WorkerTaskStatus": ".base",
     "append_completion_protocol": ".base",
@@ -41,17 +38,14 @@ _EXPORTS = {
     "no_window_kwargs": ".base",
     "parse_completion_envelope": ".base",
     "CodexExecutor": ".codex",
-    "ExecutionManager": ".manager",
 }
 
 __all__ = [
     "CodexExecutor",
     "DEFAULT_TIMEOUT_SECONDS",
-    "ExecutionManager",
     "ExecutionRequest",
     "ExecutionResult",
     "Executor",
-    "OutcomeEvidence",
     "WORKER_ENV_VAR",
     "WorkerTaskStatus",
     "append_completion_protocol",

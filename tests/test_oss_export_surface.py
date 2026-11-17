@@ -9,26 +9,19 @@ from modelquad.mcp.server import server
 def test_release_tools_are_small_and_delegation_requires_interaction():
     tools = server._tool_manager._tools
     assert set(tools) == {
-        "modelquad_status", "modelquad_delegate", "modelquad_handoff",
-        "modelquad_delegation_status", "modelquad_job_status", "modelquad_job_collect",
-        "modelquad_job_wait", "modelquad_job_acknowledge", "modelquad_job_stop",
-        "modelquad_job_list_pending", "modelquad_doctor", "modelquad_usage_refresh",
-        "modelquad_activity", "modelquad_activity_detail",
-        "modelquad_handoff_confirm", "modelquad_handoff_wait", "modelquad_split",
-        "modelquad_review_verdict",
+        "modelquad_review_package", "modelquad_delegate", "modelquad_review_verdict",
+        "modelquad_status",
     }
     # Without the user's standing grant (grant.py; the suite never has one),
     # Claude Code prompts for every call. tests/test_standing_grant.py covers
     # the session that starts in a granted folder.
-    for name in ("modelquad_delegate", "modelquad_handoff"):
-        assert tools[name].meta["anthropic/requiresUserInteraction"] is True
+    assert tools["modelquad_delegate"].meta["anthropic/requiresUserInteraction"] is True
+    # Only the tool that starts Codex asks: the others start nothing.
+    for name in ("modelquad_review_package", "modelquad_review_verdict", "modelquad_status"):
+        assert "anthropic/requiresUserInteraction" not in (tools[name].meta or {}), name
     # Recording verdicts starts nothing and writes only the local ledger.
     verdict = tools["modelquad_review_verdict"]
-    assert "anthropic/requiresUserInteraction" not in (verdict.meta or {})
     assert verdict.annotations.open_world_hint is False
-    # The wait tool starts Codex only after the approval page's button, which
-    # only the page can press: the confirm tool is kept from the model.
-    assert tools["modelquad_handoff_confirm"].meta["ui"]["visibility"] == ["app"]
 
 
 def test_every_tool_has_a_title_and_only_pure_reads_are_marked_read_only():
@@ -36,27 +29,19 @@ def test_every_tool_has_a_title_and_only_pure_reads_are_marked_read_only():
     assert all(tool.title for tool in tools.values())
     read_only = {name for name, tool in tools.items()
                  if tool.annotations is not None and tool.annotations.read_only_hint}
-    assert read_only == {
-        "modelquad_status", "modelquad_activity", "modelquad_activity_detail",
-        "modelquad_delegation_status", "modelquad_doctor", "modelquad_job_collect",
-        "modelquad_job_list_pending", "modelquad_split", "modelquad_usage_refresh",
-    }
-    # The quota refresh asks Codex's app-server, which talks to OpenAI, and a
-    # retry is debounced.
-    refresh = tools["modelquad_usage_refresh"].annotations
-    assert refresh.open_world_hint is True and refresh.idempotent_hint is True
-    # The split proposal starts nothing, so it asks for no interaction.
-    assert "anthropic/requiresUserInteraction" not in (tools["modelquad_split"].meta or {})
+    assert read_only == {"modelquad_status", "modelquad_review_package"}
+    for name in read_only:
+        assert tools[name].annotations.open_world_hint is False, name
     # A retry of a Codex call would send the code again and spend usage.
-    for name in ("modelquad_delegate", "modelquad_handoff", "modelquad_handoff_wait"):
-        hints = tools[name].annotations
-        assert hints.read_only_hint is False and hints.idempotent_hint is False
-        assert hints.open_world_hint is True
+    hints = tools["modelquad_delegate"].annotations
+    assert hints.read_only_hint is False and hints.idempotent_hint is False
+    assert hints.open_world_hint is True
 
 
 def test_delegate_schema_has_only_read_only_release_arguments():
     properties = server._tool_manager._tools["modelquad_delegate"].parameters["properties"]
-    assert {"provider", "session_id", "agent_runtime", "decision_id", "expected_consumption", "user_approved"}.isdisjoint(properties)
+    assert {"provider", "session_id", "agent_runtime", "decision_id", "expected_consumption",
+            "user_approved", "capsule"}.isdisjoint(properties)
     assert properties["timeout"]["exclusiveMinimum"] == 0
     assert properties["timeout"]["maximum"] == 840
 
@@ -64,13 +49,14 @@ def test_delegate_schema_has_only_read_only_release_arguments():
 def test_no_tool_points_to_a_tool_that_does_not_exist():
     tools = server._tool_manager._tools
     for tool in tools.values():
-        assert "modelquad_route" not in (tool.description or ""), tool.name
+        for gone in ("modelquad_route", "modelquad_handoff", "modelquad_split", "modelquad_job_",
+                     "modelquad_activity", "modelquad_doctor", "modelquad_usage_refresh",
+                     "modelquad_delegation_status"):
+            assert gone not in (tool.description or ""), (tool.name, gone)
 
 
-def test_security_md_names_every_tool_that_can_start_codex():
+def test_security_md_names_the_tool_that_can_start_codex():
     from pathlib import Path
 
     text = (Path(__file__).resolve().parents[1] / "SECURITY.md").read_text(encoding="utf-8")
-    for name in ("modelquad_delegate", "modelquad_handoff", "modelquad_handoff_wait",
-                 "modelquad_handoff_confirm"):
-        assert f"`{name}`" in text, name
+    assert "`modelquad_delegate`" in text

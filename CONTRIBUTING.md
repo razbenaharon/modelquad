@@ -29,7 +29,7 @@ From a checkout, in PowerShell:
 
     python -m venv .venv
     .venv\Scripts\activate
-    pip install -e ".[dev,service]"
+    pip install -e ".[dev]"
 
 The pre-flight script sets the import path itself and prints every command
 it runs:
@@ -51,14 +51,14 @@ import path:
 
     python -m venv .venv-ci
     .venv-ci\Scripts\activate
-    pip install ".[dev,service]"
+    pip install ".[dev]"
     pytest -q -n auto -m "not serial_timing"
     pytest -q -n 0 -m serial_timing
 
 More about the scripts is in [scripts/README.md](scripts/README.md).
 
 Do not use ModelQuad itself while developing this repository: do not ask it
-which tool fits a task and do not call `modelquad_*` MCP tools. The tool under
+for a Codex review of this code and do not call `modelquad_*` MCP tools. The tool under
 development is not the tool for developing it.
 
 ## Safety invariants
@@ -72,7 +72,7 @@ standing grant themselves (no MCP tool can, and Claude is told never to). A chan
 you think one is wrong, open an issue.
 
 Privacy rules live in `src/modelquad/privacy.py`. Do not add tool output
-or absolute paths to history or metadata; a stored worker command names only
+or absolute paths to the review ledger or metadata; a stored worker command names only
 the executable and its flags. ModelQuad has no telemetry.
 
 ## Pull requests
@@ -94,8 +94,8 @@ it.
 
 ## Sign your commits (DCO)
 
-This project uses the Developer Certificate of Origin, version 1.1:
-https://developercertificate.org/
+Contributions from outside the project use the Developer Certificate of
+Origin, version 1.1: https://developercertificate.org/
 
 By signing off a commit you certify that you wrote the change, or otherwise
 have the right to submit it under the project's license, as the DCO
@@ -112,9 +112,40 @@ To sign off commits you already made, use `git commit --amend -s` for the
 last one, or `git rebase --signoff` for several.
 
 AI coding tools must not add a `Signed-off-by` line: only a human can certify
-the DCO. A commit an AI tool helped with should carry an `Assisted-by:` trailer
-naming the tool (for example `Assisted-by: Claude Code`), and the human
-submitting it signs off.
+the DCO. A commit an AI tool helped with should carry an `Assisted-by:` or
+`Co-authored-by:` trailer naming the tool (for example
+`Assisted-by: Claude Code`), and the human submitting it signs off.
+
+### The maintainer's own commits
+
+The maintainer's own commits need no sign-off. That covers work the
+maintainer did with an AI tool, which the maintainer answers for. It does
+not cover anyone else's work: a commit by another person needs that
+person's sign-off wherever it arrives, including inside a pull request the
+maintainer opens, and a person named in a `Co-authored-by:` trailer needs a
+sign-off of their own.
+
+CI (`.github/scripts/dco_check.py`) does not take a commit's name or e-mail
+as proof of whose it is, and does not go by who opened the pull request. A
+commit counts as the maintainer's own only when GitHub reports all of these:
+it came in on a branch of this repository, not a fork; the maintainer's
+account pushed it or started the run; and GitHub attributes the commit's
+author and committer to the maintainer's account. Every commit in a pull
+request from a fork needs a sign-off, whatever its author field says. When
+GitHub cannot be asked, the sign-off is required.
+
+A merge commit needs a sign-off as well (`git merge --signoff`) unless it adds
+nothing of its own. The sign-off has to be in the last paragraph of the
+message, where `git commit -s` puts it.
+
+The check cannot see text copied into a commit the maintainer authored, or a
+commit someone forged in the maintainer's name that the maintainer then
+pushed. The maintainer brings outside work in as that person's own signed-off
+commit, and merges an outside pull request with a merge commit or a rebase,
+not a squash, so that each commit keeps its author and its sign-off. A pull
+request that changes `.github/` is checked by hand: under GitHub's
+`pull_request` trigger the check that runs is the pull request's own copy, so
+its result does not count there.
 
 ## License
 

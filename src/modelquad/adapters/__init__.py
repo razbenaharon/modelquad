@@ -23,7 +23,7 @@ if TYPE_CHECKING:
         FileAction,
         InstallReport,
     )
-    from ..registry import HostAdapterDescriptor
+    from .registry import HostAdapterDescriptor
 
 _EXPORTS = {
     "default_target_dir": ".paths",
@@ -33,7 +33,7 @@ _EXPORTS = {
     "ActionKind": ".report",
     "FileAction": ".report",
     "InstallReport": ".report",
-    "HostAdapterDescriptor": "..registry",
+    "HostAdapterDescriptor": ".registry",
 }
 
 __all__ = [

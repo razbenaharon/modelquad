@@ -1,2 +1,0 @@
-{"type":"system","subtype":"init","tools":["Read","Grep","Glob"],"mcp_servers":[],"permissionMode":"dontAsk"}
-{"type":"result","subtype":"success","is_error":false,"permission_denials":[{"tool_name":"Bash","tool_use_id":"synthetic-forbidden","tool_input":{"command":"inert synthetic canary"}}],"result":"withheld"}

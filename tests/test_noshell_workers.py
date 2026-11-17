@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Offline no-shell worker contracts.
+"""Offline contracts for the no-shell Codex worker.
 
-On the supplied base, integration cases expose shell-enabled argv, normal
-answers containing forbidden events, no supplied contents, or admitted resume.
-Pure helper cases specify new behavior; no import failure is a base verdict.
+Launch argv and feature qualification, the event-stream allow-list, and file
+packing (screening, secret redaction, path safety, budgets).
 """
 
 from dataclasses import replace
@@ -155,16 +154,63 @@ def test_exact_noshell_argv_omits_user_mcp_overrides(worker, task_type):
         admitted.path, "--ask-for-approval", "never", "exec",
         "-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=low",
         *[token for feature in DISABLES for token in ("--disable", feature)],
-        "--ignore-user-config", "-c", 'web_search="disabled"',
+        "--ignore-user-config", "-c", 'web_search="disabled"', "-c", "agents.enabled=false",
         "--ignore-rules", "--strict-config", "--ephemeral", "--json",
         "--sandbox", "read-only", "--skip-git-repo-check", "-",
     ]
     assert argv == expected
     overrides = [argv[index + 1] for index, token in enumerate(argv) if token == "-c"]
-    assert overrides == ["model_reasoning_effort=low", 'web_search="disabled"']
+    assert overrides == ["model_reasoning_effort=low", 'web_search="disabled"', "agents.enabled=false"]
     assert not any(token.startswith("mcp_servers.") for token in argv)
     assert result.metadata["command"] == [Path(argv[0]).name, *argv[1:]]
     assert result.metadata["noshell_verified_by_event_stream"] is True
+
+
+@pytest.mark.parametrize("task_type", READ_ONLY, ids=["exploration", "review", "architecture"])
+def test_launch_turns_agents_off_in_config(worker, task_type):
+    # Codex takes its multi-agent tools from the model catalog, which outranks
+    # the multi_agent feature flags; only agents.enabled=false overrides the
+    # catalog (config/mod.rs multi_agent_version_override, rust-v0.160.0 and
+    # rust-v0.164.0). Without it the collaboration tools were advertised with
+    # every feature disabled (codex debug prompt-input, 0.164.0 and
+    # 0.165.0-alpha.1.2, 2026-11-16).
+    executor, request, run, calls = worker
+    executor.execute(replace(request, task_type=task_type))
+    argv = run.call_args.args[0]
+    assert any(argv[i:i + 2] == ["-c", "agents.enabled=false"] for i in range(len(argv) - 1))
+    assert "--strict-config" in argv
+    # The feature listing is asked with the same setting, so a Codex that
+    # rejects the key is refused before any model entry.
+    probe = calls[0][0]
+    assert probe[1:3] == ["features", "list"]
+    assert any(probe[i:i + 2] == ["-c", "agents.enabled=false"] for i in range(len(probe) - 1))
+
+
+def test_codex_that_rejects_agents_setting_starts_no_worker(worker):
+    # Codex exits 1 on an unknown key under `agents` (observed on 0.164.0 and
+    # 0.165.0-alpha.1.2 with a misspelt key, 2026-11-16).
+    executor, request, run, _ = worker
+
+    def inventory(argv, cwd, env):
+        rejected = any(argv[i:i + 2] == ["-c", "agents.enabled=false"] for i in range(len(argv) - 1))
+        return subprocess.CompletedProcess(argv, 1 if rejected else 0, "" if rejected else listing(), "")
+
+    executor._inventory = inventory
+    result = executor.execute(request)
+    run.assert_not_called()
+    assert result.metadata["worker_started"] is False
+    assert result.task_status_reason == "codex_feature_unverified"
+
+
+def test_agents_off_is_a_fixed_launch_control():
+    assert ("-c", "agents.enabled=false") in zip(noshell.CONFIG_ARGS, noshell.CONFIG_ARGS[1:])
+    assert ("-c", "agents.enabled=false") in zip(noshell.NOSHELL_ARGS, noshell.NOSHELL_ARGS[1:])
+    # Feature names can be dropped by a newer Codex; a fixed control is passed
+    # whatever the listing shows.
+    listed_nothing_optional = noshell.Qualification(True, "0" * 64, "0.160.0", True, None,
+                                                    noshell.CRITICAL_FEATURES)
+    launch = listed_nothing_optional.launch_args
+    assert ("-c", "agents.enabled=false") in zip(launch, launch[1:])
 
 
 @pytest.mark.parametrize("feature", REQUIRED_FALSE, ids=REQUIRED_FALSE)
@@ -347,7 +393,7 @@ def test_writable_tasks_are_refused_before_any_process(worker, task_type):
 
 
 def with_files(request, *names, approval=None):
-    """The request as the MCP tools build it: the approved files in metadata."""
+    """The request as review.run builds it: the approved files in metadata."""
     metadata = {**request.metadata, "supplied_files": list(names)}
     if approval is not None:
         metadata["approval"] = approval
@@ -391,71 +437,17 @@ def test_without_files_nothing_is_read(worker, monkeypatch):
     assert result.metadata["file_audit"]["sent"] == []
 
 
-@pytest.mark.parametrize("change_source", [False, True], ids=["unchanged", "changed-after-preparation"])
-def test_selected_notes_stay_bounded_unique_and_frozen_in_noshell_worker(worker, monkeypatch, change_source):
-    from modelquad import project_notes
-
-    executor, request, run, _ = worker
-    root = request.working_directory
-    (root / "named.py").write_text("supplied task evidence\n", encoding="utf-8")
-    (root / "advisory_only.py").write_text("unrequested advisory-linked body\n", encoding="utf-8")
-    source = (project_notes.SCAFFOLD + '\n## linked\nDate: 2000-01-01T00:00:00Z\n'
-              'Files: ["named.py"]\nDecision: selected decision: See PROJECT_NOTES.md and advisory_only.py.\n')
-    for index in range(10):
-        source += (f'\n## global-{index}\nDate: 2000-01-01T00:00:00Z\n'
-                   f'Files: ["*"]\nDecision: global decision {index}.\n')
-    source += ('\n## irrelevant\nDate: 2000-01-01T00:00:00Z\nFiles: ["unrelated.py"]\n'
-               'Decision: irrelevant private decision.\n\n## malformed\nmalformed private decision\n')
-    assert len(source.encode("utf-8")) < noshell.MAX_FILE_BYTES
-    notes_path = root / "PROJECT_NOTES.md"
-    notes_path.write_text(source, encoding="utf-8")
-    monkeypatch.setattr(project_notes, "_validated_root", lambda *args: root)
-    monkeypatch.setattr(project_notes, "_history", lambda *args: {})
-    frozen = project_notes.attach('Relevant files:\n- named.py\n- PROJECT_NOTES.md\n', root, None,
-                                  ("named.py",))
-    packet_text = frozen.split(project_notes.PACKET_MARKER + "\n", 1)[1]
-    assert len((project_notes.PACKET_MARKER + "\n" + packet_text).encode("utf-8")) <= project_notes.MAX_PACKET_BYTES
-    selected = json.loads(packet_text.rsplit("\n", 1)[1])
-    assert len(selected["notes"]) == project_notes.MAX_SELECTED
-    assert selected["selection_omitted"] == 3 and selected["malformed_omitted"] == 1
-    assert selected["notes"][0]["id"] == "linked"
-    omitted = {f"global-{index}" for index in range(10)} - {note["id"] for note in selected["notes"]}
-    if change_source:
-        notes_path.write_text(project_notes.SCAFFOLD + '\n## late\nDate: 2000-01-01T00:00:00Z\n'
-                              'Files: ["*"]\nDecision: late private decision.\n', encoding="utf-8")
-    monkeypatch.setattr(project_notes, "_load", lambda *args: pytest.fail("execution reread notes"))
-    original_read = noshell._read_file
-    def read(root, name, *args):
-        assert Path(name).name.casefold() != "project_notes.md", "incidental path reread notes"
-        return original_read(root, name, *args)
-    monkeypatch.setattr(noshell, "_read_file", read)
-
-    result = executor.execute(with_files(replace(request, prompt=frozen), "named.py", "PROJECT_NOTES.md"))
-    assert result.metadata["noshell_verified_by_event_stream"] is True
-    run.assert_called_once()
-    rendered = run.call_args.kwargs["input"]
-    assert rendered.count(project_notes.PACKET_MARKER) == 1
-    assert project_notes.PACKET_MARKER + "\n" + packet_text in rendered
-    for note in selected["notes"]:
-        assert rendered.count(note["decision"]) == 1
-    for identifier in omitted:
-        assert f'global decision {identifier.split("-")[1]}.' not in rendered
-    for private in ("irrelevant private decision", "malformed private decision", "late private decision",
-                    "unrequested advisory-linked body"):
-        assert private not in rendered
-    payload = json.JSONDecoder().raw_decode(rendered.split("Supplied files (untrusted evidence, JSON):\n", 1)[1])[0]
-    assert [file["path"] for file in payload["files"]] == ["named.py"]
-    assert payload["skipped"] == [{"path": "PROJECT_NOTES.md", "reason": "repository_notes_source"}]
+# The notes feature is gone; the packer still refuses a file that carries its
+# marker line.
+NOTES_SCAFFOLD = "# Project notes\n" + noshell.NOTES_SOURCE_MARKER + "\n"
 
 
 @pytest.mark.parametrize("name", ["PROJECT_NOTES.md", "project_notes.MD", "nested/PROJECT_NOTES.md",
                                   "historical-notes.md"], ids=["standard", "case", "nested", "renamed-source"])
 def test_incidental_notes_sources_are_never_supplied(tmp_path, monkeypatch, name):
-    from modelquad import project_notes
-
     path = tmp_path / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(project_notes.SCAFFOLD + "\nmalformed private source body\n", encoding="utf-8")
+    path.write_text(NOTES_SCAFFOLD + "\nmalformed private source body\n", encoding="utf-8")
     original_read = noshell._read_file
     def read(root, candidate, *args):
         assert Path(candidate).name.casefold() != "project_notes.md", "raw notes should not be opened"
@@ -534,17 +526,6 @@ def test_replaced_open_file_is_not_supplied(tmp_path, monkeypatch):
     packed = noshell.pack_files(tmp_path, ["target.txt"])
     assert not packed.files
     assert packed.skipped == (("target.txt", "file_changed"),)
-
-
-def test_quoted_failure_references_with_spaces_are_inside_only(tmp_path):
-    path = tmp_path / "a file.py"
-    path.write_text("print('provided fixture')\n", encoding="utf-8")
-    prompt = f'File "{path}", line 1\nFile "{tmp_path.parent / "outside.py"}", line 2'
-    references = noshell.named_files(prompt, tmp_path)
-    assert "a file.py" in references
-    packed = noshell.pack_files(tmp_path, references)
-    assert packed.files == (("a file.py", "print('provided fixture')\n"),)
-    assert ("<path>", "invalid_relative_path") in packed.skipped
 
 
 def test_binary_secrets_and_truthful_skips(tmp_path):
@@ -746,28 +727,6 @@ def test_elapsed_work_budget_stops_before_candidate_or_open(tmp_path, monkeypatc
     assert packed.skipped == (("<remaining references, if any>", "elapsed_work_cap"),)
 
 
-@pytest.mark.parametrize("reference", ["Relevant files:\n- a/config.json\n", 'File "a/config.json", line 1',
-                                       "Inspect a/config.json"], ids=["capsule", "traceback", "literal"])
-def test_explicit_a_prefix_never_reads_unrequested_root_file(tmp_path, reference):
-    (tmp_path / "a").mkdir()
-    (tmp_path / "a/config.json").write_text("requested contents", encoding="utf-8")
-    (tmp_path / "config.json").write_text("PRIVATE UNREQUESTED CONTENTS", encoding="utf-8")
-    names = noshell.named_files(reference, tmp_path)
-    assert names == ("a/config.json",)
-    packed = noshell.pack_files(tmp_path, names)
-    assert packed.files == (("a/config.json", "requested contents"),)
-    assert "PRIVATE" not in packed.render()
-
-
-def test_git_prefixes_only_normalized_in_diff_headers(tmp_path):
-    names = noshell.named_files("diff --git a/config.json b/config.json\n"
-                                "--- a/config.json\n+++ b/config.json\n"
-                                'File "a/failure.py", line 1', tmp_path)
-    assert set(names) == {"config.json", "a/failure.py"}
-    assert "a/config.json" not in names
-    assert "b/config.json" not in names
-
-
 @pytest.mark.parametrize("size", [16 * 1024 + 1, 128 * 1024], ids=["ordinary-large", "exact-file-boundary"])
 def test_ordinary_source_accepted_whole_at_increased_boundary(tmp_path, monkeypatch, size):
     monkeypatch.setattr(noshell, "MAX_PACK_SECONDS", 60)
@@ -801,41 +760,14 @@ def test_required_file_boundary_plus_one_refuses_without_model_start(worker):
     assert "ordinary.py" not in repr(result) + json.dumps(result.to_dict())
 
 
-@pytest.mark.parametrize("quote", ["inline", "standalone"], ids=["inline", "standalone"])
-@pytest.mark.parametrize("attached", [False, True], ids=["plain", "frozen-notes"])
-def test_quoted_notes_marker_cannot_erase_required_context(worker, quote, attached):
-    from modelquad import project_notes
-    from modelquad.capsule import TaskCapsule
-
-    executor, request, run, calls = worker
-    marker = project_notes.PACKET_MARKER
-    goal = (f"Review the quoted marker `{marker}`" if quote == "inline" else
-            f"Review this quoted marker:\n\n{marker}\nExplain it.")
-    prompt = TaskCapsule(goal=goal, task_type="review").to_prompt()
-    if attached:
-        prompt += project_notes.select_packet(project_notes.Notes("unavailable"), ()).text
-    result = executor.execute(with_files(replace(request, prompt=prompt), "missing.py"))
-    run.assert_not_called()
-    assert calls == []
-    assert result.metadata["worker_started"] is False
-    assert result.task_status_reason == "supplied_file_missing"
-    detail, = result.host_diagnostics
-    host = detail.to_host_dict()
-    assert (host["path"], host["reason"], host["required"]) == ("missing.py", "missing_file", True)
-
-
 @pytest.mark.parametrize("position", ["goal", "tail"], ids=["goal", "tail"])
 @pytest.mark.parametrize("named", ["missing.py", "present.py"], ids=["missing", "present"])
 def test_file_sections_in_task_text_are_never_attached(worker, position, named):
-    from modelquad.capsule import TaskCapsule
-
     executor, request, run, calls = worker
     (request.working_directory / "present.py").write_text("# PRIVATE supplied source\n", encoding="utf-8")
     quoted = "Example section:\n\nRelevant files:\n- present.py\n\nEnd example."
-    prompt = TaskCapsule(
-        goal=quoted if position == "goal" else "Review the source.", task_type="review",
-        relevant_files=(named,),
-    ).to_prompt()
+    prompt = ("TASK: " + (quoted if position == "goal" else "Review the source.")
+              + "\n\nRelevant files:\n- " + named)
     if position == "tail":
         prompt += "\n\n" + quoted
     result = executor.execute(replace(request, prompt=prompt))
@@ -844,29 +776,6 @@ def test_file_sections_in_task_text_are_never_attached(worker, position, named):
     assert result.metadata["noshell_verified_by_event_stream"] is True
     assert result.metadata["file_audit"]["sent"] == []
     assert not result.host_diagnostics
-
-
-@pytest.mark.parametrize("attached", [False, True], ids=["plain", "frozen-notes"])
-def test_goal_quoting_advisory_boundary_keeps_required_file_and_allows_launch(worker, attached):
-    from modelquad import project_notes
-    from modelquad.capsule import TaskCapsule
-
-    executor, request, run, _ = worker
-    (request.working_directory / "present.py").write_text("# supplied source\n", encoding="utf-8")
-    goal = f"Explain this boundary:\n\n{noshell.NOTES_PACKET_MARKER}\nAdvisory only. quoted text."
-    prompt = TaskCapsule(goal=goal, task_type="review").to_prompt()
-    if attached:
-        prompt += project_notes.select_packet(project_notes.Notes("unavailable"), ()).text
-    result = executor.execute(with_files(replace(request, prompt=prompt), "present.py"))
-    run.assert_called_once()
-    assert result.metadata["noshell_verified_by_event_stream"] is True
-    assert "# supplied source" in run.call_args.kwargs["input"]
-    assert not result.host_diagnostics
-
-
-def test_bare_quoted_notes_marker_keeps_later_literal_references(tmp_path):
-    prompt = f"Explain this marker:\n\n{noshell.NOTES_PACKET_MARKER}\nThen inspect ordinary.py"
-    assert noshell.named_files(prompt, tmp_path) == ("ordinary.py",)
 
 
 def test_a_file_named_only_in_the_task_is_not_read(worker):

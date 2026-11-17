@@ -11,166 +11,11 @@ import threading
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
-from typing import Literal
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-import math
-import uuid
 
 from .executable_resolution import UnsafeExecutable, resolve_executable, system_executable
 
 
 default_kill_on_close: ContextVar[bool] = ContextVar("default_kill_on_close", default=False)
-
-
-@dataclass(frozen=True)
-class BootObservation:
-    session: str
-    uptime_ms: int
-    observed_at: datetime
-    boot_lower: datetime
-    boot_upper: datetime
-    qualified: bool
-
-
-def _native_boot_sample():
-    """Read-only NT class 90; unavailable on unsupported Windows versions.
-
-    DbgHiberBoot is deliberately unqualified: Fast Startup must not look like
-    proof of a new cold boot. Native behavior still needs platform acceptance.
-    """
-    if os.name != 'nt':
-        return None
-    import ctypes
-    from ctypes import wintypes
-
-    class BootEnvironment(ctypes.Structure):
-        _fields_ = [('identifier', ctypes.c_ubyte * 16),
-                    ('firmware_type', wintypes.DWORD), ('flags', ctypes.c_uint64)]
-
-    nt = ctypes.WinDLL('ntdll')
-    nt.NtQuerySystemInformation.argtypes = [wintypes.ULONG, ctypes.c_void_p,
-                                           wintypes.ULONG, ctypes.POINTER(wintypes.ULONG)]
-    nt.NtQuerySystemInformation.restype = wintypes.LONG
-    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    kernel.GetTickCount64.argtypes = []
-    kernel.GetTickCount64.restype = ctypes.c_uint64
-    value, length = BootEnvironment(), wintypes.ULONG()
-    if nt.NtQuerySystemInformation(90, ctypes.byref(value), ctypes.sizeof(value),
-                                   ctypes.byref(length)) != 0 or length.value != ctypes.sizeof(value):
-        return None
-    identifier = uuid.UUID(bytes_le=bytes(value.identifier))
-    if identifier.int == 0:
-        return None
-    return str(identifier), int(kernel.GetTickCount64()), not bool(value.flags & 2)
-
-
-def observe_boot(*, clock=None, sample=None) -> BootObservation | None:
-    """Bracket independent boot identity/uptime; never trust UTC minus uptime alone."""
-    clock = clock or (lambda: datetime.now(timezone.utc))
-    sample = sample or _native_boot_sample
-    try:
-        before = clock()
-        first = sample()
-        last = sample()
-        after = clock()
-        if (first is None or last is None or first[0] != last[0]
-                or first[2] is not True or last[2] is not True
-                or type(first[1]) is not int or not 0 <= first[1] <= last[1]
-                or before.utcoffset() != timedelta(0) or after.utcoffset() != timedelta(0)
-                or not 0 <= (after - before).total_seconds() <= 1):
-            return None
-        # 16 ms bounds the documented ~10--16 ms tick resolution; the full
-        # bracket adds observation uncertainty, not a historical clock tolerance.
-        return BootObservation(first[0], last[1], after,
-                               before - timedelta(milliseconds=last[1] + 16),
-                               after - timedelta(milliseconds=max(0, first[1] - 16)), True)
-    except Exception:
-        return None
-
-
-def _read_only_process_api():
-    if os.name != 'nt':
-        return None
-    import ctypes
-    from ctypes import wintypes
-    api = ctypes.WinDLL('kernel32', use_last_error=True)
-    api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    api.OpenProcess.restype = wintypes.HANDLE
-    api.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
-    api.GetProcessTimes.restype = wintypes.BOOL
-    api.CloseHandle.argtypes = [wintypes.HANDLE]
-    api.CloseHandle.restype = wintypes.BOOL
-    return api
-
-
-def native_process_creation_epoch(pid: int) -> float | None:
-    """The existing FILETIME representation through a typed read-only binding."""
-    try:
-        if type(pid) is not int or not 0 < pid <= 0xffffffff:
-            return None
-        api = _read_only_process_api()
-        if api is None:
-            return None
-        handle = api.OpenProcess(0x1000, False, pid)
-        if not handle:
-            return None
-        try:
-            return _creation_epoch_of_handle(api, handle)
-        finally:
-            api.CloseHandle(handle)
-    except Exception:
-        return None
-
-
-@dataclass(frozen=True)
-class CodexProcess:
-    pid: int
-    created_at: str | None
-
-
-@dataclass(frozen=True)
-class CodexProcesses:
-    observed_at: str
-    status: Literal['complete', 'partial', 'unavailable']
-    processes: tuple[CodexProcess, ...]
-    reason: Literal['snapshot_unavailable', 'entries_unreadable_or_bounded'] | None = None
-
-
-def live_codex_processes(*, clock=None, snapshot=None, state=None, created=None,
-                         limit=64) -> CodexProcesses:
-    """Transient basenames only. No paths, argv, owners or workspace inference."""
-    clock = clock or (lambda: datetime.now(timezone.utc))
-    stamp = clock().isoformat()
-    snapshot = snapshot or (_windows_process_snapshot if os.name == 'nt' else lambda: None)
-    state = state or pid_state
-    created = created or native_process_creation_epoch
-    try:
-        rows = snapshot()
-        if rows is None:
-            return CodexProcesses(stamp, 'unavailable', (), 'snapshot_unavailable')
-        result, partial = [], False
-        for pid, _parent, image in rows:
-            if image.casefold() != 'codex.exe':
-                continue
-            live = state(pid)
-            if live == 'dead':
-                continue
-            if live != 'alive':
-                partial = True
-                continue
-            if len(result) >= max(1, min(limit, 64)):
-                partial = True
-                continue
-            epoch = created(pid)
-            readable = type(epoch) in (int, float) and math.isfinite(epoch) and epoch > 0
-            start = datetime.fromtimestamp(epoch, timezone.utc).isoformat() if readable else None
-            partial |= start is None
-            result.append(CodexProcess(pid, start))
-        return CodexProcesses(stamp, 'partial' if partial else 'complete', tuple(result),
-                              'entries_unreadable_or_bounded' if partial else None)
-    except Exception:
-        return CodexProcesses(stamp, 'unavailable', (), 'snapshot_unavailable')
 
 
 _DEVNULL = subprocess.DEVNULL
@@ -220,8 +65,8 @@ class WorkerContainmentError(OSError):
     be put in its Job Object before its first instruction. The
     process is stopped while still suspended, so nothing of the worker's own
     ran and nothing it could have spawned exists. It is an ``OSError`` so the
-    executors' existing launch-failure branch reports it as ``launch_failed``,
-    which is exactly what happened.
+    Codex executor's launch-failure branch reports Codex as unavailable, and no
+    answer is returned.
     """
 
 
@@ -256,116 +101,6 @@ def no_window_kwargs(os_name: str | None = None, *, detach_stdin: bool = True) -
     if effective == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     return kwargs
-
-
-def _verified_termination_api():
-    """Private, fully typed binding; replaceable by deterministic test fakes."""
-    if os.name != "nt":
-        return None
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
-    kernel32.GetProcessTimes.restype = wintypes.BOOL
-    kernel32.QueryFullProcessImageNameW.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
-    ]
-    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
-    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel32.TerminateProcess.restype = wintypes.BOOL
-    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-    kernel32.WaitForSingleObject.restype = wintypes.DWORD
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    return kernel32
-
-
-def _image_path_of_handle(kernel32, handle) -> str | None:
-    import ctypes
-    from ctypes import wintypes
-
-    size = wintypes.DWORD(32768)
-    buffer = ctypes.create_unicode_buffer(size.value)
-    if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
-        return None
-    return buffer.value[:size.value] or None
-
-
-def terminate_verified(
-    pid: int, *, expected_created: float, tolerance: float,
-    image_matches: Callable[[str], bool], wait_seconds: float,
-) -> Literal["terminated", "not_found", "mismatch", "unconfirmed"]:
-    """Verify identity, terminate and await exit through one Windows handle."""
-    try:
-        import ctypes
-
-        kernel32 = _verified_termination_api()
-        if kernel32 is None:
-            return "unconfirmed"
-        ctypes.set_last_error(0)
-        # PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE
-        handle = kernel32.OpenProcess(0x0001 | 0x1000 | 0x00100000, False, int(pid))
-        if not handle:
-            return "not_found" if ctypes.get_last_error() == 87 else "unconfirmed"
-        try:
-            state = kernel32.WaitForSingleObject(handle, 0)
-            if state == 0:
-                return "not_found"
-            if state != 0x102:  # WAIT_TIMEOUT is the only proven live state.
-                return "unconfirmed"
-            created = _creation_epoch_of_handle(kernel32, handle)
-            if created is None:
-                return "unconfirmed"
-            image = _image_path_of_handle(kernel32, handle)
-            if image is None:
-                return "unconfirmed"
-            if abs(created - expected_created) > tolerance or not image_matches(image):
-                return "mismatch"
-            if not kernel32.TerminateProcess(handle, 1):
-                # An already exiting process can deny termination but signal.
-                return "terminated" if kernel32.WaitForSingleObject(handle, 0) == 0 else "unconfirmed"
-            state = kernel32.WaitForSingleObject(handle, int(wait_seconds * 1000))
-            return "terminated" if state == 0 else "unconfirmed"
-        finally:
-            # A failed close cannot change what the handle already proved.
-            kernel32.CloseHandle(handle)
-    except Exception:  # an API failure cannot prove that the service stopped
-        return "unconfirmed"
-
-
-def terminate_pid(pid: int) -> bool:
-    """Terminate exactly one PID through the Windows process API.
-
-    This is intentionally a product-owned, PID-scoped operation. Callers
-    must establish ownership before invoking it; this helper never broadens a
-    stop request into an image-name or process-tree sweep.
-    """
-
-    if os.name != "nt":
-        return False
-
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.windll.kernel32
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel32.TerminateProcess.restype = wintypes.BOOL
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-
-    invalid_handle = wintypes.HANDLE(-1).value
-    handle = kernel32.OpenProcess(0x0001, False, int(pid))  # PROCESS_TERMINATE
-    if not handle or handle in (-1, invalid_handle, ctypes.c_void_p(-1).value):
-        return False
-    try:
-        return bool(kernel32.TerminateProcess(handle, 1))
-    finally:
-        kernel32.CloseHandle(handle)
 
 
 #: The private fourth reading :func:`_windows_openprocess_state` can return.
@@ -422,13 +157,10 @@ def _windows_openprocess_state(pid: int) -> str:
 def pid_state(pid: int) -> str:
     """Is this pid ``"alive"``, ``"dead"``, or is the answer ``"unknown"``?
 
-    The third answer is the point. :func:`pid_alive`
-    is a two-valued reading of a three-valued question: a probe that *cannot
-    answer* -- ``OpenProcess`` handing back no handle because the process
-    belongs to another user or to the kernel -- came back as False, which the
-    reconcile passes then read as "the worker is dead" and used to close a
-    LIVE worker's attempt row (releasing duplicate protection with it). A
-    failure to observe is not an observation. This function keeps the two
+    The third answer is the point. A probe that *cannot answer* --
+    ``OpenProcess`` handing back no handle because the process belongs to
+    another user or to the kernel -- is not a dead process. A failure to
+    observe is not an observation. This function keeps the two
     apart so callers that must not guess can refuse to.
 
     Windows: a handle plus ``GetExitCodeProcess`` answers directly. Without a
@@ -488,67 +220,6 @@ def pid_state(pid: int) -> str:
         return "alive"  # it exists; it is simply not ours to signal
     except OSError:
         return "unknown"
-
-
-#: How long the tasklist/ps image-name probe may take before the image reads
-#: as unknown. Tests on a loaded machine raise it (tests/conftest.py).
-IMAGE_NAME_SECONDS = 15.0
-
-
-def process_image_name(pid: int, *, run=subprocess.run) -> str | None:
-    """The executable image name the OS reports for ``pid``, or None.
-
-    ``None`` means the question could not be answered -- the lookup tool is
-    missing, timed out, failed, or reported something other than exactly one
-    process -- and callers must treat it as "unknown", never as "matches" or
-    "does not match". The answer is the bare file name (``python.exe``,
-    ``modelquad.exe``), so it compares against the basename of a recorded
-    launch command. Windows asks ``tasklist``; POSIX asks ``ps``. Both are
-    spawned without a console and with stdin detached (the
-    identity half of "is the recorded service pid really that service?").
-    """
-
-    try:
-        numeric = int(pid)
-    except (TypeError, ValueError):
-        return None
-    if numeric <= 0:
-        return None
-    if os.name == "nt":
-        executable = system_executable("tasklist")
-        if executable.path is None:
-            return None
-        argv = [executable.path, "/FI", f"PID eq {numeric}", "/FO", "CSV", "/NH"]
-    else:
-        executable = resolve_executable("ps")
-        if executable.path is None:
-            return None
-        argv = [executable.path, "-p", str(numeric), "-o", "comm="]
-    try:
-        completed = run(
-            argv, capture_output=True, text=True, shell=False, timeout=IMAGE_NAME_SECONDS, **no_window_kwargs()
-        )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return None
-    if completed.returncode != 0:
-        return None
-    output = getattr(completed, "stdout", "") or ""
-    if os.name == "nt":
-        import csv
-
-        try:
-            rows = [row for row in csv.reader(output.splitlines()) if row]
-        except csv.Error:
-            return None
-        if len(rows) != 1 or len(rows[0]) < 2 or rows[0][1] != str(numeric):
-            return None
-        image = rows[0][0].strip()
-    else:
-        lines = [line.strip() for line in output.splitlines() if line.strip()]
-        if len(lines) != 1:
-            return None
-        image = os.path.basename(lines[0])
-    return image or None
 
 
 def process_creation_epoch(pid: int, *, run=subprocess.run, os_name: str | None = None) -> float | None:
@@ -670,18 +341,6 @@ def parse_ps_etime(text: str) -> float | None:
     if minutes >= 60 or seconds >= 60:
         return None
     return float(days * 86400 + hours * 3600 + minutes * 60 + seconds)
-
-
-def pid_alive(pid: int) -> bool:
-    """Best-effort check whether a process with this pid is currently running.
-
-    Two-valued by construction, and therefore only for callers that have
-    somewhere sensible to put a "no": an unanswerable probe reads False here.
-    Anything that would CLOSE a record or release a guard on the strength of
-    that False must ask :func:`pid_state` instead and act on ``"dead"`` alone.
-    """
-
-    return pid_state(pid) == "alive"
 
 
 def _kill_process_tree(
@@ -1622,7 +1281,7 @@ def _close_census_job(handle: int) -> None:
 def _terminate_job(handle: int) -> bool:
     """Terminate every process in the job. False if the call failed.
 
-    Exit code 1, the same one ``Popen.kill`` and :func:`terminate_pid` give.
+    Exit code 1, the same one ``Popen.kill`` gives.
     Whether anything is left is not this function's answer: the census is.
     """
 
@@ -2087,44 +1746,6 @@ def run_with_tree_kill(
                 'close_cleanup_members': len(members) if members is not None else None,
                 'close_cleanup_confirmed': dead,
             }
-
-
-def start_contained(argv, **popen_kwargs) -> "tuple[subprocess.Popen, int | None]":
-    """Start a long-lived helper inside a kill-on-close Job Object.
-
-    For a child that speaks a protocol over pipes rather than running to
-    completion (the Codex app-server). It is created suspended, assigned to
-    its job, then resumed, exactly like a worker; this process's death stops
-    the whole tree. Returns the process and its job (None off Windows). A
-    child that cannot be contained is stopped and
-    :class:`WorkerContainmentError` (an ``OSError``) is raised.
-    """
-    contained = os.name == "nt"
-    if "creationflags" not in popen_kwargs:
-        popen_kwargs["creationflags"] = no_window_kwargs().get("creationflags", 0)
-    if contained:
-        popen_kwargs["creationflags"] = int(popen_kwargs["creationflags"] or 0) | _CREATE_SUSPENDED
-    proc = subprocess.Popen(argv, **popen_kwargs)
-    job = _contain_suspended_worker(proc, kill_on_close=True) if contained else None
-    return proc, job
-
-
-def stop_contained(proc: subprocess.Popen, job: "int | None") -> None:
-    """Stop a :func:`start_contained` child and everything it started. Never raises."""
-    try:
-        if job:
-            _kill_process_tree(proc, job, None)
-        else:
-            proc.kill()
-    except Exception:  # noqa: BLE001 -- teardown is best effort and must not raise
-        pass
-    finally:
-        if job:
-            _close_census_job(job)
-    try:
-        proc.wait(timeout=5.0)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def run_worker(argv, **kwargs) -> subprocess.CompletedProcess:

@@ -2,25 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Which exact build is running.
 
-Every build used to answer ``0.2.0``: from ``--version``, from
-``/api/health`` and from the MCP handshake (an empty ``serverInfo.version``).
-These tests pin where each surface gets the commit from, and that an
-unreadable identity says ``unknown`` instead of guessing.
+Every build used to answer ``0.2.0``: from ``--version`` and from the MCP
+handshake (an empty ``serverInfo.version``). These tests pin where each
+surface gets the commit from, and that an unreadable identity says
+``unknown`` instead of guessing.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from mcp.client import Client
 
 from modelquad import buildinfo, executable_resolution
 from modelquad.branding import installed_version
-from modelquad.service.app import create_app
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
@@ -113,25 +110,47 @@ def test_this_checkout_resolves_to_its_own_head():
 # ---------------------------------------------------------------- surfaces
 
 
-def test_health_carries_the_build_and_no_path(tmp_path, monkeypatch):
-    expected = buildinfo.read_build_info(source_root=tmp_path, git_head=lambda root: SHA)
-    monkeypatch.setattr(buildinfo, "read_build_info", lambda: expected)
-
-    app = create_app(db_path=tmp_path / "service.db", poll_interval=3600.0, poll_providers=False,
-                     write_secret="build-identity-secret")
-    payload = TestClient(app, base_url="http://127.0.0.1").get(
-        "/api/health", headers={"X-ModelQuad-Token": "build-identity-secret"}).json()
-
-    assert payload["build"] == {
+def test_the_build_names_no_path(tmp_path):
+    info = buildinfo.read_build_info(source_root=tmp_path, git_head=lambda root: SHA)
+    assert info.to_dict() == {
         "version": VERSION,
         "source_commit": SHA,
         "short": SHA[:7],
         "built_at_utc": "unknown",
         "channel": "source",
     }
-    for value in payload["build"].values():
+    for value in (*info.to_dict().values(), info.identity, info.label):
         assert "/" not in value and "\\" not in value
-    assert str(tmp_path) not in json.dumps(payload["build"])
+        assert str(tmp_path) not in value
+
+
+def test_version_flag_prints_the_same_build(tmp_path, monkeypatch, capsys):
+    from modelquad import cli
+    from modelquad.branding import PRODUCT_NAME
+
+    expected = buildinfo.read_build_info(source_root=tmp_path, git_head=lambda root: SHA)
+    monkeypatch.setattr(buildinfo, "read_build_info", lambda: expected)
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["--version"])
+    assert stopped.value.code == 0
+    assert capsys.readouterr().out.strip() == f"{PRODUCT_NAME} {VERSION}+{SHA[:7]} (source)"
+
+
+def test_the_mcp_server_is_built_with_the_build_identity(tmp_path, monkeypatch):
+    from modelquad.mcp import server as mcp_server
+
+    expected = buildinfo.read_build_info(source_root=tmp_path, git_head=lambda root: SHA)
+
+    def broken():
+        raise OSError("unreadable")
+
+    # A context of its own: this module's fixture clears the real cache at teardown.
+    with monkeypatch.context() as patch:
+        patch.setattr(buildinfo, "current_build_info", lambda: expected)
+        assert mcp_server._build_identity() == expected.identity == f"{VERSION}+{SHA[:7]}"
+        # An unreadable identity leaves the version out; it never guesses one.
+        patch.setattr(buildinfo, "current_build_info", broken)
+        assert mcp_server._build_identity() is None
 
 
 def test_mcp_initialize_names_the_build():

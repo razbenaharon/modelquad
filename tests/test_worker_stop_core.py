@@ -1,98 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Raz Ben Aharon
 # SPDX-License-Identifier: Apache-2.0
-"""Stop requests stay attempt-scoped and preserve observed process/output evidence."""
+"""A stop request ends the worker tree and preserves observed process/output evidence."""
 
-import json
-import sqlite3
 import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from modelquad import procutil
-from modelquad.config import Config
-from modelquad.execution import CodexExecutor, ExecutionManager
-from modelquad.execution.base import ExecutionRequest, ExecutionResult, WorkerTaskStatus, attempt_resolution, workspace_stability_note
+from modelquad.execution import CodexExecutor
+from modelquad.execution.base import ExecutionRequest, attempt_resolution, workspace_stability_note
 from modelquad.models import TaskType
-from modelquad.service import db, history
-
-
-def opened(path):
-    return history.record_delegation_attempt(path, task_type="implementation")
-
-
-def stored(path):
-    with sqlite3.connect(path) as conn:
-        row = conn.execute("SELECT value FROM settings WHERE key='attempt_stop_requests'").fetchone()
-    return json.loads(row[0]) if row else []
-
-
-def test_only_open_started_attempts_accept_stop_and_prune_resolved(tmp_path):
-    path = tmp_path / "state.db"
-    first, second = opened(path), opened(path)
-    assert history.request_attempt_stop(path, first) == "accepted"
-    assert history.attempt_stop_requested(path, first)
-    history.resolve_delegation_attempt(path, first, status="completed")
-    assert history.request_attempt_stop(path, first) == "not_running"
-    assert stored(path) == [first]  # refusal writes nothing
-    assert history.request_attempt_stop(path, 99999) == "not_found"
-    assert history.request_attempt_stop(path, second) == "accepted"
-    assert stored(path) == [second]
-    refused = history.record_delegation_attempt(path, task_type="review", status="refused")
-    assert history.request_attempt_stop(path, refused) == "not_running"
-
-
-@pytest.mark.parametrize("bad", ["{broken", "{}", "null", '[true]', '["1"]'])
-def test_corruption_is_unrequested_and_writer_replaces_it(tmp_path, bad):
-    path = tmp_path / "state.db"
-    attempt = opened(path)
-    with sqlite3.connect(path) as conn:
-        conn.execute("INSERT INTO settings(key,value) VALUES('attempt_stop_requests',?)", (bad,))
-    assert not history.attempt_stop_requested(path, attempt)
-    assert history.request_attempt_stop(path, attempt) == "accepted"
-    assert stored(path) == [attempt]
-    assert history.get_launch_state(path)["routing_paused"] is False
-
-
-def test_failed_read_is_read_only_and_never_raises(tmp_path, monkeypatch):
-    missing = tmp_path / "missing.db"
-    assert not history.attempt_stop_requested(missing, 1)
-    assert history.request_attempt_stop(missing, 1) == "unavailable"
-    assert not missing.exists()
-    monkeypatch.setattr(history.sqlite3, "connect", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError()))
-    assert not history.attempt_stop_requested(missing, 1)
-
-
-def test_concurrent_requests_and_resolution_keep_consistent_list(tmp_path):
-    path = tmp_path / "state.db"
-    first, second, third = opened(path), opened(path), opened(path)
-    barrier = threading.Barrier(2)
-
-    def request(attempt):
-        barrier.wait(timeout=5)
-        return history.request_attempt_stop(path, attempt)
-
-    with ThreadPoolExecutor(2) as pool:
-        futures = [pool.submit(request, item) for item in (first, second)]
-        assert all(f.result(timeout=10) == "accepted" for f in futures)
-    assert stored(path) == [first, second]
-    barrier = threading.Barrier(2)
-
-    def resolve():
-        barrier.wait(timeout=5)
-        history.resolve_delegation_attempt(path, third, status="completed", only_if_open=True)
-
-    with ThreadPoolExecutor(2) as pool:
-        stop, resolution = pool.submit(request, third), pool.submit(resolve)
-        accepted = stop.result(timeout=10) == "accepted"
-        resolution.result(timeout=10)
-    assert stored(path) == [first, second] + ([third] if accepted else [])
-    assert history.request_attempt_stop(path, third) == "not_running"
-    assert history.request_attempt_stop(path, second) == "accepted"
-    assert stored(path) == [first, second]
 
 
 class PollProcess:
@@ -258,15 +178,17 @@ def test_windows_shaped_drain_timeout_does_not_invent_partial_output(monkeypatch
 
 
 @pytest.mark.parametrize("confirmed", [True, False])
-def test_stopped_result_reports_workspace_stability(confirmed):
+def test_stopped_result_reports_whether_codex_may_still_run(confirmed):
     note = workspace_stability_note({"stop_requested": True, "worker_termination": {
         "pid": 42, "confirmed_dead": confirmed,
         "tree_kill": "ok" if confirmed else "census_unknown",
     }}, "workspace")
-    assert note["this_worker_may_still_be_writing"] is (not confirmed)
+    assert note["this_worker_may_still_be_running"] is (not confirmed)
+    assert note["this_worker_may_still_be_writing"] is False
+    assert "workspace_answer" not in note
     assert ("warning" in note) is (not confirmed)
     if not confirmed:
-        assert "was stopped" in note["warning"] and "may still be writing" in note["warning"]
+        assert "was stopped" in note["warning"] and "may still be running" in note["warning"]
 
 
 def test_raising_callback_leaves_worker_running(monkeypatch):
@@ -370,168 +292,3 @@ def test_executor_maps_stop_and_forwards_callback(tmp_path, monkeypatch, executo
     assert "timed_out" not in result.metadata
     assert "private error" not in str(result.metadata)
     assert attempt_resolution(result) == ("failed", "terminated" if confirmed else "timeout")
-
-
-@pytest.mark.parametrize("role", ["planning_worker", "plan_step_worker"])
-@pytest.mark.parametrize("has_outer", [True, False])
-def test_auxiliary_stop_binding_ignores_unrelated_attempt(tmp_path, monkeypatch, role, has_outer):
-    path = tmp_path / "state.db"
-    unrelated = opened(path)
-    assert history.request_attempt_stop(path, unrelated) == "accepted"
-
-    class Worker:
-        name = "codex"
-
-        def is_available(self):
-            return True
-
-        def execute(self, request):
-            [row] = [row for row in history.fetch_delegation_attempts(path) if row["detail"] == role]
-            assert not request.stop_requested()
-            assert history.request_attempt_stop(path, row["id"]) == "accepted"
-            assert request.stop_requested()
-            return ExecutionResult(provider="codex", success=True, output="done", exit_code=0,
-                                   task_status=WorkerTaskStatus.COMPLETED)
-
-    manager = ExecutionManager(Config(), executors={"codex": Worker()}, health_db_path=path)
-    manager.launch_attempt_id = opened(path) if has_outer else None
-    if not has_outer:
-        # Synthetic auxiliary-only manager: no production outer admission claim.
-        monkeypatch.setattr(manager, "require_launch_admission", lambda: None)
-    manager.main_worker_entered = role == "plan_step_worker"
-    manager.executors["codex"].execute(ExecutionRequest(
-        provider="codex", task_type=TaskType.ARCHITECTURE, prompt="task", working_directory=tmp_path,
-        on_spawn=(lambda pid: None) if role == "plan_step_worker" else None,
-    ))
-
-
-@pytest.mark.parametrize("role", ["planning_worker", "plan_step_worker"])
-def test_auxiliary_stop_before_start_has_no_worker_fate(tmp_path, role):
-    path = tmp_path / "state.db"
-    outer = opened(path)
-    assert history.request_attempt_stop(path, outer) == "accepted"
-
-    class Worker:
-        name = "codex"
-
-        def is_available(self):
-            return True
-
-        def execute(self, request):
-            pytest.fail("stopped auxiliary worker must not start")
-
-    manager = ExecutionManager(Config(), executors={"codex": Worker()}, health_db_path=path)
-    manager.launch_attempt_id = outer
-    manager.main_worker_entered = role == "plan_step_worker"
-    manager.on_launch_entered = lambda: pytest.fail("executor entry must not be signalled")
-    result = manager.executors["codex"].execute(ExecutionRequest(
-        provider="codex", task_type=TaskType.ARCHITECTURE, prompt="task", working_directory=tmp_path,
-        on_spawn=(lambda pid: pytest.fail("no spawn")) if role == "plan_step_worker" else None,
-    ))
-    assert result.task_status_reason == "stop_requested"
-    assert attempt_resolution(result) == ("failed", "failed_to_start")
-    assert result.metadata == {"worker_started": False}
-    assert not workspace_stability_note(result.metadata, tmp_path)
-    assert not manager.launch_entered
-    [row] = [row for row in history.fetch_delegation_attempts(path) if row["id"] != outer]
-    assert row["status"] == "failed" and row["failure_kind"] == "failed_to_start"
-    assert row["detail"] == role + ": stop_requested"
-    assert row["worker_pid"] is None
-
-
-@pytest.mark.parametrize("callback,stop_outer", [(False, True), (True, True), (True, False)])
-def test_main_worker_stop_before_executor_entry(tmp_path, callback, stop_outer):
-    path = tmp_path / "state.db"
-    outer = opened(path)
-    if stop_outer:
-        assert history.request_attempt_stop(path, outer) == "accepted"
-
-    class Worker:
-        name = "codex"
-
-        def is_available(self):
-            return True
-
-        def execute(self, request):
-            pytest.fail("stopped main worker must not start")
-
-    manager = ExecutionManager(Config(), executors={"codex": Worker()}, health_db_path=path)
-    manager.launch_attempt_id = outer
-    manager.on_launch_entered = lambda: pytest.fail("executor entry must not be signalled")
-    result = manager.executors["codex"].execute(ExecutionRequest(
-        provider="codex", task_type=TaskType.IMPLEMENTATION, prompt="task", working_directory=tmp_path,
-        on_spawn=lambda pid: pytest.fail("no spawn"),
-        stop_requested=(lambda: not stop_outer) if callback else None,
-    ))
-    assert result.task_status_reason == "stop_requested"
-    assert attempt_resolution(result) == ("failed", "failed_to_start")
-    assert result.metadata == {"worker_started": False}
-    assert not manager.launch_entered and not manager.main_worker_entered
-    row = history.fetch_delegation_attempts(path)[0]
-    assert row["id"] == outer and row["status"] == "failed"
-    assert row["failure_kind"] == "failed_to_start" and row["detail"] == "stop_requested"
-
-
-@pytest.mark.parametrize("role", ["planning_worker", "plan_step_worker"])
-@pytest.mark.parametrize("confirmed", [True, False])
-@pytest.mark.parametrize("stop_outer", [True, False])
-def test_auxiliary_attempt_stop_binding_and_terminal_detail(tmp_path, role, confirmed, stop_outer):
-    path = tmp_path / "state.db"
-    db.connect_and_init(path).close()
-
-    class Worker:
-        name = "codex"
-
-        def is_available(self):
-            return True
-
-        def execute(self, request):
-            [row] = [row for row in history.fetch_delegation_attempts(path) if row["detail"] == role]
-            assert row["detail"] == role
-            assert not request.stop_requested()
-            assert history.request_attempt_stop(path, manager.launch_attempt_id if stop_outer else row["id"]) == "accepted"
-            assert request.stop_requested()
-            request.on_spawn(42)
-            return ExecutionResult(
-                provider="codex", success=False, output="partial", exit_code=None,
-                task_status=WorkerTaskStatus.FAILED, task_status_reason="stop_requested",
-                metadata={"stop_requested": True, "worker_termination": {
-                    "pid": 42, "confirmed_dead": confirmed,
-                    "tree_kill": "ok" if confirmed else "census_unknown",
-                }},
-            )
-
-    manager = ExecutionManager(Config(), executors={"codex": Worker()}, health_db_path=path)
-    manager.launch_attempt_id = opened(path)
-    manager.main_worker_entered = role == "plan_step_worker"
-    manager.executors["codex"].execute(ExecutionRequest(
-        provider="codex", task_type=TaskType.ARCHITECTURE, prompt="task", working_directory=tmp_path,
-        on_spawn=(lambda pid: pytest.fail("main binding reused")) if role == "plan_step_worker" else None,
-    ))
-    [row] = [row for row in history.fetch_delegation_attempts(path) if row["id"] != manager.launch_attempt_id]
-    assert row["status"] == "failed" and row["failure_kind"] == ("terminated" if confirmed else "timeout")
-    assert row["detail"].startswith(role + ": stop_requested; worker pid 42")
-    assert ("exit confirmed" if confirmed else "unaccounted for") in row["detail"]
-
-
-def test_database_less_manager_honours_request_stop(tmp_path):
-    from modelquad.execution.manager import _AdmittedExecutor
-
-    class Worker:
-        name = "codex"
-
-        def is_available(self):
-            return True
-
-        def execute(self, request):
-            pytest.fail("stopped main worker must not start")
-
-    manager = ExecutionManager(Config(), executors={"codex": Worker()})
-    manager.launch_attempt_id = 123
-    result = _AdmittedExecutor(manager.executors["codex"], manager).execute(ExecutionRequest(
-        provider="codex", task_type=TaskType.IMPLEMENTATION, prompt="task", working_directory=tmp_path,
-        on_spawn=lambda pid: pytest.fail("no spawn"), stop_requested=lambda: True,
-    ))
-    assert result.task_status_reason == "stop_requested"
-    assert result.metadata == {"worker_started": False}
-    assert not manager.launch_entered and not manager.main_worker_entered

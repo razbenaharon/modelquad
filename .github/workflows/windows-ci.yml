@@ -84,7 +84,7 @@ jobs:
         # the distribution a user installs.
         run: |
           python -m pip install --upgrade pip
-          pip install ".[dev,service]"
+          pip install ".[dev]"
 
       - name: Verify the package resolves outside the checkout
         working-directory: ${{ runner.temp }}
@@ -134,62 +134,27 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Every new commit carries its author's Signed-off-by
-        # The Developer Certificate of Origin (CONTRIBUTING.md): each commit
-        # needs a "Signed-off-by: Name <email>" line whose email is the
-        # commit author's. The range is the pull request's commits, or the
-        # commits a push to main added.
+      - name: Outside contributions are signed off; the maintainer's own commits need none
+        # The Developer Certificate of Origin (CONTRIBUTING.md). The rules and
+        # the reasons are in .github/scripts/dco_check.py: a commit counts as
+        # the maintainer's own only when GitHub reports that it came in on a
+        # branch of this repository, that the maintainer pushed or started the
+        # run, and that the commit's author and committer are the maintainer's
+        # account. A pull request from a fork gets no exemption, whatever its
+        # commits say, and a failed lookup requires the sign-off.
+        # The values reach the script as data in the environment, never as
+        # part of a command line.
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR_ID: ${{ github.actor_id }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-        # The e-mail is compared as a fixed string, never as a pattern: GitHub
-        # noreply addresses contain "+", which a regex reads as a quantifier.
-        # Only real trailers count, so a "Signed-off-by:" quoted in the body
-        # does not.
-        # Dependabot (.github/dependabot.yml) cannot sign off; a human reviews
-        # and merges its bumps. Anyone can set an author e-mail, so its commits
-        # are skipped only when the author is Dependabot, the committer is
-        # GitHub, and GitHub reports the signature verified: only GitHub's own
-        # key can sign as that committer.
-        run: |
-          set -euo pipefail
-          if [ -n "$PR_BASE" ]; then
-            range="$PR_BASE..$PR_HEAD"
-          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
-            range="$PUSH_BEFORE..$PUSH_AFTER"
-          elif git rev-parse --verify --quiet "$PUSH_AFTER~1" >/dev/null; then
-            range="$PUSH_AFTER~1..$PUSH_AFTER"
-          else
-            range="$PUSH_AFTER"  # a root commit: check it alone
-          fi
-          # A failed rev-list must fail the job, not yield an empty list that passes.
-          if ! shas=$(git rev-list --no-merges "$range"); then
-            echo "::error::git rev-list failed for range $range"
-            exit 1
-          fi
-          missing=0
-          for sha in $shas; do
-            email=$(git show -s --format='%ae' "$sha")
-            committer=$(git show -s --format='%ce' "$sha")
-            if [ "$email" = "49699333+dependabot[bot]@users.noreply.github.com" ] \
-                && [ "$committer" = "noreply@github.com" ]; then
-              # A failed lookup reads as unverified, so the sign-off is required.
-              verified=$(gh api "repos/$REPO/commits/$sha" --jq '.commit.verification.verified' || echo false)
-              if [ "$verified" = "true" ]; then
-                continue
-              fi
-            fi
-            trailers=$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha")
-            if ! grep -Fqi -- "<$email>" <<< "$trailers"; then
-              echo "::error::$sha has no Signed-off-by trailer for its author <$email>"
-              missing=1
-            fi
-          done
-          exit $missing
+        run: python3 .github/scripts/dco_check.py
 
   secrets:
     name: Secret scan
