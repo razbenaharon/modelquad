@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from typing import Any
 
 import pytest
@@ -1161,6 +1162,11 @@ def test_a_real_exited_child_whose_handle_is_still_held_is_dead(monkeypatch):
     try:
         assert proc.wait(timeout=60) == 0
         # The pid is not reused while the handle is held, so this is stable.
+        # The exit code is readable a moment before the process leaves the
+        # system's process list, so give the list a short time to catch up.
+        deadline = time.monotonic() + 2.0
+        while procutil._windows_pid_in_snapshot(pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
         assert procutil._windows_pid_in_snapshot(pid) is False, "an exited process is not enumerated"
         # Held handle, exited process: the direct reading still works.
         assert procutil.pid_state(pid) == "dead"
