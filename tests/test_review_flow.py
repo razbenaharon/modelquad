@@ -606,7 +606,10 @@ def test_a_ledger_that_cannot_be_written_is_said_in_the_reply(project, monkeypat
     assert data["ledger_note"] == review.NOT_RECORDED_NOTE and lines[-1] == review.NOT_RECORDED_NOTE
     # No finding is offered for a verdict that could not be stored.
     assert "findings" not in data and "findings_note" not in data
-    assert _ledger_rows() == ([], [])
+    # Nothing of this call was written. Rows of other calls are not this
+    # test's business: a call an earlier test cancelled can still be ending.
+    runs, packages = _ledger_rows()
+    assert data["decision_id"] not in {row["decision_id"] for row in (*runs, *packages)}
 
 
 class FailingExecutor(FakeExecutor):
@@ -638,7 +641,9 @@ def test_an_error_codex_reports_is_named_without_its_text(project, monkeypatch):
     # Claude Code hands Claude the data, so the sentence is there too.
     assert result.structured_content["reason"] == "worker_reported"
     assert result.structured_content["message"] == lines[1]
-    assert [row["outcome"] for row in _ledger_rows()[0]] == [review_ledger.FAILED]
+    mine = result.structured_content["decision_id"]
+    assert [row["outcome"] for row in _ledger_rows()[0]
+            if row["decision_id"] == mine] == [review_ledger.FAILED]
 
 
 def test_every_refusal_carries_its_sentence_in_the_data(project):
