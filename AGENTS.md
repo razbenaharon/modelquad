@@ -52,7 +52,10 @@ the instrument for developing it.
   build still counts until the user sets the switch here.
 - Codex's findings and Claude's verdicts go to the review ledger
   (`review_ledger.py`, a SQLite file of its own; `modelquad review report`),
-  with the package manifest and the completion round of each call.
+  with the package manifest and the completion round of each call. The call
+  and its package are written when Codex starts (`unfinished`) and replaced
+  when the call ends, so a session that closes mid-run leaves a record. A
+  reply says so when the ledger could not be written (`ledger_note`).
 - Settings: `/modelquad:settings` (skill, user-started) and
   `modelquad settings` (`settings_view.py`).
 - A checked-in `.modelquad.toml` can only narrow Codex use in its repository
@@ -124,8 +127,10 @@ releases and recorded in SECURITY.md.
 1. **A worker never re-enters ModelQuad.** `MODELQUAD_WORKER=1` refuses at
    every entry point, and a process with a running worker among its ancestors
    is refused as well (`tests/test_mcp_worker_guard.py`).
-2. **At most one active run per package.** A second request for the package
-   that is running is refused, not queued (`tests/test_review_flow.py`).
+2. **At most one active run per package, in one server process.** A second
+   request for the package that is running is refused, not queued
+   (`tests/test_review_flow.py`). Two Claude Code sessions are two server
+   processes; each asks its own user and each runs.
 3. **A boundary ModelQuad cannot check is not claimed.** A Codex whose feature
    listing does not confirm the switched-off tools is refused, and the docs
    say which tools Codex still lists to the model.
@@ -177,10 +182,11 @@ releases and recorded in SECURITY.md.
    installs the audit hook in `netpolicy.py` (`tests/test_netpolicy.py`).
 
 Privacy rules live in `src/modelquad/privacy.py`: free text kept in the ledger
-is path-redacted where it is written (`tests/test_privacy_paths.py`). Codex's
-answer, the task text and file contents are never stored; the ledger keeps
-relative paths, sizes and digest prefixes of what was sent. ModelQuad has no
-telemetry. See [PRIVACY.md](PRIVACY.md).
+is path-redacted where it is written (`tests/test_privacy_paths.py`). The
+task text, file contents and Codex's whole answer are never stored; the
+ledger keeps relative paths, sizes and digest prefixes of what was sent, and
+of the answer only the findings Codex listed (claim and reasoning, redacted
+and capped). ModelQuad has no telemetry. See [PRIVACY.md](PRIVACY.md).
 
 ## House rules
 

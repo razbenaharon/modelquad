@@ -68,6 +68,24 @@ is the install.
   call ends. A session that closed in the middle of a review used to leave
   no record that a package had gone to Codex; `modelquad review report` now
   counts it as a Codex call with no end recorded.
+- **A reply says what went wrong, in its data too.** A reply now says when
+  the review ledger could not be written (`ledger_note`), and when Codex
+  itself reported an error (for example a model id it does not have). Every
+  refusal and every call without an answer carries its plain sentence in the
+  reply's data as `message`: Claude Code hands Claude a reply's data, not the
+  lines written for a person.
+- **The wheel holds the source and nothing else.** `setup.py` empties
+  `build/lib` before a build. A checkout that had built an earlier version
+  used to put that version's removed modules into the new wheel.
+- **The work-account rule names a way out that works.** With
+  `[codex] account = "workspace"` every call is refused, because this build
+  cannot confirm an account. The message used to suggest switching accounts,
+  which would not help; it now names the line to change.
+- **DCO for outside contributions only.** The maintainer's own commits need
+  no `Signed-off-by`; anyone else's do, wherever they arrive. CI decides
+  which is which from what GitHub reports about the branch, the account that
+  pushed and the account a commit belongs to, not from a commit's name or
+  e-mail ([CONTRIBUTING.md](CONTRIBUTING.md)).
 - **Install and uninstall say when they did not finish.** A file ModelQuad
   could not read, write or remove is now an error (`Not finished: ...`, exit
   code 1) and no longer a skipped row under a successful result. A file that

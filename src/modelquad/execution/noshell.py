@@ -62,7 +62,9 @@ def canonical_path(value: str) -> str:
 #: probes (feature listing plus recorded event streams): 0.160.0, observed
 #: 2026-10-06 and 2026-10-09. Older releases lack flags the launch passes and
 #: are refused; newer ones are admitted when their own feature listing
-#: qualifies them, so an update does not need a ModelQuad release.
+#: qualifies them, so an update does not need a ModelQuad release. Real
+#: reviews were run by hand on 0.165.0-alpha.1.2 and 0.169.0 (2026-11-18);
+#: SECURITY.md lists what was run on which release.
 TESTED_CODEX_VERSION_RANGE = ("0.160.0", "0.160.0")
 MIN_CODEX_VERSION = TESTED_CODEX_VERSION_RANGE[0]
 

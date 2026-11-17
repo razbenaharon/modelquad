@@ -127,7 +127,11 @@ listing of about 50,000 characters, and whether a review run carries one was
 not checked. The only supported way found to run Codex without that file is a
 separate Codex folder, which would need its own sign-in; ModelQuad does not
 copy credentials, so it does not do this. The token counts in the reply and
-the ledger are Codex's totals for the whole request, not for the package.
+the ledger are Codex's totals for the whole request, not for the package. In
+our runs on 0.165.0-alpha.1.2 and 0.169.0 (2026-11-18), a package of one or
+two files of a few hundred bytes was reported as 18,100 to 19,700 input
+tokens: nearly all of it is what Codex adds. Those numbers are from one
+computer with one global instructions file and will differ on another.
 
 **Completion rounds.** When Codex's reply names files it needed and was not
 given, ModelQuad adds nothing by itself. The reply lists the names; a new
@@ -172,9 +176,11 @@ ModelQuad for Codex again (`src/modelquad/mcp/worker_guard.py`,
 - The sandbox and the feature switches are Codex's code, not ModelQuad's.
   ModelQuad relies on them and checks the event stream; it cannot prove more
   than that. Codex still lists a few built-in tools to the model that
-  ModelQuad cannot remove. On Codex 0.164.0 and 0.165.0-alpha.1.2 these were
-  a code runner and its wait, whose host is disabled (every call failed in
-  our probes), two requests for user input and a sleep. Codex's event stream
+  ModelQuad cannot remove. On Codex 0.164.0, 0.165.0-alpha.1.2 and 0.169.0
+  these were a code runner and its wait (`exec`, `wait`), two requests for
+  user input and a sleep. The code runner's host is disabled; every call to
+  it failed in our probes of 0.164.0 and 0.165.0-alpha.1.2, and no call was
+  tried on 0.169.0. Codex's event stream
   also leaves some tool calls out, so a clean stream is evidence that nothing
   it reports acted, not proof that no tool was called.
 - Only native executables receive a prompt: an npm `codex.cmd` launcher is
@@ -189,7 +195,9 @@ ModelQuad for Codex again (`src/modelquad/mcp/worker_guard.py`,
   it started, when the MCP server process ends or the call is cancelled.
 - At most one attempt per package runs at a time in one server process: a
   second identical request while the first runs is refused
-  (`duplicate_in_flight`, `src/modelquad/review.py`).
+  (`duplicate_in_flight`, `src/modelquad/review.py`). Each Claude Code
+  session has its own server process, so the same package asked for in two
+  sessions at once runs twice, each after its own approval.
 
 **Hooks ModelQuad installs.** Only the plugin installs hooks, and they do
 nothing while ModelQuad is off. They never approve a Claude Code tool call, and
@@ -252,6 +260,21 @@ real Codex. A passing suite shows how ModelQuad handles the answers and event
 streams it was given; it does not show how a particular Codex release
 behaves. The Codex observations above come from probes of the named
 releases.
+
+**Codex releases checked by hand.** What was run against a real Codex, with
+made-up code in throwaway folders and a separate state folder:
+
+| Codex | When | What was run |
+|---|---|---|
+| 0.160.0 | 2026-10-06, 2026-10-09 | Feature listing and recorded event streams; the oldest release ModelQuad accepts. Not run with the agents setting. |
+| 0.164.0 | 2026-11-16 | `codex debug prompt-input` (no provider call): the tools still listed. No review was run on it. |
+| 0.165.0-alpha.1.2 (the desktop app's copy) | 2026-11-16 to 2026-11-18 | Reviews through the MCP server and inside Claude Code 2.1.318: package preview, first-use notice, review, verdicts, completion rounds and their limit, a changed package, withheld and secret files, cancel, timeout, a closed or killed session, a Codex killed from outside, an unknown model, a locked ledger, both review gates. |
+| 0.169.0 (npm, in a separate folder) | 2026-11-18 | Feature listing, `codex debug prompt-input`, and three runs through the MCP server: a review, a file that tries to give Codex instructions, and a cancel. |
+
+A release newer than these is admitted when its own feature listing confirms
+the switches, and is otherwise unchecked. When several Codex installs are on
+one computer ModelQuad runs the newest (`codexcli.py`), which can differ from
+the `codex` on PATH; `modelquad doctor` names the one it runs.
 
 **Releases.** ModelQuad is distributed as source only. There are no signed
 binaries.
