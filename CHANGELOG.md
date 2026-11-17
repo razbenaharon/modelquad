@@ -63,6 +63,11 @@ is the install.
 
 ### Changes
 
+- **Install and uninstall say when they did not finish.** A file ModelQuad
+  could not read, write or remove is now an error (`Not finished: ...`, exit
+  code 1) and no longer a skipped row under a successful result. A file that
+  refuses to open for a moment is read again for about half a second first.
+  A file left alone on purpose (a link, your own entry) is still not an error.
 - **Claude Code plugin.** ModelQuad installs as a Claude Code plugin
   (`plugin/`): the MCP server, four skills and the review hooks. See
   [docs/PLUGIN.md](docs/PLUGIN.md).

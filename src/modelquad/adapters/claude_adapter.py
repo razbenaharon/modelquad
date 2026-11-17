@@ -199,6 +199,7 @@ def _remove_owned_file(
         return FileAction(
             destination, ActionKind.SKIPPED,
             detail=f"Could not remove {destination}: {exc.strerror or exc}. It was left in place.",
+            failed=True,
         )
     try:
         destination.parent.rmdir()

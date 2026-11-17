@@ -30,6 +30,9 @@ class FileAction:
     kind: ActionKind
     backup_path: Path | None = None
     detail: str | None = None
+    #: True when a SKIPPED action is a failure (the file could not be read,
+    #: written or removed), not a deliberate choice to leave the user's file.
+    failed: bool = False
 
     def to_dict(self) -> dict[str, str | None]:
         return {
@@ -59,6 +62,12 @@ class InstallReport:
             ActionKind.WOULD_REMOVE,
         }
         return all(action.kind in non_mutating for action in self.actions)
+
+    @property
+    def failures(self) -> tuple[FileAction, ...]:
+        """The actions that failed: the operation did not finish its job."""
+
+        return tuple(action for action in self.actions if action.failed)
 
     def to_dict(self) -> dict[str, object]:
         return {

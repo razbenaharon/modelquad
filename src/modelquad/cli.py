@@ -388,6 +388,22 @@ def _mcp_registration_skipped(
     return None
 
 
+def _incomplete(report: InstallReport) -> str | None:
+    """Why an install or uninstall did not finish, or None.
+
+    A file ModelQuad chose to leave alone (a link, the user's own entry) is
+    reported in the table and is not an error. A file it could not read,
+    write or remove is: the command must not end as a success with part of
+    its work undone.
+    """
+
+    if report.dry_run or not report.failures:
+        return None
+    return "Not finished: " + " ".join(
+        action.detail or f"{action.path} was not changed." for action in report.failures
+    ) + " Run the command again."
+
+
 def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     from .adapters.registration import BackupPersistenceError
 
@@ -438,6 +454,7 @@ def _run_global_adapter_command(args: argparse.Namespace, parser: argparse.Argum
                 results.append({"client": client, "detected": True, "report": report,
                                 "error": f"Not registered: {skipped}", "restore": None})
                 continue
+        not_saved = not_saved or _incomplete(report)
         results.append(
             {
                 "client": client,
@@ -546,6 +563,9 @@ def _run_adapter_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             skipped = _mcp_registration_skipped(client, target_dir, report, adapter)
             if skipped is not None:
                 errors.append({"client": client, "error": f"Not registered: {skipped}"})
+        incomplete = _incomplete(report)
+        if incomplete is not None and not any(e["client"] == client for e in errors):
+            errors.append({"client": client, "error": incomplete})
     if method_name == "install":
         _note_notice_shown(args, notices, reports)
     if args.as_json:
