@@ -98,9 +98,15 @@ The plugin's tool names differ, so a deny rule needs both forms:
   handoff and the SessionStart reminder: in auto mode Claude Code showed its
   approval prompt before `modelquad_delegate`, and after approval a read-only
   Codex review came back in about 40 s.
-- No live run of the reduced plugin described here is recorded yet. Its
-  hooks and first-call notice are covered by the test suite, which uses a
-  stand-in for Codex.
+- Live check (2026-11-18), the reduced plugin described here, in headless
+  Claude Code 2.1.318 (`claude -p`) with Codex 0.165.0-alpha.1.2, a throwaway
+  project and a separate state folder: the four tools loaded; without a
+  grant the Codex call was denied even with the tool allowed, because nobody
+  could be asked; with the grant on for that folder, the preview, the
+  first-call notice, a review and a verdict worked, the consultation gate
+  stopped the first edit of a sensitive file once and the Stop gate blocked
+  once, each followed by a real Codex call. Not checked: a click or Esc in
+  the interactive window, and bypass-permissions mode.
 
 ## Maintenance
 
