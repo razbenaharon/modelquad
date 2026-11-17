@@ -87,4 +87,6 @@ The first open-source release.
   grant is off or the folder is excluded, Claude tells you and changes
   nothing.
 - Codex stays read-only and tool-less: it reads only the files ModelQuad
-  sends, with credentials redacted.
+  sends, with credentials redacted, and runs with Codex's agents switched
+  off (`agents.enabled=false`), so its collaboration tools are not offered
+  to the model.

@@ -23,8 +23,9 @@ you managing the exchange. Codex advises and reviews, read-only; Claude
 writes every change. If you prefer to approve each call, that mode stays
 available, and it is the default until you give the permission. ModelQuad
 and the CLIs it drives run on your computer, under your own sign-ins. It
-works alongside OpenAI's own Codex plugin for Claude Code: the plugin for
-when you want Codex to change code, ModelQuad for a read-only second opinion.
+works alongside OpenAI's own Codex plugin for Claude Code, which lets Codex
+write code and offers its own reviews. Through ModelQuad, Codex gets only the
+files Claude names and has no tools: a second opinion on chosen material.
 
 Status: early, source-only release. Windows only.
 
@@ -636,9 +637,10 @@ write code and offers its own reviews. ModelQuad adds:
 - both quotas in the Claude Code status line;
 - a note when Claude is near its limit: wait for the reset, or ask Codex for
   a review;
-- read-only Codex reviews, with an approval prompt on every call unless you
-  grant it once for a repository, and a review gate before a multi-file
-  change is handed over;
+- Codex reviews in which Codex receives only the files Claude names and has
+  no tools, so it cannot search the repository or run anything;
+- an approval prompt on every call unless you grant it once for a
+  repository, and a review gate before a multi-file change is handed over;
 - a record of each review's findings, Claude's verdicts and their evidence;
 - optional background jobs that keep running after you close the chat.
 

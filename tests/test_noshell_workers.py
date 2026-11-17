@@ -155,16 +155,63 @@ def test_exact_noshell_argv_omits_user_mcp_overrides(worker, task_type):
         admitted.path, "--ask-for-approval", "never", "exec",
         "-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=low",
         *[token for feature in DISABLES for token in ("--disable", feature)],
-        "--ignore-user-config", "-c", 'web_search="disabled"',
+        "--ignore-user-config", "-c", 'web_search="disabled"', "-c", "agents.enabled=false",
         "--ignore-rules", "--strict-config", "--ephemeral", "--json",
         "--sandbox", "read-only", "--skip-git-repo-check", "-",
     ]
     assert argv == expected
     overrides = [argv[index + 1] for index, token in enumerate(argv) if token == "-c"]
-    assert overrides == ["model_reasoning_effort=low", 'web_search="disabled"']
+    assert overrides == ["model_reasoning_effort=low", 'web_search="disabled"', "agents.enabled=false"]
     assert not any(token.startswith("mcp_servers.") for token in argv)
     assert result.metadata["command"] == [Path(argv[0]).name, *argv[1:]]
     assert result.metadata["noshell_verified_by_event_stream"] is True
+
+
+@pytest.mark.parametrize("task_type", READ_ONLY, ids=["exploration", "review", "architecture"])
+def test_launch_turns_agents_off_in_config(worker, task_type):
+    # Codex takes its multi-agent tools from the model catalog, which outranks
+    # the multi_agent feature flags; only agents.enabled=false overrides the
+    # catalog (config/mod.rs multi_agent_version_override, rust-v0.160.0 and
+    # rust-v0.164.0). Without it the collaboration tools were advertised with
+    # every feature disabled (codex debug prompt-input, 0.164.0 and
+    # 0.165.0-alpha.1.2, 2026-11-16).
+    executor, request, run, calls = worker
+    executor.execute(replace(request, task_type=task_type))
+    argv = run.call_args.args[0]
+    assert any(argv[i:i + 2] == ["-c", "agents.enabled=false"] for i in range(len(argv) - 1))
+    assert "--strict-config" in argv
+    # The feature listing is asked with the same setting, so a Codex that
+    # rejects the key is refused before any model entry.
+    probe = calls[0][0]
+    assert probe[1:3] == ["features", "list"]
+    assert any(probe[i:i + 2] == ["-c", "agents.enabled=false"] for i in range(len(probe) - 1))
+
+
+def test_codex_that_rejects_agents_setting_starts_no_worker(worker):
+    # Codex exits 1 on an unknown key under `agents` (observed on 0.164.0 and
+    # 0.165.0-alpha.1.2 with a misspelt key, 2026-11-16).
+    executor, request, run, _ = worker
+
+    def inventory(argv, cwd, env):
+        rejected = any(argv[i:i + 2] == ["-c", "agents.enabled=false"] for i in range(len(argv) - 1))
+        return subprocess.CompletedProcess(argv, 1 if rejected else 0, "" if rejected else listing(), "")
+
+    executor._inventory = inventory
+    result = executor.execute(request)
+    run.assert_not_called()
+    assert result.metadata["worker_started"] is False
+    assert result.task_status_reason == "codex_feature_unverified"
+
+
+def test_agents_off_is_a_fixed_launch_control():
+    assert ("-c", "agents.enabled=false") in zip(noshell.CONFIG_ARGS, noshell.CONFIG_ARGS[1:])
+    assert ("-c", "agents.enabled=false") in zip(noshell.NOSHELL_ARGS, noshell.NOSHELL_ARGS[1:])
+    # Feature names can be dropped by a newer Codex; a fixed control is passed
+    # whatever the listing shows.
+    listed_nothing_optional = noshell.Qualification(True, "0" * 64, "0.160.0", True, None,
+                                                    noshell.CRITICAL_FEATURES)
+    launch = listed_nothing_optional.launch_args
+    assert ("-c", "agents.enabled=false") in zip(launch, launch[1:])
 
 
 @pytest.mark.parametrize("feature", REQUIRED_FALSE, ids=REQUIRED_FALSE)

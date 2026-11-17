@@ -153,17 +153,23 @@ What it does not protect:
   `tests/test_noshell_workers.py`). See [PRIVACY.md](PRIVACY.md).
 - Codex runs `exec` in a new empty temporary folder with
   `--sandbox read-only`, `--ignore-user-config`, `--ignore-rules` and
-  `--ask-for-approval never`, with web search off, and with its shell,
-  unified exec, hooks, code mode, apps, plugins, browser and computer-use
-  features disabled. ModelQuad first reads Codex's own feature listing, and
-  refuses a Codex older than 0.160.0 or one whose listing does not confirm
-  that these features are off.
+  `--ask-for-approval never`, with web search off, with agents off
+  (`agents.enabled=false`), and with its shell, unified exec, hooks, code
+  mode, apps, plugins, browser and computer-use features disabled. ModelQuad
+  first reads Codex's own feature listing, and refuses a Codex older than
+  0.160.0, one whose listing does not confirm that these features are off,
+  or one that rejects the agents setting.
 - ModelQuad checks Codex's event stream and withholds the answer if it shows a
   command, a file change, an MCP tool call or a collaboration call, or if the
   worker left processes running.
 - The sandbox and the feature switches are Codex's code, not ModelQuad's.
   ModelQuad relies on them and checks the event stream; it cannot prove more
-  than that.
+  than that. Codex still lists a few built-in tools to the model that
+  ModelQuad cannot remove. On Codex 0.164.0 and 0.165.0-alpha.1.2 these were
+  a code runner and its wait, whose host is disabled (every call failed in
+  our probes), two requests for user input and a sleep. Codex's event stream
+  also leaves some tool calls out, so a clean stream is evidence that nothing
+  it reports acted, not proof that no tool was called.
 - Only native executables receive a prompt: an npm `codex.cmd` launcher is
   replaced by the `codex.exe` its package ships. Executables are resolved
   without the current folder and without unsafe PATH entries. The child

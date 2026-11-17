@@ -77,13 +77,27 @@ CRITICAL_FEATURES = (
 REQUIRED_FALSE = tuple(name for name in CRITICAL_FEATURES if name != "unified_exec")
 # Disabled when the listing shows them. A newer Codex that drops or renames
 # one is not refused: passing --disable for a name it does not know would
-# make it refuse every launch. Collaboration is still caught after the fact
-# by the event-stream check.
+# make it refuse every launch. The two multi_agent flags do not decide the
+# collaboration tools; AGENTS_OFF_ARGS below does.
 OPTIONAL_FEATURES = ("view_image", "multi_agent", "multi_agent_v2", "shell_snapshot", "image_generation")
 DISABLED_FEATURES = (*CRITICAL_FEATURES, *OPTIONAL_FEATURES)
+#: Turns Codex's collaboration tools (spawn_agent, send_message, list_agents
+#: and the rest) off. Codex takes the multi-agent version from its model
+#: catalog before it looks at the multi_agent and multi_agent_v2 features, and
+#: only agents.enabled=false overrides the catalog (Codex core
+#: config/mod.rs, multi_agent_version_override, read at rust-v0.160.0 and
+#: rust-v0.164.0). Observed 2026-11-16 with the provider-free
+#: `codex debug prompt-input` on 0.164.0 and 0.165.0-alpha.1.2: with every
+#: feature above disabled the model was still offered six collaboration
+#: tools, and with this setting none. No 0.160.0 executable was run with it.
+#: Codex rejects an unknown key under `agents` (exit 1 on both releases), so
+#: the feature listing is asked with the same setting: a Codex that no longer
+#: knows it is refused at qualification, never launched without it.
+AGENTS_OFF_ARGS = ("-c", "agents.enabled=false")
 QUALIFY_FEATURE_ARGS = tuple(token for feature in CRITICAL_FEATURES for token in ("--disable", feature))
+QUALIFY_ARGS = (*QUALIFY_FEATURE_ARGS, *AGENTS_OFF_ARGS)
 FEATURE_ARGS = tuple(token for feature in DISABLED_FEATURES for token in ("--disable", feature))
-CONFIG_ARGS = ("--ignore-user-config", "-c", 'web_search="disabled"')
+CONFIG_ARGS = ("--ignore-user-config", "-c", 'web_search="disabled"', *AGENTS_OFF_ARGS)
 LAUNCH_ARGS = (*CONFIG_ARGS, "--ignore-rules", "--strict-config", "--ephemeral", "--json",
                "--sandbox", "read-only")
 #: The complete argv tail when every known feature is listed.
@@ -377,8 +391,9 @@ def qualify(executable, version, *, cwd, env, runner) -> Qualification:
         # features list rejects --ignore-user-config (provider-free observation,
         # 2026-10-09). Only the critical disables are passed here: each must be
         # known to this executable. Config isolation and web-search settings
-        # are exec controls, not features.
-        completed = runner([executable, "features", "list", *QUALIFY_FEATURE_ARGS], cwd, env)
+        # are exec controls, not features. The agents setting rides along so
+        # an executable that rejects it fails here (AGENTS_OFF_ARGS).
+        completed = runner([executable, "features", "list", *QUALIFY_ARGS], cwd, env)
         states = parse_features(completed)
     except Exception:
         states = None
@@ -466,6 +481,15 @@ def verify_stream(raw) -> StreamVerification:
     ``error`` record) or tool-like field leaves the stream unverified. An
     unknown event type is skipped only when it holds nothing but plain values
     under names that suggest no action.
+
+    The stream is not a complete record of tool calls. ``codex exec --json``
+    reports a collaboration call only for spawn_agent, send_input, wait and
+    close_agent; it drops send_message, followup_task, interrupt_agent and
+    list_agents, and every item kind it does not map (exec
+    event_processor_with_jsonl_output.rs, rust-v0.164.0; a list_agents call
+    left no event in a 0.164.0 probe, 2026-11-16). A clean stream is evidence
+    that nothing listed here acted, not proof that no tool was called; the
+    launch flags are what keep the tools away from the model.
     """
     if type(raw) is not str or not raw or len(raw.encode("utf-8", "replace")) > MAX_STREAM_BYTES:
         return StreamVerification(False)

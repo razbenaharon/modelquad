@@ -179,7 +179,8 @@ starts the Codex CLI.
 10. **Codex sends the input to OpenAI** under your account and returns its
    answer as a stream of JSON events. ModelQuad checks every event; if the
    stream shows a command, a file change, an MCP tool call or a collaboration
-   call, the answer is withheld (`tests/test_noshell_workers.py`). A
+   call, the answer is withheld (`tests/test_noshell_workers.py`). The stream
+   does not report every tool call; see [SECURITY.md](SECURITY.md). A
    `codex exec` run carries Codex's own client identity; ModelQuad adds none.
    What Codex stores on your computer is up to Codex. Codex also adds its own
    instructions to the request, including your global instructions file
