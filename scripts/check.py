@@ -410,6 +410,7 @@ REPO_WIDE_SCANS = (
     "tests/test_scripts_no_window.py::test_every_spawning_file_carries_the_same_helper",
     "tests/test_startup_imports.py::test_execution_sources_do_not_import_mcp",
     "tests/test_third_party_notices.py::test_every_python_file_carries_the_spdx_identifier",
+    "tests/test_wheel_packaging.py::test_a_leftover_build_folder_adds_nothing_to_the_wheel",
 )
 
 
