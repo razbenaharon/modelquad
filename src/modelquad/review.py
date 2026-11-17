@@ -68,6 +68,11 @@ OUTPUT_CUT_MARKER = (
     "\n\n[ModelQuad cut this answer here: the first {shown} of {whole} characters are shown. "
     "Ask Codex for a shorter answer, or split the request.]")
 REFUSAL_FALLBACK = "ModelQuad's rules did not allow this Codex call."
+NOT_RECORDED_NOTE = (
+    "ModelQuad could not write this call to its review ledger (the file was locked or could "
+    "not be written), so the call is missing from the review report and its findings cannot "
+    "take a verdict. Tell the user.")
+WORKER_REPORTED = "worker_reported"
 
 #: One plain sentence per closed reason; a person reads the sentence, never the code.
 _LINES: dict[str, str] = {
@@ -99,6 +104,9 @@ _LINES: dict[str, str] = {
                         "argument is not valid), so nothing was started."),
     "cli_not_found": "The Codex CLI was not found on this computer. Run: modelquad doctor",
     "timed_out": "Codex did not return in time.",
+    WORKER_REPORTED: ("Codex itself reported an error and gave no answer. ModelQuad does not pass "
+                      "Codex's error text on. If a model was named, check the name; otherwise "
+                      "check that Codex is signed in and has usage left, or run: modelquad doctor"),
     "stop_requested": "The call was cancelled, and ModelQuad stopped Codex.",
 }
 
@@ -571,7 +579,7 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
             usage=payload["usage"])
     except Exception:  # noqa: BLE001 -- the answer matters more than its record
         findings = None
-        payload["findings_note"] = "ModelQuad could not record this call in its review ledger."
+        payload["ledger_note"] = NOT_RECORDED_NOTE
     if findings:
         payload["findings"] = [{"finding": item.ref, "severity": item.severity, "file": item.file,
                                 "line": item.line, "line_end": item.line_end,

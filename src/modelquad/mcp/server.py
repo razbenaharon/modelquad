@@ -96,7 +96,7 @@ def _result(payload: dict, lines: list[str]) -> CallToolResult:
 #: What a review reply shows Claude. Process detail stays out of the reply.
 _VISIBLE = ("task_type", "provider", "task_status", "task_completed", "output", "refused", "started",
             "delegated", "executed", "reason", "message", "decision_id", "package", "package_round",
-            "skipped_files", "completion_request", "findings", "findings_note", "usage",
+            "skipped_files", "completion_request", "findings", "findings_note", "ledger_note", "usage",
             "limitations", "worker_note", "output_truncated", "output_chars", "status", "notice",
             "next", "note", "codex_started")
 
@@ -108,6 +108,8 @@ def _review_lines(payload: dict) -> list[str]:
             "To go ahead, ask again. Claude Code shows its approval prompt before the call."]
     if payload.get("refused"):
         return lines + [review.refusal_line(payload)]
+    if payload.get("reason") == review.WORKER_REPORTED and not payload.get("output"):
+        lines.append(review.refusal_line(payload))
     package = payload.get("package")
     if isinstance(package, dict):
         lines.append(f"Sent: the task text and {package['file_count']} file(s), "
@@ -126,6 +128,8 @@ def _review_lines(payload: dict) -> list[str]:
     note = (payload.get("worker_note") or {}).get("warning")
     if note:
         lines.append(note)
+    if payload.get("ledger_note"):
+        lines.append(payload["ledger_note"])
     return lines
 
 

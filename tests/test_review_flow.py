@@ -582,3 +582,55 @@ def test_the_status_tool_reads_the_switch_and_the_folder(project, monkeypatch):
     assert result.structured_content["modelquad"] == "off"
     assert "1. ModelQuad in Claude Code: off" in result.content[0].text
     assert result.structured_content["folder_rules"]["state"] == "builtin"
+
+
+def test_a_ledger_that_cannot_be_written_is_said_in_the_reply(project, monkeypatch):
+    """Found with a real run while another program held the ledger: the
+    answer came back, no row was written, and the lines a person reads did
+    not say so."""
+    def locked(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(review_ledger, "record_start", locked)
+    monkeypatch.setattr(review_ledger, "record_run", locked)
+    executor = FakeExecutor("FINDING F1 | high | app.py:2 | bug | high: read it | wrong | because")
+    monkeypatch.setattr(review_server, "_executor", lambda: executor)
+    monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
+
+    result = call(review_server.modelquad_delegate, task_type="review", prompt="Look.",
+                  working_directory=str(project), files=["app.py"], timeout=60.0)
+
+    lines = result.content[0].text.splitlines()
+    data = result.structured_content
+    assert lines[0] == "Codex answered." and data["output"].startswith("FINDING F1")
+    assert data["ledger_note"] == review.NOT_RECORDED_NOTE and lines[-1] == review.NOT_RECORDED_NOTE
+    # No finding is offered for a verdict that could not be stored.
+    assert "findings" not in data and "findings_note" not in data
+    assert _ledger_rows() == ([], [])
+
+
+class FailingExecutor(FakeExecutor):
+    def execute(self, request):
+        if request.on_spawn is not None:
+            request.on_spawn(4242)
+        return ExecutionResult(provider="codex", success=False, output="", exit_code=1,
+                               task_status=WorkerTaskStatus.FAILED,
+                               task_status_reason="worker_reported",
+                               metadata={"worker_started": True})
+
+
+def test_an_error_codex_reports_is_named_without_its_text(project, monkeypatch):
+    """A model id Codex does not have came back as "returned no answer" and
+    nothing else (real run, 2026-11-18)."""
+    monkeypatch.setattr(review_server, "_executor", FailingExecutor)
+    monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
+
+    result = call(review_server.modelquad_delegate, task_type="review", prompt="Look.",
+                  working_directory=str(project), files=["app.py"], timeout=60.0,
+                  model="gpt-not-a-model")
+
+    lines = result.content[0].text.splitlines()
+    assert lines[0] == "Codex did not finish: it returned no answer."
+    assert lines[1].startswith("Codex itself reported an error") and "modelquad doctor" in lines[1]
+    assert result.structured_content["reason"] == "worker_reported"
+    assert [row["outcome"] for row in _ledger_rows()[0]] == [review_ledger.FAILED]
