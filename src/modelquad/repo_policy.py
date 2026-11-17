@@ -239,7 +239,7 @@ def find_root(working_directory) -> Path:
         # started, and the caller refuses (load fails closed).
         raise OSError("git pointer leaves this machine")
     try:
-        from .jobs import changes
+        from . import gitmeta as changes
 
         deadline = time.monotonic() + DISCOVERY_SECONDS
         output = changes._git(directory, ["rev-parse", "--show-toplevel"], deadline)
@@ -257,7 +257,7 @@ def find_root(working_directory) -> Path:
 def _read(root: Path) -> bytes | RepoPolicy | None:
     """The file's bytes, None when there is no file, or a refusing policy."""
     from .project_notes import ObservationError, open_regular
-    from .jobs.changes import _linked
+    from .gitmeta import _linked
 
     path = root / FILE_NAME
     try:

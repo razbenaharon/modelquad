@@ -299,7 +299,7 @@ def test_the_file_is_never_searched_above_the_root(tmp_path):
 
 
 def test_the_git_top_folder_holds_the_file(tmp_path, monkeypatch):
-    from modelquad.jobs import changes
+    from modelquad import gitmeta as changes
     (tmp_path / ".git").mkdir()
     write(tmp_path, render(1, {"allowed": False}))
     inner = tmp_path / "src" / "pkg"
@@ -316,7 +316,7 @@ def test_the_git_top_folder_holds_the_file(tmp_path, monkeypatch):
 
 
 def test_when_git_cannot_answer_the_nearest_git_folder_is_used(tmp_path, monkeypatch):
-    from modelquad.jobs import changes
+    from modelquad import gitmeta as changes
     (tmp_path / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
     write(tmp_path, render(1, {"task_kinds": ["review"]}))
     inner = tmp_path / "a"
@@ -326,7 +326,7 @@ def test_when_git_cannot_answer_the_nearest_git_folder_is_used(tmp_path, monkeyp
 
 
 def test_a_git_answer_outside_the_working_directory_is_not_trusted(tmp_path, monkeypatch):
-    from modelquad.jobs import changes
+    from modelquad import gitmeta as changes
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     write(elsewhere, render(1, {"allowed": False}))

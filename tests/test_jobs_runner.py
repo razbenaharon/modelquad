@@ -24,7 +24,7 @@ from modelquad.jobs._test_sink import FileSink
 from modelquad.jobs.handle import JobSpec, job_status, start_job, stop_job
 from modelquad.jobs import handle, runner
 from modelquad.service import db, history
-from test_jobs_changes import git, git_repo  # shared throwaway-repository fixture
+from test_gitmeta import git, git_repo  # shared throwaway-repository fixture
 
 
 @pytest.fixture(autouse=True)

@@ -456,7 +456,7 @@ def tool(tmp_path, monkeypatch):
                          (mcp, "_delegate_payload"), (mcp, "start_job"),
                          (mcp, "_build_execution_manager"), (ExecutionManager, "delegate")):
         monkeypatch.setattr(target, name, tripwire)
-    from modelquad.jobs import changes
+    from modelquad import gitmeta as changes
     monkeypatch.setattr(changes, "_git", tripwire)
 
     def call(directory, steps):

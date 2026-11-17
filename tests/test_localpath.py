@@ -200,7 +200,7 @@ def test_a_commondir_pointer_to_a_share_is_not_followed(tmp_path, share_tripwire
 
 
 def test_git_is_not_started_in_a_folder_whose_pointer_leads_to_a_share(tmp_path, monkeypatch, share_tripwire):
-    from modelquad.jobs import changes
+    from modelquad import gitmeta as changes
 
     monkeypatch.setattr(changes, "_git", lambda *a, **k: pytest.fail("Git would follow the pointer"))
     worktree = tmp_path / "worktree"

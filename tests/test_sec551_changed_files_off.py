@@ -18,11 +18,12 @@ from types import SimpleNamespace
 import pytest
 
 from modelquad import procutil
-from modelquad.jobs import changes, runner
+from modelquad import gitmeta as changes
+from modelquad.jobs import runner
 from modelquad.jobs.handle import JobSpec, PreparedDelegation
 from modelquad.jobs.seam import JobRef
 from modelquad.jobs.store import FileOutputStore
-from test_jobs_changes import git, git_repo
+from test_gitmeta import git, git_repo
 
 
 def fail_observation(*args, **kwargs):

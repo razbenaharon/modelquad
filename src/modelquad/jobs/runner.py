@@ -30,7 +30,7 @@ from modelquad.jobs.handle import (
     JobSpec, STARTUP_SECONDS, _log_runner_event, runner_containment_verdict,
     CONTAINED_RUNNER_LIMITATION,
 )
-from modelquad.jobs.changes import changed_files, snapshot
+from modelquad.gitmeta import changed_files, snapshot
 from modelquad.jobs.seam import (
     JobOutput, JobRef, JobStatus, OutputSink, cause_flags_from_result, job_status_from_resolution,
 )

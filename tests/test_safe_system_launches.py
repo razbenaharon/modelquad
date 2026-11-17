@@ -17,7 +17,7 @@ import time
 import pytest
 
 from modelquad import buildinfo, executable_resolution as resolver, procutil
-from modelquad.jobs import changes
+from modelquad import gitmeta as changes
 from modelquad.service import lifecycle
 
 

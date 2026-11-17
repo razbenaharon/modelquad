@@ -10,7 +10,7 @@ import time
 import pytest
 
 from conftest import no_window_kwargs
-from modelquad.jobs import changes
+from modelquad import gitmeta as changes
 
 
 def git(directory, *args):

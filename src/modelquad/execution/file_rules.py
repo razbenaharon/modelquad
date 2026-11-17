@@ -329,7 +329,7 @@ def git_ignored(root, names) -> frozenset[str]:
     if not names:
         return frozenset()
     from ..executable_resolution import resolve_executable
-    from ..jobs import changes
+    from .. import gitmeta as changes
     from ..procutil import no_window_kwargs
     try:
         executable = resolve_executable("git", exclude_roots=changes._git_exclude_roots(Path(root)))

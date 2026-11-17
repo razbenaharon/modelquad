@@ -209,7 +209,8 @@ def _loaded_runner_git_headroom():
     saves and restores by itself instead of requesting monkeypatch, so it does
     not move monkeypatch's teardown ahead of other fixtures' teardown."""
     from modelquad import procutil
-    from modelquad.jobs import changes, recovery
+    from modelquad import gitmeta as changes
+    from modelquad.jobs import recovery
     saved = [(changes, "GIT_SECONDS", changes.GIT_SECONDS),  # _git clamps to its own module value
              (procutil, "IMAGE_NAME_SECONDS", procutil.IMAGE_NAME_SECONDS),
              (recovery, "DEADLINE_SECONDS", recovery.DEADLINE_SECONDS)]

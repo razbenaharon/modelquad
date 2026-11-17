@@ -20,7 +20,7 @@ import stat
 import time
 import unicodedata
 
-from .jobs import changes
+from . import gitmeta as changes
 from .privacy import sanitize_context_text
 from .repo_identity import RepoIdentity, _canonical_directory, _hash
 
