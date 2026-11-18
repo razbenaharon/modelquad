@@ -13,8 +13,11 @@
 
 # ModelQuad
 
-A controlled Codex review inside Claude Code. Codex only reads, gets only
-the files you can see listed, and every review is recorded. On Windows.
+A read-only second-opinion review of only the selected project files, with
+a local record of every review. On Windows.
+
+Works with Claude Code and your own OpenAI Codex CLI. Not affiliated with
+Anthropic or OpenAI.
 
 ModelQuad is a small local MCP server and Claude Code plugin with one job:
 when Claude has changed code, it can ask your own OpenAI Codex CLI for an

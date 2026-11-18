@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "modelquad"
 dynamic = ["version"]
-description = "ModelQuad: a controlled, read-only Codex review inside Claude Code, with a record of what was sent and found, on Windows."
+description = "ModelQuad: a read-only second-opinion review of only the selected project files, with a local record of every review. On Windows."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"

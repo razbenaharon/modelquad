@@ -1,6 +1,6 @@
 {
   "name": "modelquad",
-  "description": "ModelQuad for Claude Code: a controlled, read-only Codex review with a record of what was sent and found. Not affiliated with Anthropic or OpenAI.",
+  "description": "ModelQuad: a read-only second-opinion review of only the selected project files, with a local record of every review. On Windows. Works with Claude Code and your own OpenAI Codex CLI. Not affiliated with Anthropic or OpenAI.",
   "owner": {
     "name": "Raz Ben Aharon"
   },
@@ -8,7 +8,7 @@
     {
       "name": "modelquad",
       "source": "./plugin",
-      "description": "Commands and hooks for a read-only Codex review of files you can see listed. Needs the modelquad package installed with pip. Not affiliated with Anthropic or OpenAI."
+      "description": "The MCP server, commands and hooks for a read-only review of only the selected project files. Needs the modelquad package, installed with pip from a clone of the repository. Not affiliated with Anthropic or OpenAI."
     }
   ]
 }
