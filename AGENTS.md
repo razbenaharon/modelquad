@@ -73,6 +73,7 @@ the instrument for developing it.
 | `src/modelquad/mcp/` | The MCP server Claude Code talks to (`server.py`) and the worker guard |
 | `src/modelquad/execution/` | The Codex executor; `noshell.py` packs the files sent to Codex and checks its event stream; `closed.py` keeps reasons and metadata to fixed sets |
 | `src/modelquad/review_ledger.py` | The local record of calls, packages, findings and verdicts |
+| `src/modelquad/usage_report.py` | `modelquad review usage-report`: counts from the ledger, printed for the user to pass on; sends nothing |
 | `src/modelquad/repo_policy.py`, `repo_settings.py`, `grant.py`, `switch.py` | The repository's rules, the user's per-repository choice, the standing grant, the global switch |
 | `src/modelquad/cli_entry.py`, `src/modelquad/cli.py` | The `modelquad` command; `cli_entry.py` is the installed entry point and runs the hook without loading the full CLI |
 | `src/modelquad/setupcheck.py` | `modelquad doctor` |

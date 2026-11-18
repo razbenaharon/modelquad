@@ -89,6 +89,9 @@ unfamiliar code.
   findings, which were confirmed and on what evidence (a test or a
   reproduction counts; Claude's own reading is recorded as that and is not
   counted as proof), the time, and the token counts Codex itself reported.
+  `modelquad review usage-report` prints counts only, for you to read and
+  pass on yourself if you choose; ModelQuad does not send it
+  ([PRIVACY.md](https://github.com/razbenaharon/modelquad/blob/main/PRIVACY.md#the-usage-report)).
 - **Repository rules.** A checked-in `.modelquad.toml` can turn Codex off for
   a repository or narrow what may be sent; it can only narrow.
 

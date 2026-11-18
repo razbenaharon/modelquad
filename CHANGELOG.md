@@ -63,6 +63,15 @@ is the install.
 
 ### Changes
 
+- **A usage report you pass on yourself.** `modelquad review usage-report`
+  prints counts from the review ledger for every project together: calls by
+  outcome, trigger and task kind, findings by severity and verdict, the
+  median duration and the token totals Codex reported (with the number of
+  calls they cover), plus the ModelQuad, Windows and Python versions. It
+  holds no text, name, path or id from the ledger, and says what its counts
+  cannot show. `--out FILE` also writes the JSON to a file you name and does
+  not replace an existing file without `--force`. ModelQuad does not send
+  it; PRIVACY.md lists every field. The period is at least 30 days.
 - **The notice has a version, and four more lines.** The first-use notice
   now also says that with the standing grant files go to OpenAI with no
   prompt and no list first, that the secret screen can miss a secret under

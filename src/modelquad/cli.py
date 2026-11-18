@@ -757,9 +757,11 @@ def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
 
 
 def _run_review_command(args: argparse.Namespace) -> int:
-    """``modelquad review report`` and ``modelquad review verdict``."""
+    """``modelquad review report``, ``usage-report`` and ``verdict``."""
     from . import review_ledger
 
+    if args.review_action == "usage-report":
+        return _run_usage_report(args)
     if args.review_action == "verdict":
         try:
             count = review_ledger.record_verdicts(args.decision_id, [{
@@ -806,6 +808,48 @@ def _run_review_command(args: argparse.Namespace) -> int:
         return 0
     for line in review_report_lines(data, all_projects=args.all_projects):
         print(line)
+    return 0
+
+
+def _run_usage_report(args: argparse.Namespace) -> int:
+    """``modelquad review usage-report``: print the report; ``--out`` also writes it. Sends nothing."""
+    from . import review_ledger, usage_report
+
+    if not usage_report.MIN_DAYS <= args.days <= usage_report.MAX_DAYS:
+        print(f"--days takes a whole number from {usage_report.MIN_DAYS} to "
+              f"{usage_report.MAX_DAYS}: a shorter period would show more precisely when "
+              "you used ModelQuad.", file=sys.stderr)
+        return 2
+    if args.out is not None:
+        from .localpath import reason as local_reason
+
+        # Before any file-system call: a network share is never opened.
+        if local_reason(os.path.abspath(args.out)) is not None:
+            print("Not written: that file is not on a local drive (a network share, a device, "
+                  "or a link to one). Name a file on a local drive.", file=sys.stderr)
+            return 2
+        if os.path.lexists(args.out) and not args.force:
+            print(f"Not written: {args.out} already exists. Name another file, or add --force "
+                  "to replace it.", file=sys.stderr)
+            return 2
+    try:
+        data = usage_report.build(days=args.days)
+    except (OSError, sqlite3.Error, review_ledger.LedgerVersionError) as exc:
+        print(f"The review ledger could not be read: {exc}", file=sys.stderr)
+        return 1
+    for line in usage_report.preview_lines(data):
+        print(line)
+    if args.out is not None:
+        try:
+            written = usage_report.write(data, args.out, force=args.force)
+        except FileExistsError:
+            print(f"Not written: {args.out} already exists.", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"Not written: {exc}", file=sys.stderr)
+            return 1
+        print("")
+        print(f"The same JSON was written to {written}. Nothing was sent.")
     return 0
 
 
@@ -1169,6 +1213,15 @@ def build_parser() -> argparse.ArgumentParser:
     review_report_cmd.add_argument('--findings', action='store_true',
                                    help='List the recent calls with their decision id and each '
                                         'finding, for modelquad review verdict.')
+    usage_report_cmd = review_actions.add_parser(
+        "usage-report", help="Print a usage report (counts and versions only, every project) "
+                             "for you to read and pass on yourself. Sends nothing.")
+    usage_report_cmd.add_argument('--days', type=int, default=30,
+                                  help='The period in days, 30 to 3650 (default: 30).')
+    usage_report_cmd.add_argument('--out', metavar='FILE',
+                                  help='Also write the JSON to this file.')
+    usage_report_cmd.add_argument('--force', action='store_true',
+                                  help='With --out: replace the file if it exists.')
     review_verdict_cmd = review_actions.add_parser(
         "verdict", help="Record your own verdict on one finding; it outranks the one Claude recorded.")
     review_verdict_cmd.add_argument("decision_id")
