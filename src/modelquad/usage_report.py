@@ -236,7 +236,7 @@ def preview_lines(report: dict) -> list[str]:
         f"  why they were made: {_counts(report['calls_by_trigger'])}",
         f"  task kind: {_counts(report['calls_by_task_kind'])}",
         "  files sent per call: " + ", ".join(
-            f"{name} files: {value} calls" for name, value in report["calls_by_files_sent"].items()),
+            f"{name} files: {value} {'call' if value == 1 else 'calls'}" for name, value in report["calls_by_files_sent"].items()),
         f"Completion rounds: {_known(report['completion_rounds'])}",
         f"Findings by severity: {_counts(report['findings_by_severity'])}",
         f"Findings by verdict: {_counts(report['findings_by_verdict'])}",
