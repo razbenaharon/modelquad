@@ -1105,8 +1105,8 @@ def _run_privacy(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=Path(sys.argv[0]).stem or CLI_COMMAND,
-        description="A read-only Codex review inside Claude Code: connect it, choose how it "
-                    "asks, and see what each review sent and found.",
+        description="A read-only second-opinion review of only the selected project files: "
+                    "connect it, choose how it asks, and see what each review sent and found.",
     )
     parser.add_argument("-V", "--version", action=_BuildVersionAction,
                         help="Show the installed product version and the exact build, then exit.")
