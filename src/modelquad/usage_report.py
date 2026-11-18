@@ -84,7 +84,11 @@ def _python_minor() -> str:
 
 def _read(path: Path, since: float) -> dict:
     """The rows the report counts, through a read-only connection."""
-    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0)
+    # Not Path.as_uri(): on Python 3.14 it imports urllib.request, which loads
+    # http.client, ssl and socket. SQLite's URI form needs only %, ? and # escaped.
+    name = path.resolve().as_posix().lstrip("/")
+    uri = "file:///" + name.replace("%", "%25").replace("?", "%3f").replace("#", "%23")
+    conn = sqlite3.connect(f"{uri}?mode=ro", uri=True, timeout=5.0)
     try:
         conn.row_factory = sqlite3.Row
         if conn.execute("PRAGMA user_version").fetchone()[0] > rl.SCHEMA_VERSION:
