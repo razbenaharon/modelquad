@@ -328,10 +328,20 @@ def test_the_same_package_running_in_another_session_is_refused(project, other_s
 
 
 def test_a_session_that_dies_mid_run_leaves_no_lock_behind(project, other_session):
+    import time
+
     other_session.kill()  # TerminateProcess: no finally block runs in that process
     other_session.wait(timeout=30)
 
-    assert review.headline(review.run(request_for(project), FakeExecutor())) == "Codex answered."
+    # A venv launcher can exit a few milliseconds before the interpreter it
+    # started; Windows frees the lock when that interpreter is gone.
+    deadline = time.monotonic() + 10
+    while True:
+        reply = review.run(request_for(project), FakeExecutor())
+        if reply.get("reason") != review.DUPLICATE or time.monotonic() > deadline:
+            break
+        time.sleep(0.05)
+    assert review.headline(reply) == "Codex answered."
 
 
 def test_another_package_runs_while_one_runs_in_another_session(project, other_session):

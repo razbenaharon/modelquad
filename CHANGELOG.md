@@ -68,10 +68,12 @@ is the install.
   typed, so `auto on --project .` failed with "could not identify this
   folder's repository" and `status` reported off. The folder is now made
   absolute first.
-- **A Git check that gives no answer sends nothing.** When Git timed out
-  or refused the folder (for example as of dubious ownership), the files
-  it might ignore used to be sent as if it had said none. Now no file is
-  sent (`git_check_failed`), as when a settings file cannot be read.
+- **A Git check that gives no answer sends nothing.** When Git timed out,
+  could not be started or refused the folder (for example as of dubious
+  ownership, or a worktree whose repository moved), the files it might
+  ignore used to be sent as if it had said none. Now no file is sent
+  (`git_check_failed`), as when a settings file cannot be read. A file in
+  a submodule is checked against the submodule's own ignore rules.
 - **One run per package across sessions.** The same package asked for in two
   Claude Code sessions at once used to run twice, because each session's
   server only knew its own runs. The second is now refused

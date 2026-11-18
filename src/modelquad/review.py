@@ -81,7 +81,8 @@ WORKER_REPORTED = "worker_reported"
 #: One plain sentence per closed reason; a person reads the sentence, never the code.
 _LINES: dict[str, str] = {
     WORKER: "This session was started by ModelQuad for Codex, so it cannot ask Codex again.",
-    DUPLICATE: "The same request is already running, so ModelQuad started nothing new.",
+    DUPLICATE: ("The same request is already running, in this Claude Code session or another "
+                "one, so ModelQuad started nothing new."),
     "task_type_not_read_only": ("Codex through ModelQuad takes only read-only review, exploration "
                                 "or architecture tasks."),
     PACKAGE_CHANGED: ("The files changed since the package was shown, or the request names "
@@ -604,13 +605,15 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
             # Another Claude Code session's server is running this package.
             return refusal(DUPLICATE)
         _running.add(key)
-    started_at = clock()
-    # The worker's whole tree is tied to this process: it ends if this server does.
-    token = procutil.default_kill_on_close.set(True)
     try:
-        result = executor.execute(execution)
+        started_at = clock()
+        # The worker's whole tree is tied to this process: it ends if this server does.
+        token = procutil.default_kill_on_close.set(True)
+        try:
+            result = executor.execute(execution)
+        finally:
+            procutil.default_kill_on_close.reset(token)
     finally:
-        procutil.default_kill_on_close.reset(token)
         with _running_lock:
             _running.discard(key)
             release()

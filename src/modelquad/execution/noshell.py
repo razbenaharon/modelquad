@@ -1213,10 +1213,20 @@ def approved_digests(prompt, workspace, files, *, caps=None):
     return {item["path"]: item["sha256"] for item in report.get("sent", ())}
 
 
+#: Rules that withhold every file because they could not be checked: a run on
+#: the task text alone is not the review that was approved.
+_UNCHECKED = frozenset({file_rules.SETTINGS_UNREADABLE, file_rules.IGNORE_FILE_UNREADABLE,
+                        file_rules.GIT_UNANSWERED})
+
+
 def changed_since_approval(report, approved):
     """True when the run would send a file it did not send at approval, or a
-    different text of one. A file now withheld by the rules sends less, which
-    the approval still covers."""
+    different text of one, or withholds an approved file because a rule could
+    not be checked. A file now withheld by a rule that was checked sends less,
+    which the approval still covers."""
+    if any(item.get("path") in approved and item.get("reason") in _UNCHECKED
+           for item in report.get("skipped", ())):
+        return True
     return any(approved.get(item["path"]) != item["sha256"] for item in report.get("sent", ()))
 
 
