@@ -67,12 +67,14 @@ def _thousands(values):
 
 
 def _windows_major():
-    """10 or 11 (or another major number); None when this is not Windows."""
+    """10 or 11; None when this is not Windows or is another version."""
     try:
         version = sys.getwindowsversion()
     except AttributeError:
         return None
-    return 11 if version.major == 10 and version.build >= 22000 else int(version.major)
+    if version.major != 10:
+        return None
+    return 11 if version.build >= 22000 else 10
 
 
 def _python_minor() -> str:
@@ -162,7 +164,12 @@ def build(*, days: int = 30, path: Path | None = None) -> dict:
         "findings_by_severity": _tally((item[2] for item in data["findings"]), rl.SEVERITIES),
         "findings_by_verdict": _finding_classes(data["findings"], data["verdicts"]),
         "median_call_seconds": int(round(statistics.median(durations))) if durations else None,
+        # The totals cover only the calls for which Codex reported a count; the
+        # number of those calls is given, so a partial total is not read as all calls.
         "tokens_reported_by_codex": {
+            "calls_with_a_count": sum(
+                1 for run in runs
+                if type(run["input_tokens"]) is int or type(run["output_tokens"]) is int),
             "input_rounded_to_thousand": _thousands(run["input_tokens"] for run in runs),
             "output_rounded_to_thousand": _thousands(run["output_tokens"] for run in runs)},
         "gate_events": _tally(data["gate"], rl.GATE_EVENTS),
@@ -197,9 +204,16 @@ def preview_lines(report: dict) -> list[str]:
         "Passing it on, for example by e-mail or in a GitHub issue, is your own choice. An",
         "e-mail carries your address and a public issue carries your account.",
         "",
+        "What the counts cover: only the calls recorded in the review ledger on this computer.",
+        "A call whose record could not be written is missing, and so is a row removed by hand.",
+        "A finding counts as unjudged until a verdict is recorded; unjudged is not refuted.",
+        "Reports come only from people who choose to pass them on, so a set of reports does",
+        "not stand for everyone who uses ModelQuad.",
+        "",
         f"ModelQuad {report['modelquad_version']}, Windows {_known(report['windows_major'])}, "
         f"Python {report['python_minor']}",
-        f"Period: the last {report['window_days']} days, every project on this computer",
+        f"Period: the last {report['window_days']} "
+        f"{'day' if report['window_days'] == 1 else 'days'}, every project on this computer",
     ]
     if not report["ledger_found"]:
         lines.append("There is no review ledger on this computer yet, so no call is counted.")
@@ -214,9 +228,10 @@ def preview_lines(report: dict) -> list[str]:
         f"Findings by severity: {_counts(report['findings_by_severity'])}",
         f"Findings by verdict: {_counts(report['findings_by_verdict'])}",
         f"Median call time: {_known(report['median_call_seconds'], ' seconds')}",
-        "Tokens as reported by Codex, to the nearest thousand: "
+        "Tokens as reported by Codex, to the nearest thousand (a total under 500 shows as 0): "
         f"input {_known(tokens['input_rounded_to_thousand'])}, "
-        f"output {_known(tokens['output_rounded_to_thousand'])}",
+        f"output {_known(tokens['output_rounded_to_thousand'])}, "
+        f"over the {tokens['calls_with_a_count']} of {report['calls']} calls with a count",
         f"Gate events: {_counts(report['gate_events'])}",
         "",
         "The same data as JSON:",

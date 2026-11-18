@@ -87,7 +87,7 @@ def test_the_fields_are_exactly_the_documented_set(tmp_path):
     assert tuple(report["findings_by_verdict"]) == ur.FINDING_CLASSES
     assert tuple(report["gate_events"]) == (*rl.GATE_EVENTS, "other")
     assert tuple(report["tokens_reported_by_codex"]) == (
-        "input_rounded_to_thousand", "output_rounded_to_thousand")
+        "calls_with_a_count", "input_rounded_to_thousand", "output_rounded_to_thousand")
     # Every field is documented where a reader looks for it.
     privacy = (Path(__file__).resolve().parents[1] / "PRIVACY.md").read_text(encoding="utf-8")
     assert [name for name in ur.FIELDS if f"`{name}`" not in privacy] == []
@@ -99,7 +99,8 @@ def test_an_empty_ledger_gives_zero_calls_and_is_not_created(tmp_path):
     assert report["ledger_found"] is False and report["calls"] == 0
     assert report["median_call_seconds"] is None
     assert report["tokens_reported_by_codex"] == {
-        "input_rounded_to_thousand": None, "output_rounded_to_thousand": None}
+        "calls_with_a_count": 0, "input_rounded_to_thousand": None,
+        "output_rounded_to_thousand": None}
     assert not db.exists() and not db.parent.exists()
     assert any("no review ledger" in line for line in ur.preview_lines(report))
 
@@ -143,18 +144,25 @@ def test_unknown_tokens_stay_unknown_and_known_ones_are_rounded(tmp_path):
                   working_directory=tmp_path, task_type="review", trigger="user", path=db)
     report = ur.build(path=db)
     assert report["tokens_reported_by_codex"] == {
-        "input_rounded_to_thousand": None, "output_rounded_to_thousand": None}
+        "calls_with_a_count": 0, "input_rounded_to_thousand": None,
+        "output_rounded_to_thousand": None}
     assert report["median_call_seconds"] is None
     text = "\n".join(ur.preview_lines(report))
     assert "as reported by Codex" in text and "input unknown, output unknown" in text
+    assert "Median call time: unknown" in text
 
     rl.record_run({"decision_id": "d-2", "output": "FINDINGS: none\n", "duration_seconds": 3.4,
                    "metadata": {"worker_metrics": {"input_tokens": 12_600, "output_tokens": 400}}},
                   working_directory=tmp_path, task_type="review", trigger="user", path=db)
     report = ur.build(path=db)
+    # The totals cover the one call that has a count, and say so: the call
+    # without one is not counted as zero tokens.
     assert report["tokens_reported_by_codex"] == {
-        "input_rounded_to_thousand": 13_000, "output_rounded_to_thousand": 0}
+        "calls_with_a_count": 1, "input_rounded_to_thousand": 13_000,
+        "output_rounded_to_thousand": 0}
     assert report["median_call_seconds"] == 3
+    text = "\n".join(ur.preview_lines(report))
+    assert "over the 1 of 2 calls with a count" in text and "under 500 shows as 0" in text
 
 
 def test_calls_outside_the_window_are_not_counted(tmp_path):
@@ -248,3 +256,35 @@ print("loaded:", loaded, "calls:", report["calls"])
         timeout=60, **no_window_kwargs())
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "loaded: [] calls: 3"
+
+
+def test_the_printed_text_says_what_the_counts_cover_and_who_sends_reports(tmp_path):
+    text = "\n".join(ur.preview_lines(ur.build(days=1, path=tmp_path / "none.db")))
+    assert "only the calls recorded in the review ledger on this computer" in text
+    assert "could not be written is missing" in text
+    assert "unjudged is not refuted" in text
+    assert "only from people who choose to pass them on" in text
+    assert "the last 1 day," in text
+
+
+def test_windows_major_is_10_11_or_null(monkeypatch):
+    from types import SimpleNamespace
+
+    for major, build, expected in ((10, 19045, 10), (10, 22631, 11), (6, 9600, None)):
+        monkeypatch.setattr(sys, "getwindowsversion",
+                            lambda m=major, b=build: SimpleNamespace(major=m, build=b), raising=False)
+        assert ur._windows_major() == expected
+    monkeypatch.delattr(sys, "getwindowsversion", raising=False)
+    assert ur._windows_major() is None
+
+
+def test_the_installed_command_turns_the_loopback_guard_on_for_the_report(tmp_path, capsys,
+                                                                          monkeypatch):
+    """The usage report runs through the guarded entry point (netpolicy.py)."""
+    from modelquad import cli_entry, netpolicy
+
+    monkeypatch.setattr(paths_module, "state_root", lambda: tmp_path / "state")
+    assert netpolicy.guard_active is False
+    assert cli_entry.main(["review", "usage-report"]) == 0
+    assert netpolicy.guard_active is True
+    assert "Nothing was sent." in capsys.readouterr().out
