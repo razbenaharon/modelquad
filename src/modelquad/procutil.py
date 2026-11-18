@@ -366,10 +366,14 @@ def _kill_process_tree(
     (:func:`_descendants_outside_job`). ``tree_kill`` is read AFTER the stop,
     never from any tool's exit code:
 
-    - ``ok``: the census read empty twice in a row, and every descendant found
-      outside the job is dead.
+    - ``ok``: the census read empty twice in a row, every member held was seen
+      to have exited through its handle, and every descendant found outside
+      the job is dead.
     - ``job_not_empty``: members were still listed when the bounded wait
       ended; ``job_members`` says how many.
+    - ``members_exiting``: the census read empty, but a member held had not
+      finished exiting when the bounded wait ended (Windows lists a process
+      as gone from the job once its exit begins); ``job_members`` says how many.
     - ``census_unknown``: the census could not be read. Unknown is not empty.
     - ``escaped_job``: a descendant outside the job was still alive after it
       was stopped; ``escaped`` says how many.
@@ -409,6 +413,7 @@ def _kill_process_tree(
     pins = _Pins()
     try:
         stopped: "list[int] | None" = []
+        members: "set[int]" = {proc.pid}
         terminated = walked = False
         try:
             if census_job:
@@ -418,6 +423,7 @@ def _kill_process_tree(
                 pins.pin(proc.pid)
                 for member in _census_job_pids(census_job) or ():
                     pins.pin(member)
+                    members.add(member)
                 outcome["job_terminate"] = "ok" if _terminate_job(census_job) else "failed"
                 terminated = True
                 stopped = _stop_outside_job(pins, census_job, created_after)
@@ -439,7 +445,7 @@ def _kill_process_tree(
         if not census_job:
             outcome["tree_kill"] = "uncontained"
             return outcome
-        outcome.update(_await_empty_job(census_job))
+        outcome.update(_await_empty_job(census_job, pins, members))
         if outcome["tree_kill"] == "ok":
             outcome.update(_account_outside_job(pins, census_job, created_after, stopped))
         return outcome
@@ -471,7 +477,7 @@ def _taskkill_tree(pid: int) -> str:
         return "launch_error: " + type(exc).__name__
 
 
-def _await_empty_job(job: int) -> dict:
+def _await_empty_job(job: int, pins: "_Pins | None" = None, members: "set[int] | None" = None) -> dict:
     """Read the job census until it is empty, within :data:`_JOB_EMPTY_SECONDS`.
 
     A member still listed is terminated again: it may have been created after
@@ -480,26 +486,45 @@ def _await_empty_job(job: int) -> dict:
     ``ok`` never rests on a single sample. A census that cannot be read ends
     the wait at once as ``census_unknown`` -- a failure to observe is not an
     observation (:func:`pid_state`).
+
+    An empty census is not yet a finished tree: Windows takes a process off
+    the job's list as soon as its exit begins, before it has finished (a
+    write still in flight can land after that; checked 2026-11-18 by holding
+    a member's exit under a debugger: list empty, active count 0, process not
+    yet signaled). So every member held in ``pins`` (``members``, and each
+    one listed here) must also have exited, read through its handle, within
+    the same deadline; otherwise the answer is ``members_exiting``.
     """
 
     import time
 
     deadline = time.monotonic() + _JOB_EMPTY_SECONDS
+    seen: "set[int]" = set(members or ())
     empty_in_a_row = 0
     while True:
-        members = _census_job_pids(job)
-        if members is None:
+        listed = _census_job_pids(job)
+        if listed is None:
             return {"tree_kill": "census_unknown"}
-        if members:
+        if listed:
             empty_in_a_row = 0
+            if pins is not None:
+                for member in listed:
+                    if member not in seen and pins.pin(member) is not None:
+                        seen.add(member)
             if time.monotonic() >= deadline:
-                return {"tree_kill": "job_not_empty", "job_members": len(members)}
+                return {"tree_kill": "job_not_empty", "job_members": len(listed)}
             _terminate_job(job)
         else:
             empty_in_a_row += 1
             if empty_in_a_row >= 2:
-                return {"tree_kill": "ok"}
+                break
         time.sleep(0.05)
+    if pins is None or not seen:
+        return {"tree_kill": "ok"}
+    exiting = pins.still_running(seen, seconds=max(deadline - time.monotonic(), 0.5))
+    if exiting:
+        return {"tree_kill": "members_exiting", "job_members": len(exiting)}
+    return {"tree_kill": "ok"}
 
 
 def _stop_outside_job(pins: "_Pins", job: int, created_after: "float | None") -> "list[int] | None":
