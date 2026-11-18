@@ -635,7 +635,7 @@ def worker_confirmed_dead(metadata: dict[str, Any] | None) -> bool:
     is therefore confirmed only when ``tree_kill`` is ``ok`` as well, which the
     runner writes only after its Job Object census read empty. Any
     other value -- ``direct_child_only`` on POSIX, ``job_not_empty``,
-    ``census_unknown`` or ``uncontained``, and the ``exit N`` / ``timed_out`` /
+    ``members_exiting``, ``census_unknown`` or ``uncontained``, and the ``exit N`` / ``timed_out`` /
     ``launch_error`` readings older rows carry from when the tree walk was
     ``taskkill`` -- leaves descendants unaccounted for and must not read as
     ``terminated``.

@@ -366,10 +366,14 @@ def _kill_process_tree(
     (:func:`_descendants_outside_job`). ``tree_kill`` is read AFTER the stop,
     never from any tool's exit code:
 
-    - ``ok``: the census read empty twice in a row, and every descendant found
-      outside the job is dead.
+    - ``ok``: the census read empty twice in a row, every member held was seen
+      to have exited through its handle, and every descendant found outside
+      the job is dead.
     - ``job_not_empty``: members were still listed when the bounded wait
       ended; ``job_members`` says how many.
+    - ``members_exiting``: the census read empty, but a member held had not
+      finished exiting when the bounded wait ended (Windows lists a process
+      as gone from the job once its exit begins); ``job_members`` says how many.
     - ``census_unknown``: the census could not be read. Unknown is not empty.
     - ``escaped_job``: a descendant outside the job was still alive after it
       was stopped; ``escaped`` says how many.
@@ -389,7 +393,10 @@ def _kill_process_tree(
     exited when the stop began (``cmd /c start`` of an alias target), a child
     such a process left behind when it exited, or one a broker started on the
     worker's behalf (COM, the Task Scheduler, a service). No process-tree
-    stop can see those, and ``taskkill /T`` never did either. Containing
+    stop can see those, and ``taskkill /T`` never did either. Nor a member
+    born after the stop's first census and killed before any later census
+    listed it: it was never held, so its exit cannot be waited on; it was
+    terminated with the job. Containing
     alias targets in the job while the worker runs would close the first two;
     it is not done here.
 
@@ -409,6 +416,7 @@ def _kill_process_tree(
     pins = _Pins()
     try:
         stopped: "list[int] | None" = []
+        members: "set[int] | None" = {proc.pid}
         terminated = walked = False
         try:
             if census_job:
@@ -416,8 +424,14 @@ def _kill_process_tree(
                 # handed to another process, so the walk below can follow a
                 # dead member's number and still mean that member.
                 pins.pin(proc.pid)
-                for member in _census_job_pids(census_job) or ():
+                first = _census_job_pids(census_job)
+                if first is None:
+                    # The members were never seen, so nothing can be waited
+                    # on: a later empty census cannot vouch for them.
+                    members = None
+                for member in first or ():
                     pins.pin(member)
+                    members.add(member)
                 outcome["job_terminate"] = "ok" if _terminate_job(census_job) else "failed"
                 terminated = True
                 stopped = _stop_outside_job(pins, census_job, created_after)
@@ -439,7 +453,9 @@ def _kill_process_tree(
         if not census_job:
             outcome["tree_kill"] = "uncontained"
             return outcome
-        outcome.update(_await_empty_job(census_job))
+        outcome.update(_await_empty_job(census_job, pins, members or set()))
+        if members is None and outcome["tree_kill"] == "ok":
+            outcome["tree_kill"] = "census_unknown"
         if outcome["tree_kill"] == "ok":
             outcome.update(_account_outside_job(pins, census_job, created_after, stopped))
         return outcome
@@ -471,7 +487,7 @@ def _taskkill_tree(pid: int) -> str:
         return "launch_error: " + type(exc).__name__
 
 
-def _await_empty_job(job: int) -> dict:
+def _await_empty_job(job: int, pins: "_Pins | None" = None, members: "set[int] | None" = None) -> dict:
     """Read the job census until it is empty, within :data:`_JOB_EMPTY_SECONDS`.
 
     A member still listed is terminated again: it may have been created after
@@ -480,26 +496,46 @@ def _await_empty_job(job: int) -> dict:
     ``ok`` never rests on a single sample. A census that cannot be read ends
     the wait at once as ``census_unknown`` -- a failure to observe is not an
     observation (:func:`pid_state`).
+
+    An empty census is not yet a finished tree: Windows takes a process off
+    the job's list as soon as its exit begins, before it has finished (a
+    write still in flight can land after that; checked 2026-11-18 by holding
+    a member's exit under a debugger: list empty, active count 0, process not
+    yet signaled). So every member held in ``pins`` (``members``, and each
+    one listed here) must also have exited, read through its handle, within
+    the same deadline; otherwise the answer is ``members_exiting``.
     """
 
     import time
 
     deadline = time.monotonic() + _JOB_EMPTY_SECONDS
+    seen: "set[int]" = set(members or ())
     empty_in_a_row = 0
     while True:
-        members = _census_job_pids(job)
-        if members is None:
+        listed = _census_job_pids(job)
+        if listed is None:
             return {"tree_kill": "census_unknown"}
-        if members:
+        if listed:
             empty_in_a_row = 0
+            if pins is not None:
+                for member in listed:
+                    if member not in seen:
+                        pins.pin(member)  # a handle when it can be had; checked either way
+                        seen.add(member)
             if time.monotonic() >= deadline:
-                return {"tree_kill": "job_not_empty", "job_members": len(members)}
+                return {"tree_kill": "job_not_empty", "job_members": len(listed)}
             _terminate_job(job)
         else:
             empty_in_a_row += 1
             if empty_in_a_row >= 2:
-                return {"tree_kill": "ok"}
+                break
         time.sleep(0.05)
+    if pins is None or not seen:
+        return {"tree_kill": "ok"}
+    exiting = pins.still_running(seen, seconds=max(deadline - time.monotonic(), 0.5))
+    if exiting:
+        return {"tree_kill": "members_exiting", "job_members": len(exiting)}
+    return {"tree_kill": "ok"}
 
 
 def _stop_outside_job(pins: "_Pins", job: int, created_after: "float | None") -> "list[int] | None":
@@ -686,6 +722,40 @@ def _process_in_job(pid: int, job: int) -> "bool | None":
         return None
 
 
+def _pid_finished(pid: int) -> bool:
+    """Has ``pid`` finished exiting? Only a signaled process object, or no process at all, says yes.
+
+    :func:`pid_state` reads the exit code, which Windows sets when an exit
+    BEGINS (checked 2026-11-18 under a held exit: exit code 1, process not
+    signaled). That is the right reading for "is it left running", and the
+    wrong one for "has the stop finished". Anything this cannot settle --
+    access denied, an error -- is not finished.
+    """
+
+    if os.name != "nt":
+        return pid_state(pid) == "dead"
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        ctypes.set_last_error(0)
+        handle = kernel32.OpenProcess(0x1000 | 0x00100000, False, int(pid))  # QUERY_LIMITED | SYNCHRONIZE
+        if not handle:
+            return ctypes.get_last_error() == 87  # ERROR_INVALID_PARAMETER: no such process
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == 0  # WAIT_OBJECT_0
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:  # noqa: BLE001 -- a probe must never raise; unknown is not finished
+        return False
+
+
 class _Pins:
     """Handles held on the processes a stop or a census reasons about.
 
@@ -760,7 +830,7 @@ class _Pins:
                 if handle is not None:
                     if self._api().WaitForSingleObject(handle, 0) != 0:
                         running.append(pid)
-                elif pid_state(pid) != "dead":
+                elif not _pid_finished(pid):
                     running.append(pid)
             if not running or time.monotonic() >= deadline:
                 return running
@@ -1726,16 +1796,17 @@ def run_with_tree_kill(
         return completed
     finally:
         members = _census_job_pids(census_job) if census_job and kill_on_close else None
+        # Held before the close kills them, so each is read through its own
+        # handle: finished, not merely begun to exit (see _await_empty_job).
+        close_pins = _Pins()
+        for pid in members or ():
+            close_pins.pin(pid)
         _close_census_job(census_job) if census_job else None
         if completed is not None and census_job and kill_on_close:
             # The pre-close snapshot remains unchanged; close-time death is
             # a separate observation, never a claim that outside members died.
-            deadline = time.monotonic() + _CLOSE_CLEANUP_SECONDS
-            while members and any(pid_state(pid) != 'dead' for pid in members):
-                if time.monotonic() >= deadline:
-                    break
-                time.sleep(0.05)
-            dead = members is not None and all(pid_state(pid) == 'dead' for pid in members)
+            dead = members is not None and not close_pins.still_running(
+                members, seconds=_CLOSE_CLEANUP_SECONDS)
             descendants = completed.worker_descendants
             outside = any(item['pid'] not in (members or [])
                           for item in descendants.get('descendants', []))
@@ -1746,6 +1817,7 @@ def run_with_tree_kill(
                 'close_cleanup_members': len(members) if members is not None else None,
                 'close_cleanup_confirmed': dead,
             }
+        close_pins.close()
 
 
 def run_worker(argv, **kwargs) -> subprocess.CompletedProcess:

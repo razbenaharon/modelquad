@@ -63,6 +63,17 @@ is the install.
 
 ### Changes
 
+- **A stopped worker is stopped when the stop says so.** After a timeout or
+  a cancel, the stop reported the process tree stopped (`tree_kill: ok`)
+  once the Windows job listed no process. Windows drops a process from that
+  list as soon as its exit begins, so a member could still finish a write
+  after the stop had returned (seen once in CI). The stop now also waits,
+  within the same bound, for every member it holds to finish exiting, and
+  says `members_exiting` when one has not. The cleanup after a normal
+  finish waits the same way, and a process the stop could not hold counts
+  as finished only when it has finished exiting, not when its exit code is
+  set. A first job census that cannot be read leaves the stop
+  `census_unknown`.
 - **A usage report you pass on yourself.** `modelquad review usage-report`
   prints counts from the review ledger for every project together: calls by
   outcome, trigger and task kind, findings by severity and verdict, the
