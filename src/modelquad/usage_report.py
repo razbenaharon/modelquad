@@ -137,7 +137,8 @@ def _finding_classes(findings, verdicts) -> dict:
 
 
 #: The shortest period a report covers. A short period next to the date a
-#: report is sent would say on which days someone used ModelQuad.
+#: report is sent would narrow down when someone used ModelQuad. A longer
+#: period makes that less precise; it does not stop someone inferring it.
 MIN_DAYS = 30
 MAX_DAYS = 3650
 

@@ -817,8 +817,8 @@ def _run_usage_report(args: argparse.Namespace) -> int:
 
     if not usage_report.MIN_DAYS <= args.days <= usage_report.MAX_DAYS:
         print(f"--days takes a whole number from {usage_report.MIN_DAYS} to "
-              f"{usage_report.MAX_DAYS}: a shorter period would say on which days you used "
-              "ModelQuad.", file=sys.stderr)
+              f"{usage_report.MAX_DAYS}: a shorter period would show more precisely when "
+              "you used ModelQuad.", file=sys.stderr)
         return 2
     if args.out is not None:
         from .localpath import reason as local_reason

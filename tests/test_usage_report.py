@@ -194,7 +194,7 @@ def test_the_command_prints_the_notice_the_lines_and_the_json(tmp_path, capsys, 
 
     assert main(["review", "usage-report", "--days", "0"]) == 2
     assert main(["review", "usage-report", "--days", "29"]) == 2
-    assert "on which days you used ModelQuad" in capsys.readouterr().err
+    assert "more precisely when you used ModelQuad" in capsys.readouterr().err
 
 
 def test_a_period_shorter_than_the_minimum_is_refused():
