@@ -288,6 +288,44 @@ its user configuration ignored.
 4. Delete the state folder (`modelquad privacy` shows it).
 5. `pip uninstall modelquad`.
 
+## Automated runs
+
+ModelQuad can run without a person watching, under controls you set. What
+stops it by default, and what you set to allow it:
+
+- **Permission, explicitly.** Without the standing grant, the one tool that
+  starts Codex is marked as needing a person's approval, and Claude Code
+  asks for it, so a script or a headless `claude -p` run cannot start Codex
+  (checked: the call is denied). To allow it, turn the grant on for the one
+  folder the automation works in (`modelquad settings auto on --project DIR`,
+  not `--global`) and allow only `mcp__plugin_modelquad_modelquad__modelquad_delegate`
+  in that run (`--allowedTools`). A `.modelquad.toml` in the repository can
+  narrow it further: task kinds, the number and size of files.
+- **One defined task per run.** Give each run one task and name its files;
+  a package id binds a call to exactly the files that were shown.
+- **Limits on time and calls.** Each Codex call stops at its `timeout`
+  (840 seconds at most). ModelQuad does not count or cap the number of
+  calls: limit the run itself, with Claude Code's `--max-turns` and your
+  scheduler's own time limit.
+- **A record.** Each call is recorded when Codex starts, and again when it
+  ends (`modelquad review report`; `modelquad review usage-report` for
+  counts).
+- **A way to stop it.** `modelquad off` stops every new Codex start on this
+  computer; `modelquad settings auto off --project DIR` takes the grant back;
+  ending the Claude Code process ends the Codex run it started.
+
+What was checked and what was not: headless Claude Code 2.1.318 (`claude -p`)
+in a granted folder with the tool allowed started Codex, and without the
+grant it was denied, also in bypass-permissions mode (2026-11-18). Not
+tested: CI runners, Windows Task Scheduler or other schedulers, Codex
+signed in with an API key, approvals given by a program (the Agent SDK),
+and many automated sessions at once beyond the rule that the same package
+runs once.
+
+Your sign-ins stay yours in an automated run too: the account terms
+in [Provider terms and your account](#provider-terms-and-your-account)
+apply, and OpenAI recommends API-key sign-in for automation such as CI.
+
 ## Privacy and network
 
 - ModelQuad has no server of its own, no update check and no telemetry. Its
@@ -374,12 +412,16 @@ has approved ModelQuad.
 - ModelQuad does not change any usage limit. Each provider's limits apply as
   they are.
 - Every Codex call runs your own Codex CLI, under your own sign-in, after you
-  approve it or within a standing grant you turned on. Do not run ModelQuad
-  unattended: every Codex call should come from a Claude Code session a
-  person started for their own work. Do
-  not script or schedule ModelQuad, run it in CI, or run it on behalf of
-  other people. OpenAI recommends API-key sign-in for programmatic Codex workflows
-  such as CI/CD.
+  approve it or within a standing grant you turned on. Automated runs are
+  possible with the grant; see [Automated runs](#automated-runs) for how to
+  keep them under control and what has not been tested.
+- OpenAI's and Anthropic's terms forbid sharing your login or making your
+  account available to anyone else. Do not let other people, or a service
+  you run for them, use ModelQuad through your sign-ins. OpenAI's terms also
+  forbid automatically or programmatically extracting data or output; whether
+  an automated ModelQuad run falls under that term is not settled. For
+  automation such as CI, OpenAI recommends API-key sign-in, and says not to
+  use a ChatGPT sign-in for public or open-source repositories.
 - Anthropic and OpenAI can limit, suspend or close accounts, and can change
   their terms at any time. That risk is yours. If a provider tells you that a
   use is not allowed, stop it, and please tell us in an issue.

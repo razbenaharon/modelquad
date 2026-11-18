@@ -21,7 +21,7 @@ def test_the_data_flow_notice_names_every_destination_and_setting():
                      "API key or a ChatGPT workspace",
                      "employer or a client", CHATGPT_DATA_CONTROLS, CLAUDE_PRIVACY_SETTINGS,
                      "Opting out does not cover feedback", "limit or suspend accounts",
-                     "unattended", "other licences", "does not change any usage limit"):
+                     "Automated runs", "other licences", "does not change any usage limit"):
         assert required in text
     # Codex has no file tools in this release; the notice must not say it reads files.
     assert "Codex can read files" not in text
@@ -36,22 +36,25 @@ def test_the_data_flow_notice_names_no_removed_feature():
         assert removed not in text, removed
 
 
-def test_unattended_is_defined_once_and_the_readme_says_the_same():
+def test_automation_and_the_account_rule_are_stated_as_they_are():
     from pathlib import Path
 
     def flat(text: str) -> str:
         return " ".join(text.replace("`", "").split())
 
     notice = flat("\n".join(DATA_FLOW))
-    definition = ("every Codex call should come from a Claude Code session a person"
-                  " started for their own work.")
-    for required in ("Do not run ModelQuad unattended: " + definition,
-                     "Do not script or schedule ModelQuad, run it in CI"):
-        assert required in notice
     readme = flat((Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8"))
-    for required in ("Do not run ModelQuad unattended: " + definition,
-                     "Do not script or schedule ModelQuad, run it in CI"):
-        assert required in readme
+    # No blanket ban stated as if it were a provider rule.
+    for text in (notice, readme):
+        assert "Do not run ModelQuad unattended" not in text
+        assert "Do not script or schedule ModelQuad" not in text
+        # The account rule as the providers state it, and what is not settled.
+        assert "making your account available to anyone else" in text
+        assert "not settled" in text
+    # What was not tested is said where automation is described.
+    assert "CI, other schedulers and an API-key sign-in were not" in notice
+    assert "Not tested: CI runners" in readme
+    assert "## Automated runs" in readme
 
 
 def test_install_prints_the_data_flow_notice(tmp_path, capsys):

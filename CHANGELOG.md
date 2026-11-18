@@ -63,6 +63,14 @@ is the install.
 
 ### Changes
 
+- **Automated runs, under control, instead of a blanket ban.** The notice
+  and the README no longer forbid unattended, scripted, scheduled or CI use
+  as if a provider required it. They say what stops a run without a person
+  (no grant: Claude Code asks), how to allow one under control (one granted
+  folder, one allowed tool, one task, time and turn limits, the record, a
+  way to stop it), and what has not been tested (CI, other schedulers, an
+  API-key sign-in). The account rule is stated as the providers state it:
+  no sharing your login or making your account available to anyone else.
 - **A usage report you pass on yourself.** `modelquad review usage-report`
   prints counts from the review ledger for every project together: calls by
   outcome, trigger and task kind, findings by severity and verdict, the
