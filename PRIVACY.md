@@ -100,7 +100,13 @@ input as a package (below) and start nothing and send nothing.
      read;
    - Git ignores it (`git_ignored`). ModelQuad asks `git check-ignore` with
      only the listed paths; without Git, or outside a repository, this check
-     is skipped;
+     is skipped. A file in a submodule is checked against that submodule's
+     own rules. If Git is found but gives no answer (it cannot be started,
+     takes longer than 10 seconds, or refuses the folder, for example as of
+     dubious ownership), no file is sent (`git_check_failed`), and a run
+     whose second check at launch gets no answer is refused rather than sent
+     without its files. A repository nested in a folder that is not itself
+     in a repository is not asked;
    - a `.modelquadignore` (gitignore syntax) in any of those folders that
      holds the file covers it (`modelquad_ignored`). Its patterns are
      relative to the folder it sits in. If one of these files exists but
@@ -243,7 +249,7 @@ grant off; `modelquad off`, `modelquad settings repo off` or a
 
 ModelQuad does not start Claude. Claude Code starts ModelQuad, and everything
 ModelQuad returns to it becomes part of your conversation, which Claude Code
-sends to Anthropic:
+sends to Anthropic, or to the cloud provider you set Claude Code up to use:
 
 - Codex's answers (a reply shows at most 20,000 characters and says when it
   cut one), and facts about each run: its outcome, the package manifest
@@ -271,11 +277,14 @@ it, and Anthropic's forbid using Claude's output to train any AI model
 without its permission. ModelQuad passes text in both directions: text Claude
 wrote goes to OpenAI, and Codex's answers go to Anthropic. Turn off model
 training with both providers while you use ModelQuad, and do not use its
-answers or history
-as training data:
+answers or its record as training data:
 
 - ChatGPT data controls: <https://chatgpt.com/#settings/DataControls>
 - Claude privacy settings: <https://claude.ai/settings/data-privacy-controls>
+
+If Codex is signed in with an API key, your API organization's retention and
+data-sharing settings apply instead of the ChatGPT data controls; in a
+ChatGPT workspace, the workspace's settings apply.
 
 Opting out does not cover feedback you submit or conversations flagged for
 safety review. How long each provider keeps your data depends on its terms

@@ -193,11 +193,16 @@ ModelQuad for Codex again (`src/modelquad/mcp/worker_guard.py`,
   above).
 - On Windows the worker runs in a Job Object that stops it, and every process
   it started, when the MCP server process ends or the call is cancelled.
-- At most one attempt per package runs at a time in one server process: a
-  second identical request while the first runs is refused
-  (`duplicate_in_flight`, `src/modelquad/review.py`). Each Claude Code
-  session has its own server process, so the same package asked for in two
-  sessions at once runs twice, each after its own approval.
+- At most one attempt per package runs at a time: a second identical
+  request while the first runs is refused (`duplicate_in_flight`,
+  `src/modelquad/review.py`), in the same session or in another one. Each
+  Claude Code session has its own server process; they share an operating
+  system lock on a file named for the package in the state folder
+  (`running/<package id>.lock`). Windows releases the lock when the run ends
+  or its process dies, so a crashed session leaves nothing to clear. The rule
+  holds across sessions that share one state folder (one installation, one
+  user); if that folder cannot hold the lock file, only the per-session rule
+  applies.
 
 **Hooks ModelQuad installs.** Only the plugin installs hooks, and they do
 nothing while ModelQuad is off. They never approve a Claude Code tool call, and

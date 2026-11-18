@@ -615,7 +615,7 @@ def _run_repo_setting(choice: str | None, project: str | None) -> int:
     from .adapters.server_instructions import read_proactive
     from .localpath import reason as local_reason
 
-    folder = Path(project) if project else Path.cwd()
+    folder = Path(os.path.abspath(project)) if project else Path.cwd()
     # Before any file-system call: a network share is never opened.
     if local_reason(os.path.abspath(folder)) is not None:
         print(_NOT_LOCAL_FOLDER, file=sys.stderr)
@@ -694,7 +694,7 @@ def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
     from . import grant
     from .disclosure import DATA_FLOW, print_lines
 
-    folder = None if args.everywhere else Path(args.project or Path.cwd())
+    folder = None if args.everywhere else Path(os.path.abspath(args.project or Path.cwd()))
     if folder is not None:
         from .localpath import reason as local_reason
 
@@ -781,7 +781,7 @@ def _run_review_command(args: argparse.Namespace) -> int:
     if not args.all_projects:
         from .localpath import reason as local_reason
 
-        project = Path(args.project or Path.cwd())
+        project = Path(os.path.abspath(args.project or Path.cwd()))
         # Before any file-system call: a network share is never opened.
         if local_reason(os.path.abspath(project)) is not None:
             print(_NOT_LOCAL_FOLDER, file=sys.stderr)
@@ -974,7 +974,7 @@ def _run_settings_show(project: str | None) -> int:
     from . import settings_view
     from .localpath import reason as local_reason
 
-    folder = Path(project) if project else Path.cwd()
+    folder = Path(os.path.abspath(project)) if project else Path.cwd()
     # Before any file-system call: a network share is never opened.
     if local_reason(os.path.abspath(folder)) is not None:
         print(_NOT_LOCAL_FOLDER, file=sys.stderr)

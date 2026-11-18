@@ -376,6 +376,80 @@ def test_outside_a_repository_the_git_check_is_skipped(project):
     assert screen(project, "src/app.py") == (["src/app.py"], {})
 
 
+def _git_answers(monkeypatch, outcome):
+    """Git as found, giving ``outcome``: an exception to raise or (exit code, stderr)."""
+    from modelquad import executable_resolution
+
+    monkeypatch.setattr(executable_resolution, "resolve_executable",
+                        lambda *args, **kwargs: SimpleNamespace(path="git.exe", refusal=None))
+
+    def run(command, **kwargs):
+        if isinstance(outcome, BaseException):
+            raise outcome
+        code, stderr = outcome
+        return subprocess.CompletedProcess(command, code, stdout=b"", stderr=stderr)
+
+    monkeypatch.setattr(file_rules.subprocess, "run", run)
+
+
+@pytest.mark.parametrize("outcome", [
+    subprocess.TimeoutExpired("git", file_rules.GIT_SECONDS),
+    (128, b"fatal: detected dubious ownership in repository at 'E:/x'"),
+    (129, b"usage: git check-ignore"),
+    (128, b"fatal: not a git repository: C:/moved/.git/worktrees/x"),
+    PermissionError("blocked by security software"),
+], ids=["timed_out", "dubious_ownership", "other_failure", "broken_worktree_link", "launch_blocked"])
+def test_git_that_does_not_answer_sends_no_file(project, monkeypatch, outcome):
+    _git_answers(monkeypatch, outcome)
+
+    assert file_rules.git_ignored(project, ["src/app.py"]) is None
+    assert screen(project, "src/app.py") == ([], {"src/app.py": "git_check_failed"})
+    refusal = review._withheld_refusal(str(project), ("src/app.py",))
+    assert refusal["skipped_files"] == ["src/app.py (git_check_failed)"]
+    assert "Git did not answer" in refusal["message"] and "tell the user" in refusal["message"]
+
+
+def test_git_outside_a_repository_is_no_check_not_a_failure(project, monkeypatch):
+    _git_answers(monkeypatch, (128, b"fatal: not a git repository (or any of the parent directories): .git"))
+
+    assert screen(project, "src/app.py") == (["src/app.py"], {})
+
+
+def _commit_all(folder, git, env):
+    subprocess.run([git, "add", "-A"], cwd=folder, check=True, env=env, capture_output=True,
+                   **no_window_kwargs())
+    subprocess.run([git, "-c", "user.email=lab@example.invalid", "-c", "user.name=lab", "commit",
+                    "-q", "-m", "x"], cwd=folder, check=True, env=env, **no_window_kwargs())
+
+
+def test_a_file_in_a_submodule_is_checked_against_the_submodule(project):
+    git = _git()
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    inner = project / "vendor"
+    inner.mkdir()
+    subprocess.run([git, "init", "-q"], cwd=inner, check=True, env=env, **no_window_kwargs())
+    (inner / ".gitignore").write_text("*.secret\n", encoding="utf-8")
+    (inner / "lib.py").write_text("x = 1\n", encoding="utf-8")
+    _commit_all(inner, git, env)
+    (inner / "key.secret").write_text("x", encoding="utf-8")
+    subprocess.run([git, "init", "-q"], cwd=project, check=True, env=env, **no_window_kwargs())
+    _commit_all(project, git, env)  # records vendor as a submodule (an embedded repository)
+
+    allowed, skipped = screen(project, "src/app.py", "vendor/lib.py", "vendor/key.secret")
+
+    assert allowed == ["src/app.py", "vendor/lib.py"]
+    assert skipped == {"vendor/key.secret": "git_ignored"}
+
+
+def test_an_unchecked_rule_at_launch_is_not_the_approved_review():
+    approved = {"app.py": "abc"}
+    report = {"sent": [], "skipped": [{"path": "app.py", "reason": "git_check_failed"}]}
+    assert noshell.changed_since_approval(report, approved)
+    # A rule that was checked and now withholds the file sends less, which the approval covers.
+    report["skipped"][0]["reason"] = "git_ignored"
+    assert not noshell.changed_since_approval(report, approved)
+
+
 def test_without_git_the_git_check_is_skipped(project, monkeypatch):
     from modelquad import executable_resolution
 
