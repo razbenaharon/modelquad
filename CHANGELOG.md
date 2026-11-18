@@ -63,6 +63,22 @@ is the install.
 
 ### Changes
 
+- **`--project .` works.** `modelquad settings auto`, `settings repo`,
+  `settings show` and `review verdict` took a relative `--project` as it was
+  typed, so `auto on --project .` failed with "could not identify this
+  folder's repository" and `status` reported off. The folder is now made
+  absolute first.
+- **A Git check that gives no answer sends nothing.** When Git timed out,
+  could not be started or refused the folder (for example as of dubious
+  ownership, or a worktree whose repository moved), the files it might
+  ignore used to be sent as if it had said none. Now no file is sent
+  (`git_check_failed`), as when a settings file cannot be read. A file in
+  a submodule is checked against the submodule's own ignore rules.
+- **One run per package across sessions.** The same package asked for in two
+  Claude Code sessions at once used to run twice, because each session's
+  server only knew its own runs. The second is now refused
+  (`duplicate_in_flight`) through an operating-system lock in the state
+  folder, which Windows releases when a run ends or its session dies.
 - **A call is recorded when Codex starts.** The ledger row and the package
   manifest are written at the start, as `unfinished`, and replaced when the
   call ends. A session that closed in the middle of a review used to leave
