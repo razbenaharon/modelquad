@@ -432,6 +432,67 @@ def package_lines(result: dict) -> list[str]:
 
 _running: set[str] = set()
 _running_lock = threading.Lock()
+RUN_LOCK_FOLDER = "running"
+
+
+def _hold_package(key: str):
+    """Hold the package's run lock across server processes, or None if another holds it.
+
+    Each Claude Code session has its own server process, so the in-process set
+    above cannot see a run started by another session. This takes an OS lock
+    on one byte of ``<state root>/running/<package id>.lock``. The operating
+    system releases the lock when the handle closes or the process ends, so a
+    server that crashes or is killed leaves no lock behind; the file itself is
+    only a name to lock. Returns a callable that releases the lock, ``None``
+    when another process holds it, or a no-op release when the lock file
+    cannot be opened (the in-process rule still applies; the docs say the
+    cross-session rule needs a shared, writable state folder).
+    """
+    import os
+
+    from .paths import state_root
+
+    try:
+        folder = state_root() / RUN_LOCK_FOLDER
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{key}.lock"
+        handle = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return lambda: None
+    try:
+        _lock_byte(handle)
+    except OSError:
+        os.close(handle)
+        return None
+
+    def release() -> None:
+        try:
+            _lock_byte(handle, unlock=True)
+        except OSError:
+            pass
+        os.close(handle)
+        try:
+            # Fails harmlessly while another process has the file open.
+            os.unlink(path)
+        except OSError:
+            pass
+
+    return release
+
+
+def _lock_byte(handle: int, *, unlock: bool = False) -> None:
+    """Lock (without waiting) or unlock the first byte; raises OSError when it is held."""
+    import os
+
+    try:
+        import msvcrt
+    except ImportError:  # not Windows: only the suite on another system gets here
+        import fcntl
+
+        fcntl.lockf(handle, fcntl.LOCK_UN if unlock else fcntl.LOCK_EX | fcntl.LOCK_NB, 1, 0)
+        return
+    os.lseek(handle, 0, os.SEEK_SET)  # msvcrt locks from the current position
+    msvcrt.locking(handle, msvcrt.LK_UNLCK if unlock else msvcrt.LK_NBLCK, 1)
 
 
 def _round(request: ReviewRequest) -> tuple[int, dict | None]:
@@ -537,6 +598,10 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         if key in _running:
             # At most one active attempt per request (invariant 2).
             return refusal(DUPLICATE)
+        release = _hold_package(key)
+        if release is None:
+            # Another Claude Code session's server is running this package.
+            return refusal(DUPLICATE)
         _running.add(key)
     started_at = clock()
     # The worker's whole tree is tied to this process: it ends if this server does.
@@ -547,6 +612,7 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         procutil.default_kill_on_close.reset(token)
         with _running_lock:
             _running.discard(key)
+            release()
     seconds = round(clock() - started_at, 1)
     payload = closed_result(result).to_dict()
     payload.pop("session_id", None)

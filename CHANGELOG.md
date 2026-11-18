@@ -63,6 +63,11 @@ is the install.
 
 ### Changes
 
+- **One run per package across sessions.** The same package asked for in two
+  Claude Code sessions at once used to run twice, because each session's
+  server only knew its own runs. The second is now refused
+  (`duplicate_in_flight`) through an operating-system lock in the state
+  folder, which Windows releases when a run ends or its session dies.
 - **A call is recorded when Codex starts.** The ledger row and the package
   manifest are written at the start, as `unfinished`, and replaced when the
   call ends. A session that closed in the middle of a review used to leave
