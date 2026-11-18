@@ -172,8 +172,9 @@ is the install.
 - **Claude never turns a grant back on.** When a call is refused because the
   grant is off or the folder is excluded, Claude tells you and changes
   nothing.
-- Codex stays read-only and tool-less: it reads only the files ModelQuad
-  sends, with credentials redacted, and runs with Codex's agents switched
+- Codex stays read-only, with its tool features switched off (a few
+  built-in tools stay listed; SECURITY.md names them): it reads only the
+  files ModelQuad sends, with credentials redacted, and runs with Codex's agents switched
   off (`agents.enabled=false`), so its collaboration tools are not offered
   to the model.
 
