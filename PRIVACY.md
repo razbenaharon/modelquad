@@ -98,7 +98,9 @@ input as a package (below) and start nothing and send nothing.
      read;
    - Git ignores it (`git_ignored`). ModelQuad asks `git check-ignore` with
      only the listed paths; without Git, or outside a repository, this check
-     is skipped;
+     is skipped. If Git runs but gives no answer for the folder (it takes
+     longer than 10 seconds, or refuses the folder, for example as of
+     dubious ownership), no file is sent (`git_check_failed`);
    - a `.modelquadignore` (gitignore syntax) in any of those folders that
      holds the file covers it (`modelquad_ignored`). Its patterns are
      relative to the folder it sits in. If one of these files exists but

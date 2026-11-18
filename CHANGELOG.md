@@ -63,6 +63,10 @@ is the install.
 
 ### Changes
 
+- **A Git check that gives no answer sends nothing.** When Git timed out
+  or refused the folder (for example as of dubious ownership), the files
+  it might ignore used to be sent as if it had said none. Now no file is
+  sent (`git_check_failed`), as when a settings file cannot be read.
 - **One run per package across sessions.** The same package asked for in two
   Claude Code sessions at once used to run twice, because each session's
   server only knew its own runs. The second is now refused

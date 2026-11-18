@@ -36,9 +36,10 @@ SETTINGS_UNREADABLE = "claude_settings_unreadable"
 GIT_IGNORED = "git_ignored"
 MODELQUAD_IGNORED = "modelquad_ignored"
 IGNORE_FILE_UNREADABLE = "modelquadignore_unreadable"
+GIT_UNANSWERED = "git_check_failed"
 #: Every reason this module skips a file for. None of them refuses a run.
 POLICY_REASONS = frozenset({DENIED, SETTINGS_UNREADABLE, GIT_IGNORED, MODELQUAD_IGNORED,
-                            IGNORE_FILE_UNREADABLE})
+                            IGNORE_FILE_UNREADABLE, GIT_UNANSWERED})
 IGNORE_FILE = ".modelquadignore"
 MAX_SETTINGS_BYTES = 1024 * 1024
 MAX_IGNORE_BYTES = 256 * 1024
@@ -318,8 +319,14 @@ def modelquad_ignore_rules(root) -> tuple[_Rule, ...] | None:
         return None
 
 
-def git_ignored(root, names) -> frozenset[str]:
-    """The subset of ``names`` Git ignores in ``root``; empty when Git cannot say.
+def git_ignored(root, names) -> frozenset[str] | None:
+    """The subset of ``names`` Git ignores in ``root``, or None when Git did not answer.
+
+    Empty without Git, or outside a repository. None when Git ran but gave no
+    answer for this folder: it timed out, or failed for another reason than
+    "not a git repository" (for example a folder it refuses as of dubious
+    ownership). The caller then sends nothing, as it does for settings it
+    cannot read.
 
     Git runs with inherited ``GIT_*`` overrides removed, file-system monitors
     and hooks off, and an executable planted in the folder never chosen.
@@ -338,7 +345,9 @@ def git_ignored(root, names) -> frozenset[str]:
     if executable.path is None:
         return frozenset()
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
-    env.update(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0")
+    # English messages, so "not a git repository" can be told from a failure.
+    env.update(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0",
+               LC_ALL="C", LANGUAGE="C")
     command = [executable.path, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.devnull,
                "check-ignore", "--stdin", "-z"]
     try:
@@ -346,11 +355,15 @@ def git_ignored(root, names) -> frozenset[str]:
             command, cwd=os.fspath(root), env=env, input=("\0".join(names) + "\0").encode("utf-8"),
             capture_output=True, timeout=GIT_SECONDS, check=False,
             **no_window_kwargs(detach_stdin=False))
+    except subprocess.TimeoutExpired:
+        return None
     except (OSError, subprocess.SubprocessError, ValueError):
         return frozenset()
-    # 0: some ignored, 1: none ignored; anything else (128: not a repository).
+    # 0: some ignored, 1: none ignored; 128 with this message: not a repository.
     if completed.returncode not in (0, 1):
-        return frozenset()
+        if completed.returncode == 128 and b"not a git repository" in completed.stderr.lower():
+            return frozenset()
+        return None
     reported = {item.decode("utf-8", "replace") for item in completed.stdout.split(b"\0") if item}
     if os.name == "nt":
         reported = {item.casefold() for item in reported}
@@ -399,5 +412,7 @@ def screen(root, names) -> tuple[list[str], list[tuple[str, str]]]:
         else:
             allowed.append(name)
     hidden = git_ignored(root, allowed)
+    if hidden is None:
+        return [], skipped + [(name, GIT_UNANSWERED) for name in allowed]
     skipped += [(name, GIT_IGNORED) for name in allowed if name in hidden]
     return [name for name in allowed if name not in hidden], skipped

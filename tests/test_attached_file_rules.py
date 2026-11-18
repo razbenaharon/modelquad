@@ -376,6 +376,43 @@ def test_outside_a_repository_the_git_check_is_skipped(project):
     assert screen(project, "src/app.py") == (["src/app.py"], {})
 
 
+def _git_answers(monkeypatch, outcome):
+    """Git as found, giving ``outcome``: an exception to raise or (exit code, stderr)."""
+    from modelquad import executable_resolution
+
+    monkeypatch.setattr(executable_resolution, "resolve_executable",
+                        lambda *args, **kwargs: SimpleNamespace(path="git.exe", refusal=None))
+
+    def run(command, **kwargs):
+        if isinstance(outcome, BaseException):
+            raise outcome
+        code, stderr = outcome
+        return subprocess.CompletedProcess(command, code, stdout=b"", stderr=stderr)
+
+    monkeypatch.setattr(file_rules.subprocess, "run", run)
+
+
+@pytest.mark.parametrize("outcome", [
+    subprocess.TimeoutExpired("git", file_rules.GIT_SECONDS),
+    (128, b"fatal: detected dubious ownership in repository at 'E:/x'"),
+    (129, b"usage: git check-ignore"),
+], ids=["timed_out", "dubious_ownership", "other_failure"])
+def test_git_that_does_not_answer_sends_no_file(project, monkeypatch, outcome):
+    _git_answers(monkeypatch, outcome)
+
+    assert file_rules.git_ignored(project, ["src/app.py"]) is None
+    assert screen(project, "src/app.py") == ([], {"src/app.py": "git_check_failed"})
+    refusal = review._withheld_refusal(str(project), ("src/app.py",))
+    assert refusal["skipped_files"] == ["src/app.py (git_check_failed)"]
+    assert "Git did not answer" in refusal["message"] and "tell the user" in refusal["message"]
+
+
+def test_git_outside_a_repository_is_no_check_not_a_failure(project, monkeypatch):
+    _git_answers(monkeypatch, (128, b"fatal: not a git repository (or any of the parent directories): .git"))
+
+    assert screen(project, "src/app.py") == (["src/app.py"], {})
+
+
 def test_without_git_the_git_check_is_skipped(project, monkeypatch):
     from modelquad import executable_resolution
 

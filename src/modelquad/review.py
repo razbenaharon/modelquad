@@ -47,7 +47,7 @@ FILES_WITHHELD_NEXT = (
     "another file: the exclusion is the user's. To show Codex a change to files that are "
     "sent, put that diff in the task text.")
 FILES_UNREADABLE_NEXT = (
-    "No file can be sent until that file is fixed: tell the user. A call without `files` "
+    "No file can be sent until that is fixed: tell the user. A call without `files` "
     "sends only the task text.")
 NOTICE_FIRST_NEXT = (
     "Codex was not started. Show the user the notice above in full, as written: it is "
@@ -230,7 +230,8 @@ def _withheld_refusal(working_directory: str, files: tuple[str, ...]) -> dict | 
         return None
     reasons = noshell._POLICY_GUIDANCE
     unreadable = [reason for _, reason in withheld
-                  if reason in (file_rules.SETTINGS_UNREADABLE, file_rules.IGNORE_FILE_UNREADABLE)]
+                  if reason in (file_rules.SETTINGS_UNREADABLE, file_rules.IGNORE_FILE_UNREADABLE,
+                                file_rules.GIT_UNANSWERED)]
     if unreadable:
         message = reasons[unreadable[0]] + " " + FILES_UNREADABLE_NEXT
     else:

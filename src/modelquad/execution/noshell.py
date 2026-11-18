@@ -256,6 +256,8 @@ _POLICY_GUIDANCE = {
     file_rules.MODELQUAD_IGNORED: "A .modelquadignore covers it, so it was not sent.",
     file_rules.IGNORE_FILE_UNREADABLE: ("A .modelquadignore could not be read, so no file "
                                         "was sent."),
+    file_rules.GIT_UNANSWERED: ("Git did not answer which files it ignores in this folder (it "
+                                "timed out or refused the folder), so no file was sent."),
 }
 
 
