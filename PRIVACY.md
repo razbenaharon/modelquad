@@ -466,7 +466,8 @@ first space can remain.
 
 `modelquad review usage-report` reads the review ledger and prints a report
 of counts: readable lines first, then the same data as one JSON object.
-`--days N` sets the period (30 by default). `--out FILE` also writes the
+`--days N` sets the period: 30 days by default and at least 30, so a
+report does not say on which days you used ModelQuad. `--out FILE` also writes the
 JSON to the file you name, and to no other place; it does not replace a file
 that exists unless you add `--force`. The report covers every project on
 this computer together, with no figure per project.

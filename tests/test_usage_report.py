@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import modelquad
+import pytest
 from conftest import no_window_kwargs
 from modelquad import paths as paths_module
 from modelquad import review_ledger as rl
@@ -183,15 +184,22 @@ def test_the_command_prints_the_notice_the_lines_and_the_json(tmp_path, capsys, 
     state.mkdir()
     _seed(state / rl.FILE_NAME, tmp_path / "project")
 
-    assert main(["review", "usage-report", "--days", "7"]) == 0
+    assert main(["review", "usage-report", "--days", "45"]) == 0
     out = capsys.readouterr().out
     assert "Nothing was sent." in out and "the whole report" in out
     assert "does not hold" in out and "your own choice" in out
     payload = _json_part(out)
-    assert tuple(payload) == ur.FIELDS and payload["window_days"] == 7 and payload["calls"] == 3
+    assert tuple(payload) == ur.FIELDS and payload["window_days"] == 45 and payload["calls"] == 3
     assert SECRET not in out and str(tmp_path) not in out
 
     assert main(["review", "usage-report", "--days", "0"]) == 2
+    assert main(["review", "usage-report", "--days", "29"]) == 2
+    assert "on which days you used ModelQuad" in capsys.readouterr().err
+
+
+def test_a_period_shorter_than_the_minimum_is_refused():
+    with pytest.raises(ValueError):
+        ur.build(days=ur.MIN_DAYS - 1, path=Path("none.db"))
 
 
 def test_out_writes_only_the_named_file_and_refuses_to_replace_it(tmp_path, capsys, monkeypatch):
@@ -259,12 +267,12 @@ print("loaded:", loaded, "calls:", report["calls"])
 
 
 def test_the_printed_text_says_what_the_counts_cover_and_who_sends_reports(tmp_path):
-    text = "\n".join(ur.preview_lines(ur.build(days=1, path=tmp_path / "none.db")))
+    text = "\n".join(ur.preview_lines(ur.build(days=30, path=tmp_path / "none.db")))
     assert "only the calls recorded in the review ledger on this computer" in text
     assert "could not be written is missing" in text
     assert "unjudged is not refuted" in text
     assert "only from people who choose to pass them on" in text
-    assert "the last 1 day," in text
+    assert "the last 30 days," in text
 
 
 def test_windows_major_is_10_11_or_null(monkeypatch):

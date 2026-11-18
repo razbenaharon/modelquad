@@ -815,8 +815,10 @@ def _run_usage_report(args: argparse.Namespace) -> int:
     """``modelquad review usage-report``: print the report; ``--out`` also writes it. Sends nothing."""
     from . import review_ledger, usage_report
 
-    if not 1 <= args.days <= 3650:
-        print("--days takes a whole number from 1 to 3650.", file=sys.stderr)
+    if not usage_report.MIN_DAYS <= args.days <= usage_report.MAX_DAYS:
+        print(f"--days takes a whole number from {usage_report.MIN_DAYS} to "
+              f"{usage_report.MAX_DAYS}: a shorter period would say on which days you used "
+              "ModelQuad.", file=sys.stderr)
         return 2
     if args.out is not None:
         from .localpath import reason as local_reason
@@ -1215,7 +1217,7 @@ def build_parser() -> argparse.ArgumentParser:
         "usage-report", help="Print a usage report (counts and versions only, every project) "
                              "for you to read and pass on yourself. Sends nothing.")
     usage_report_cmd.add_argument('--days', type=int, default=30,
-                                  help='The period in days (default: 30).')
+                                  help='The period in days, 30 to 3650 (default: 30).')
     usage_report_cmd.add_argument('--out', metavar='FILE',
                                   help='Also write the JSON to this file.')
     usage_report_cmd.add_argument('--force', action='store_true',

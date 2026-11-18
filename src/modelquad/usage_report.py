@@ -136,9 +136,17 @@ def _finding_classes(findings, verdicts) -> dict:
     return counts
 
 
+#: The shortest period a report covers. A short period next to the date a
+#: report is sent would say on which days someone used ModelQuad.
+MIN_DAYS = 30
+MAX_DAYS = 3650
+
+
 def build(*, days: int = 30, path: Path | None = None) -> dict:
     """The report for the last ``days`` days, over every project on this computer."""
     days = int(days)
+    if not MIN_DAYS <= days <= MAX_DAYS:
+        raise ValueError(f"the period is {MIN_DAYS} to {MAX_DAYS} days")
     target = Path(path) if path is not None else rl.ledger_path()
     found = target.is_file()
     data = _read(target, time.time() - days * 86400) if found else {
