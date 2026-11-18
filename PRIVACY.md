@@ -474,7 +474,7 @@ The fields, and there are no others:
 |---|---|
 | `schema`, `kind` | The report format: `1` and `modelquad-usage-report` |
 | `modelquad_version` | This build's version |
-| `windows_major` | `10` or `11`; null when it cannot be read |
+| `windows_major` | `10` or `11`; null when it cannot be read or is another version |
 | `python_minor` | `3.11` to `3.14`, or `other` |
 | `window_days` | The period, in days |
 | `ledger_found` | Whether a review ledger exists on this computer |
@@ -487,7 +487,7 @@ The fields, and there are no others:
 | `findings_by_severity` | Findings per severity: `high`, `medium`, `low`, `other` |
 | `findings_by_verdict` | Findings counted as `modelquad review report` counts them: `confirmed_independent`, `confirmed_claude_only`, `refuted`, `undecidable`, `unjudged`, `fixed_and_verified` |
 | `median_call_seconds` | The median call duration, to the whole second |
-| `tokens_reported_by_codex` | The input and output token totals as Codex reported them, each to the nearest thousand |
+| `tokens_reported_by_codex` | The number of calls for which Codex reported a token count, and the input and output totals over those calls, each to the nearest thousand (a total under 500 shows as 0; null when no call has a count) |
 | `gate_events` | Gate events per kind (the names in `review_ledger.GATE_EVENTS`), and `other` |
 
 Every value is a number, true or false, null, or one of the fixed words
@@ -497,6 +497,14 @@ folder or repository name, no digest, no package, decision or installation
 id, and no time finer than the period. The Codex CLI version is not in it:
 the ledger does not record it. A small count can still point at a person
 when few people use a build.
+
+What the counts cover, and what they cannot show. The report counts only
+the calls recorded in the review ledger on this computer: a call whose
+record could not be written (the reply then says so) is missing, and so is
+a row you removed. A finding counts as unjudged until a verdict is
+recorded, and unjudged is not refuted. Reports reach the author only from
+people who choose to pass them on, so a set of reports does not stand for
+everyone who uses ModelQuad. The printed text says this too.
 
 ## The installation id
 
