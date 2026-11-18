@@ -329,17 +329,6 @@ class _Pinned:
     def exited_within(self, pid: int, seconds: float) -> bool:
         return self._kernel32.WaitForSingleObject(self.handles[pid], int(seconds * 1000)) == 0
 
-    def exit_time(self, pid: int) -> float:
-        """When the pinned process exited, from the kernel, as a ``time.time()`` value."""
-        import ctypes
-        from ctypes import wintypes
-
-        times = [wintypes.FILETIME() for _ in range(4)]
-        self._kernel32.GetProcessTimes.argtypes = [ctypes.c_void_p] + [ctypes.c_void_p] * 4
-        assert self._kernel32.GetProcessTimes(self.handles[pid], *(ctypes.byref(t) for t in times))
-        exited = (times[1].dwHighDateTime << 32) | times[1].dwLowDateTime
-        return (exited - 116444736000000000) / 1e7
-
     def release(self) -> None:
         for handle in self.handles.values():
             if self._kernel32.WaitForSingleObject(handle, 0) != 0:
@@ -442,7 +431,8 @@ def _run_ready_worker(argv, ready, **kwargs):
         assert not readiness_errors, readiness_errors
 
 
-def _run_in_background(argv, *, ready=None, **kwargs):
+def _run_in_background(argv, *, ready=None, on_return=None, **kwargs):
+    """Run in a thread; ``on_return`` is called the instant the stop hands control back."""
     box: dict = {}
 
     def target():
@@ -452,7 +442,8 @@ def _run_in_background(argv, *, ready=None, **kwargs):
         except BaseException as exc:  # noqa: BLE001 -- handed to the test to assert on
             box["error"] = exc
         finally:
-            box["returned_at"] = time.time()
+            if on_return is not None:
+                on_return(box)
 
     thread = threading.Thread(target=target, daemon=True)
     thread.start()
@@ -474,9 +465,14 @@ def test_a_timeout_stops_a_grandchild_whose_parent_already_exited(dummy, sentine
         [leaf] = leaves
         pinned.pin(leaf)
 
+    def on_return(box):
+        # No clock: whether each pinned process had already finished, read
+        # through its handle the instant the stop returned.
+        box["finished_at_return"] = {pid: pinned.exited_within(pid, 0) for pid in list(pinned.handles)}
+
     thread, box = _run_in_background(
         [sys.executable, str(script), "orphaner", str(folder)], capture_output=True, text=True, timeout=6,
-        ready=ready,
+        ready=ready, on_return=on_return,
     )
     thread.join(timeout=2 * LOAD_HEADROOM_S)
     assert not thread.is_alive(), box
@@ -489,10 +485,7 @@ def test_a_timeout_stops_a_grandchild_whose_parent_already_exited(dummy, sentine
     # The commitment: when the stop says the tree is stopped, it already is.
     # Read the stop's own report first, so a failure says what it claimed.
     assert facts["tree_kill"] == "ok", facts
-    assert pinned.exited_within(leaf, 5), f"orphaned grandchild {leaf} survived the stop: {facts}"
-    exited_at = pinned.exit_time(leaf)
-    assert exited_at <= box["returned_at"], (
-        f"the stop returned {facts} {box['returned_at'] - exited_at:.3f}s before the leaf exited")
+    assert box["finished_at_return"] == {leaf: True}, f"the stop returned {facts} before the leaf finished"
     time.sleep(1.0)
     assert _changed_leaves(folder, stopped_contents) == [], facts
     assert sentinel.poll() is None, f"an unrelated process with the same image was stopped (exit code {sentinel.returncode})"
@@ -525,7 +518,10 @@ class _HeldExit:
         k32.WaitForDebugEvent.argtypes = [wintypes.LPVOID, wintypes.DWORD]
         k32.ContinueDebugEvent.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
         k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k32.DebugActiveProcessStop.argtypes = [wintypes.DWORD]
         self.k32 = k32
+        self.handle = None
         self.job = k32.CreateJobObjectW(None, None)
         # The base interpreter: a venv launcher would put a second process in the job.
         self.proc = subprocess.Popen(
@@ -537,25 +533,36 @@ class _HeldExit:
         # SYNCHRONIZE | QUERY_LIMITED | QUERY | SET_QUOTA | TERMINATE
         self.handle = k32.OpenProcess(0x00100000 | 0x1000 | 0x0400 | 0x0100 | 0x0001, False,
                                       self.proc.pid)
-        assert k32.AssignProcessToJobObject(self.job, self.handle), ctypes.get_last_error()
         self.exiting = threading.Event()
         self._release = threading.Event()
         self._attached = threading.Event()
-        self._thread = threading.Thread(target=self._debug, daemon=True)
-        self._thread.start()
-        assert self._attached.wait(LOAD_HEADROOM_S), "the debugger did not attach"
+        self._debug_error = None
+        try:
+            assert k32.AssignProcessToJobObject(self.job, self.handle), ctypes.get_last_error()
+            self._thread = threading.Thread(target=self._debug, daemon=True)
+            self._thread.start()
+            assert self._attached.wait(LOAD_HEADROOM_S), f"the debugger did not attach: {self._debug_error}"
+        except BaseException:
+            self._release.set()
+            self.close()
+            raise
 
     def _debug(self):
         import ctypes
         from ctypes import wintypes
 
         k32 = self.k32
-        assert k32.DebugActiveProcess(self.proc.pid), ctypes.get_last_error()
+        if not k32.DebugActiveProcess(self.proc.pid):
+            self._debug_error = f"DebugActiveProcess error {ctypes.get_last_error()}"
+            return
         k32.DebugSetProcessKillOnExit(False)
         event = ctypes.create_string_buffer(176)  # DEBUG_EVENT on x64
         quiet_since = time.monotonic()
         while True:
             if not k32.WaitForDebugEvent(event, 100):
+                if self._release.is_set():
+                    k32.DebugActiveProcessStop(self.proc.pid)  # the test gave up: let go
+                    return
                 if time.monotonic() - quiet_since > 0.5:
                     self._attached.set()
                 continue
@@ -573,11 +580,23 @@ class _HeldExit:
 
     def release(self):
         self._release.set()
-        self._thread.join(LOAD_HEADROOM_S)
-        self.proc.wait(timeout=LOAD_HEADROOM_S)
+        thread = getattr(self, "_thread", None)
+        if thread is not None:
+            thread.join(LOAD_HEADROOM_S)
+        try:
+            self.proc.wait(timeout=LOAD_HEADROOM_S)
+        except subprocess.TimeoutExpired:
+            pass  # close() ends it
 
     def close(self):
-        self.k32.CloseHandle(self.handle)
+        if self.proc.poll() is None:
+            self.proc.kill()
+            try:
+                self.proc.wait(timeout=LOAD_HEADROOM_S)
+            except subprocess.TimeoutExpired:
+                pass
+        if self.handle:
+            self.k32.CloseHandle(self.handle)
         self.k32.CloseHandle(self.job)
 
 
@@ -595,9 +614,9 @@ def test_an_empty_job_is_not_ok_while_a_member_is_still_exiting(monkeypatch):
         pins.pin(held.proc.pid)
         assert procutil._terminate_job(held.job)
         assert held.exiting.wait(LOAD_HEADROOM_S), "the exit never began"
-        # What the census sees while the exit is held: an empty job.
-        assert procutil._census_job_pids(held.job) == []
         assert not held.finished()
+        if procutil._census_job_pids(held.job):
+            pytest.skip("this Windows build still lists a process whose exit has begun")
 
         facts = procutil._await_empty_job(held.job, pins, {held.proc.pid})
 
@@ -610,6 +629,48 @@ def test_an_empty_job_is_not_ok_while_a_member_is_still_exiting(monkeypatch):
         if not held._release.is_set():
             held.release()
         held.close()
+
+
+@windows_only
+def test_a_process_whose_exit_has_begun_is_not_read_dead():
+    """``pid_state`` and the pins' fallback used the exit code, which is set
+    when the exit begins. "dead" must mean the exit has finished."""
+    from modelquad import procutil
+
+    held = _HeldExit()
+    try:
+        assert procutil._terminate_job(held.job)
+        assert held.exiting.wait(LOAD_HEADROOM_S), "the exit never began"
+        assert procutil.pid_state(held.proc.pid) == "alive"
+        assert procutil._Pins().still_running([held.proc.pid], seconds=0.2) == [held.proc.pid]
+        held.release()
+        assert procutil.pid_state(held.proc.pid) == "dead"
+    finally:
+        if not held._release.is_set():
+            held.release()
+        held.close()
+
+
+def test_a_first_census_that_cannot_be_read_never_becomes_ok(monkeypatch):
+    """Members never seen cannot be waited on: a later empty census is not proof."""
+    from modelquad import procutil
+
+    readings = iter([None])
+    monkeypatch.setattr(procutil, "_census_job_pids", lambda job: next(readings, []))
+    monkeypatch.setattr(procutil, "_terminate_job", lambda job: True)
+    monkeypatch.setattr(procutil, "_stop_outside_job", lambda *args: [])
+    monkeypatch.setattr(procutil, "_taskkill_tree", lambda pid: "ok")
+    monkeypatch.setattr(procutil, "_account_outside_job", lambda *args: {})
+
+    class _Proc:
+        pid = 4242
+
+        def kill(self):
+            pass
+
+    facts = procutil._kill_process_tree(_Proc(), census_job=1)
+
+    assert facts["tree_kill"] == "census_unknown"
 
 
 @windows_only
