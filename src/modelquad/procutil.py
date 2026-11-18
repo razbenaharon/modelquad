@@ -135,24 +135,6 @@ def _windows_openprocess_state(pid: int) -> str:
         kernel32.GetExitCodeProcess.restype = wintypes.BOOL
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.CloseHandle.restype = wintypes.BOOL
-        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        kernel32.WaitForSingleObject.restype = wintypes.DWORD
-        # The exit code is set when a process's exit BEGINS; the process
-        # object is signaled when the exit has FINISHED. A process that can
-        # be waited on is read by the second: "dead" means done, not dying.
-        SYNCHRONIZE = 0x00100000
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
-        if handle:
-            try:
-                signaled = kernel32.WaitForSingleObject(handle, 0)
-                if signaled == 0:  # WAIT_OBJECT_0
-                    return "dead"
-                if signaled == 0x102:  # WAIT_TIMEOUT
-                    return "alive"
-                return "unknown"
-            finally:
-                kernel32.CloseHandle(handle)
-        ctypes.set_last_error(0)
         handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not handle:
             error = ctypes.get_last_error()
@@ -165,8 +147,6 @@ def _windows_openprocess_state(pid: int) -> str:
             code = ctypes.c_ulong()
             if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
                 return "unknown"
-            # Only reached when the process may be queried but not waited
-            # on: the exit code is the one reading left.
             return "alive" if code.value == STILL_ACTIVE else "dead"
         finally:
             kernel32.CloseHandle(handle)
@@ -742,6 +722,40 @@ def _process_in_job(pid: int, job: int) -> "bool | None":
         return None
 
 
+def _pid_finished(pid: int) -> bool:
+    """Has ``pid`` finished exiting? Only a signaled process object, or no process at all, says yes.
+
+    :func:`pid_state` reads the exit code, which Windows sets when an exit
+    BEGINS (checked 2026-11-18 under a held exit: exit code 1, process not
+    signaled). That is the right reading for "is it left running", and the
+    wrong one for "has the stop finished". Anything this cannot settle --
+    access denied, an error -- is not finished.
+    """
+
+    if os.name != "nt":
+        return pid_state(pid) == "dead"
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        ctypes.set_last_error(0)
+        handle = kernel32.OpenProcess(0x1000 | 0x00100000, False, int(pid))  # QUERY_LIMITED | SYNCHRONIZE
+        if not handle:
+            return ctypes.get_last_error() == 87  # ERROR_INVALID_PARAMETER: no such process
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == 0  # WAIT_OBJECT_0
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:  # noqa: BLE001 -- a probe must never raise; unknown is not finished
+        return False
+
+
 class _Pins:
     """Handles held on the processes a stop or a census reasons about.
 
@@ -816,7 +830,7 @@ class _Pins:
                 if handle is not None:
                     if self._api().WaitForSingleObject(handle, 0) != 0:
                         running.append(pid)
-                elif pid_state(pid) != "dead":
+                elif not _pid_finished(pid):
                     running.append(pid)
             if not running or time.monotonic() >= deadline:
                 return running

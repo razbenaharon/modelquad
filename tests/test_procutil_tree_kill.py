@@ -632,19 +632,21 @@ def test_an_empty_job_is_not_ok_while_a_member_is_still_exiting(monkeypatch):
 
 
 @windows_only
-def test_a_process_whose_exit_has_begun_is_not_read_dead():
-    """``pid_state`` and the pins' fallback used the exit code, which is set
-    when the exit begins. "dead" must mean the exit has finished."""
+def test_a_process_whose_exit_has_begun_is_not_counted_finished():
+    """The stop's check for a process it could not hold used ``pid_state``,
+    which reads the exit code, set when the exit begins. For the stop,
+    finished must mean the exit has finished."""
     from modelquad import procutil
 
     held = _HeldExit()
     try:
         assert procutil._terminate_job(held.job)
         assert held.exiting.wait(LOAD_HEADROOM_S), "the exit never began"
-        assert procutil.pid_state(held.proc.pid) == "alive"
+        # pid_state keeps its meaning ("not left running"); the stop does not rely on it.
+        assert procutil._pid_finished(held.proc.pid) is False
         assert procutil._Pins().still_running([held.proc.pid], seconds=0.2) == [held.proc.pid]
         held.release()
-        assert procutil.pid_state(held.proc.pid) == "dead"
+        assert procutil._pid_finished(held.proc.pid) is True
     finally:
         if not held._release.is_set():
             held.release()
