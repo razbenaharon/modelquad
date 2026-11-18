@@ -107,11 +107,44 @@ def test_a_dry_run_install_does_not_count(fresh_install, tmp_path):
     assert (fresh_install / disclosure.NOTICE_RECORD_NAME).exists() is False
 
 
-def test_an_earlier_install_counts_without_a_record(fresh_install):
+def test_an_earlier_install_saw_the_first_version_and_sees_the_new_one_once(fresh_install):
     # 0.3.0 printed the notice on every install that wrote the registration
-    # backup, so an upgraded installation is not stopped again.
+    # backup: that user saw version 1, and is shown the current one once.
     (paths.state_root() / "host-registration-backup.json").write_text("{}", encoding="utf-8")
+    assert disclosure.shown_version() == 1
+    assert disclosure.notice_shown() is False
+
+    payload = review.notice()
+
+    assert payload["status"] == "notice_first" and payload["notice_changed"] is True
+    assert "changed since the user last saw it" in payload["next"]
+    assert payload["notice"] == list(disclosure.DATA_FLOW)
+    assert review.headline(payload).startswith("Codex was not started. ModelQuad's notice")
+    assert disclosure.notice_shown() is True and review.notice() is None
+
+
+def test_a_record_without_a_version_is_the_first_version(fresh_install):
+    (fresh_install / disclosure.NOTICE_RECORD_NAME).write_text(
+        '{"schema": 1, "via": "first_call", "shown_at": "2026-11-01T00:00:00+00:00"}',
+        encoding="utf-8")
+
+    assert disclosure.shown_version() == 1 and disclosure.notice_shown() is False
+
+
+def test_the_record_keeps_the_version_shown(fresh_install):
+    import json
+
+    disclosure.record_notice_shown("first_call")
+
+    record = json.loads((fresh_install / disclosure.NOTICE_RECORD_NAME).read_text(encoding="utf-8"))
+    assert record["notice_version"] == disclosure.NOTICE_VERSION
     assert disclosure.notice_shown() is True
+
+
+def test_a_first_showing_does_not_say_changed(fresh_install):
+    payload = review.notice()
+
+    assert "notice_changed" not in payload and "Show the user the notice" in payload["next"]
 
 
 def test_unreadable_state_reads_as_not_shown(monkeypatch):

@@ -49,6 +49,10 @@ FILES_WITHHELD_NEXT = (
 FILES_UNREADABLE_NEXT = (
     "No file can be sent until that is fixed: tell the user. A call without `files` "
     "sends only the task text.")
+NOTICE_CHANGED_NEXT = (
+    "Codex was not started. ModelQuad's notice changed since the user last saw it: show "
+    "them the notice above in full, as written, and say that it changed. If the user "
+    "wants to go ahead, call the same tool again; Claude Code asks them again.")
 NOTICE_FIRST_NEXT = (
     "Codex was not started. Show the user the notice above in full, as written: it is "
     "what ModelQuad sends where, and it is shown once, before the first Codex call. If "
@@ -264,12 +268,16 @@ def screen_named(working_directory: str, files) -> tuple[list[str], list[tuple[s
 
 def notice() -> dict | None:
     """The data-flow notice in place of the first Codex call, or None once it was shown."""
-    from .disclosure import DATA_FLOW, notice_shown, record_notice_shown
+    from .disclosure import DATA_FLOW, notice_shown, record_notice_shown, shown_version
 
     if notice_shown():
         return None
+    seen = shown_version()  # an earlier version, or 0 for never
     payload: dict[str, Any] = {"status": NOTICE_FIRST, "codex_started": False,
-                               "notice": list(DATA_FLOW), "next": NOTICE_FIRST_NEXT}
+                               "notice": list(DATA_FLOW),
+                               "next": NOTICE_CHANGED_NEXT if seen else NOTICE_FIRST_NEXT}
+    if seen:
+        payload["notice_changed"] = True
     try:
         record_notice_shown("first_call")
     except OSError:
@@ -680,6 +688,9 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
 def headline(payload: dict) -> str:
     """The first line of a reply: what happened, in the words the review hook reads."""
     if payload.get("status") == NOTICE_FIRST:
+        if payload.get("notice_changed"):
+            return ("Codex was not started. ModelQuad's notice of what it sends where changed "
+                    "since you last saw it:")
         return ("Codex was not started. Before the first Codex call, ModelQuad shows what it "
                 "sends where:")
     if payload.get("refused"):
