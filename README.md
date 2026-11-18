@@ -47,7 +47,7 @@ unfamiliar code.
 2. Claude names the files. ModelQuad can show the **context package** first
    (`modelquad_review_package`, or `modelquad review package` in a terminal):
    each file with its size as sent, what is left out and why, the limits, and
-   a package id. Add or remove files and look again. Showing a package starts
+   a package id (in a terminal, with `--json`). Add or remove files and look again. Showing a package starts
    nothing and sends nothing.
 3. Claude Code asks you before the call, unless you turned on the standing
    grant for that folder (`modelquad settings auto on`).
