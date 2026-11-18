@@ -188,7 +188,8 @@ as that repository, for this setting and for its `.modelquad.toml`.
 
 ### How the layers combine
 
-1. ModelQuad's own rules always win: read-only, no tools, an empty folder,
+1. ModelQuad's own rules always win: read-only, Codex's tool features
+   switched off, an empty folder,
    your approval on every call (or the standing grant you turned on),
    loopback only, the file rules.
 2. Restrictions (Codex allowed, task kinds, file limits, account) are the most

@@ -241,7 +241,7 @@ grant off; `modelquad off`, `modelquad settings repo off` or a
 
 ModelQuad does not start Claude. Claude Code starts ModelQuad, and everything
 ModelQuad returns to it becomes part of your conversation, which Claude Code
-sends to Anthropic:
+sends to Anthropic, or to the cloud provider you set Claude Code up to use:
 
 - Codex's answers (a reply shows at most 20,000 characters and says when it
   cut one), and facts about each run: its outcome, the package manifest
@@ -269,11 +269,14 @@ it, and Anthropic's forbid using Claude's output to train any AI model
 without its permission. ModelQuad passes text in both directions: text Claude
 wrote goes to OpenAI, and Codex's answers go to Anthropic. Turn off model
 training with both providers while you use ModelQuad, and do not use its
-answers or history
-as training data:
+answers or its record as training data:
 
 - ChatGPT data controls: <https://chatgpt.com/#settings/DataControls>
 - Claude privacy settings: <https://claude.ai/settings/data-privacy-controls>
+
+If Codex is signed in with an API key, your API organization's retention and
+data-sharing settings apply instead of the ChatGPT data controls; in a
+ChatGPT workspace, the workspace's settings apply.
 
 Opting out does not cover feedback you submit or conversations flagged for
 safety review. How long each provider keeps your data depends on its terms

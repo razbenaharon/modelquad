@@ -197,7 +197,7 @@ ModelQuad for Codex again (`src/modelquad/mcp/worker_guard.py`,
   second identical request while the first runs is refused
   (`duplicate_in_flight`, `src/modelquad/review.py`). Each Claude Code
   session has its own server process, so the same package asked for in two
-  sessions at once runs twice, each after its own approval.
+  sessions at once runs twice, each with its own approval or grant.
 
 **Hooks ModelQuad installs.** Only the plugin installs hooks, and they do
 nothing while ModelQuad is off. They never approve a Claude Code tool call, and

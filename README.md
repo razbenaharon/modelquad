@@ -83,8 +83,8 @@ unfamiliar code.
   answer withheld if Codex's event stream shows a tool call. What this does
   and does not establish is in
   [SECURITY.md](https://github.com/razbenaharon/modelquad/blob/main/SECURITY.md).
-- **Consent on every call**, or a standing grant you turn on per repository,
-  and one switch that turns everything off (`modelquad off`).
+- **Consent on every call**, or a standing grant you turn on for a repository
+  or for every folder, and one switch that turns everything off (`modelquad off`).
 - **A local record** (`modelquad review report`): each call, its package, the
   findings, which were confirmed and on what evidence (a test or a
   reproduction counts; Claude's own reading is recorded as that and is not
@@ -312,8 +312,10 @@ its user configuration ignored.
   competing models, and Anthropic's forbid using Claude to train AI models or
   build competing products. ModelQuad passes text in both directions.
   Turn off model training in your ChatGPT data controls and in your Claude
-  privacy settings while you use ModelQuad, and do not use its answers or
-  its record as training data. Opting out does not cover feedback you submit
+  privacy settings while you use ModelQuad. If Codex is signed in with an
+  API key, your API organization's retention and data-sharing settings
+  apply instead; in a ChatGPT workspace, the workspace's settings apply.
+  Do not use ModelQuad's answers or its record as training data. Opting out does not cover feedback you submit
   or conversations flagged for safety review.
 
 Details: [PRIVACY.md](https://github.com/razbenaharon/modelquad/blob/main/PRIVACY.md), [NETWORK.md](https://github.com/razbenaharon/modelquad/blob/main/NETWORK.md). For settings that
@@ -333,7 +335,7 @@ repository. ModelQuad does less, on purpose:
   before it is sent, and cannot search the repository or run anything
   through the tools ModelQuad switches off;
 - an approval prompt on every call unless you grant it once for a
-  repository, a per-repository off, and repository rules that can only
+  repository or for every folder, a per-repository off, and repository rules that can only
   narrow;
 - a record of each review: its package, its findings, Claude's verdicts and
   their evidence, and what Codex reported using.
@@ -356,7 +358,7 @@ The code is open source; the ModelQuad name and logo are not part of the
 licence. A changed version needs a name of its own. See
 [TRADEMARK.md](https://github.com/razbenaharon/modelquad/blob/main/TRADEMARK.md).
 
-<!-- disclaimer: owner review 2026-11-03; re-read provider terms before each release -->
+<!-- disclaimer: owner review 2026-11-03; provider terms re-read 2026-11-18; re-read before each release -->
 
 ## Provider terms and your account
 
@@ -379,7 +381,8 @@ has approved ModelQuad.
   their terms at any time. That risk is yours. If a provider tells you that a
   use is not allowed, stop it, and please tell us in an issue.
 - Text you send through Codex goes to OpenAI, and Codex's answer goes to
-  Anthropic as part of your conversation. If the code belongs to an employer
+  Anthropic, or to the cloud provider you set Claude Code up to use, as part
+  of your conversation. If the code belongs to an employer
   or a client, check that you may send it to both.
 - OpenAI's terms forbid using its output to develop competing models, and
   Anthropic's forbid using Claude to train AI models or build competing
