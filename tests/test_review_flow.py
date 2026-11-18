@@ -269,6 +269,105 @@ def test_only_one_run_of_the_same_package_at_a_time(project):
     assert review.headline(review.run(request_for(project), FakeExecutor())) == "Codex answered."
 
 
+_OTHER_SESSION = r'''
+import sys
+from modelquad import disclosure, review
+from modelquad.execution.base import ExecutionResult, WorkerTaskStatus
+
+disclosure.notice_shown = lambda: True
+
+
+class Waits:
+    def execute(self, request):
+        print("running", flush=True)
+        sys.stdin.readline()
+        return ExecutionResult(provider="codex", success=True, output="FINDINGS: none",
+                               exit_code=0, task_status=WorkerTaskStatus.COMPLETED,
+                               metadata={"worker_started": True})
+
+
+reply = review.run(review.ReviewRequest(task_type="review", prompt="Review the change to run().",
+                                        working_directory=sys.argv[1], files=("app.py",)), Waits())
+print("done", reply.get("reason"), flush=True)
+'''
+
+
+@pytest.fixture
+def other_session(project):
+    """A second server process (another Claude Code session) running the same package."""
+    import subprocess
+    import sys
+
+    from modelquad.procutil import no_window_kwargs
+
+    child = subprocess.Popen([sys.executable, "-c", _OTHER_SESSION, str(project)],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                             **no_window_kwargs(detach_stdin=False))
+    try:
+        assert child.stdout.readline().strip() == "running"
+        yield child
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=30)
+
+
+def test_the_same_package_running_in_another_session_is_refused(project, other_session):
+    executor = FakeExecutor()
+
+    reply = review.run(request_for(project), executor)
+
+    assert (reply["refused"], reply["reason"]) == (True, review.DUPLICATE)
+    assert executor.requests == []
+    # Once the other session's run ends, the same package is a fresh request.
+    other_session.stdin.write("\n")
+    other_session.stdin.flush()
+    assert other_session.stdout.readline().split()[0] == "done"
+    other_session.wait(timeout=30)
+    assert review.headline(review.run(request_for(project), FakeExecutor())) == "Codex answered."
+
+
+def test_a_session_that_dies_mid_run_leaves_no_lock_behind(project, other_session):
+    import time
+
+    other_session.kill()  # TerminateProcess: no finally block runs in that process
+    other_session.wait(timeout=30)
+
+    # A venv launcher can exit a few milliseconds before the interpreter it
+    # started; Windows frees the lock when that interpreter is gone.
+    deadline = time.monotonic() + 10
+    while True:
+        reply = review.run(request_for(project), FakeExecutor())
+        if reply.get("reason") != review.DUPLICATE or time.monotonic() > deadline:
+            break
+        time.sleep(0.05)
+    assert review.headline(reply) == "Codex answered."
+
+
+def test_another_package_runs_while_one_runs_in_another_session(project, other_session):
+    reply = review.run(request_for(project, files=("util.py",)), FakeExecutor())
+
+    assert review.headline(reply) == "Codex answered."
+
+
+def test_the_run_lock_file_is_gone_after_the_run(project):
+    review.run(request_for(project), FakeExecutor())
+
+    from modelquad.paths import state_root
+
+    assert list((state_root() / review.RUN_LOCK_FOLDER).glob("*.lock")) == []
+
+
+def test_a_state_folder_that_cannot_hold_a_lock_does_not_stop_the_review(project):
+    from modelquad.paths import state_root
+
+    # A file where the lock folder should be: the lock cannot be opened.
+    state_root().mkdir(parents=True, exist_ok=True)
+    (state_root() / review.RUN_LOCK_FOLDER).write_text("", encoding="utf-8")
+
+    assert review.headline(review.run(request_for(project), FakeExecutor())) == "Codex answered."
+
+
 def test_a_long_answer_is_cut_and_says_so(project):
     reply = review.run(request_for(project), FakeExecutor("x" * (review.MAX_SHOWN_OUTPUT_CHARS + 50)))
 

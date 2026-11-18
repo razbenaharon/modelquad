@@ -98,7 +98,13 @@ input as a package (below) and start nothing and send nothing.
      read;
    - Git ignores it (`git_ignored`). ModelQuad asks `git check-ignore` with
      only the listed paths; without Git, or outside a repository, this check
-     is skipped;
+     is skipped. A file in a submodule is checked against that submodule's
+     own rules. If Git is found but gives no answer (it cannot be started,
+     takes longer than 10 seconds, or refuses the folder, for example as of
+     dubious ownership), no file is sent (`git_check_failed`), and a run
+     whose second check at launch gets no answer is refused rather than sent
+     without its files. A repository nested in a folder that is not itself
+     in a repository is not asked;
    - a `.modelquadignore` (gitignore syntax) in any of those folders that
      holds the file covers it (`modelquad_ignored`). Its patterns are
      relative to the folder it sits in. If one of these files exists but

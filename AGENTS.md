@@ -127,10 +127,11 @@ releases and recorded in SECURITY.md.
 1. **A worker never re-enters ModelQuad.** `MODELQUAD_WORKER=1` refuses at
    every entry point, and a process with a running worker among its ancestors
    is refused as well (`tests/test_mcp_worker_guard.py`).
-2. **At most one active run per package, in one server process.** A second
-   request for the package that is running is refused, not queued
-   (`tests/test_review_flow.py`). Two Claude Code sessions are two server
-   processes; each asks its own user and each runs.
+2. **At most one active run per package.** A second request for the package
+   that is running is refused, not queued, in the same server process or in
+   another one that shares the state folder: an operating-system lock on
+   `<state root>/running/<package id>.lock`, released by Windows when the
+   run ends or its process dies (`tests/test_review_flow.py`).
 3. **A boundary ModelQuad cannot check is not claimed.** A Codex whose feature
    listing does not confirm the switched-off tools is refused, and the docs
    say which tools Codex still lists to the model.

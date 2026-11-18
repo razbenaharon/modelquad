@@ -36,9 +36,10 @@ SETTINGS_UNREADABLE = "claude_settings_unreadable"
 GIT_IGNORED = "git_ignored"
 MODELQUAD_IGNORED = "modelquad_ignored"
 IGNORE_FILE_UNREADABLE = "modelquadignore_unreadable"
+GIT_UNANSWERED = "git_check_failed"
 #: Every reason this module skips a file for. None of them refuses a run.
 POLICY_REASONS = frozenset({DENIED, SETTINGS_UNREADABLE, GIT_IGNORED, MODELQUAD_IGNORED,
-                            IGNORE_FILE_UNREADABLE})
+                            IGNORE_FILE_UNREADABLE, GIT_UNANSWERED})
 IGNORE_FILE = ".modelquadignore"
 MAX_SETTINGS_BYTES = 1024 * 1024
 MAX_IGNORE_BYTES = 256 * 1024
@@ -318,8 +319,14 @@ def modelquad_ignore_rules(root) -> tuple[_Rule, ...] | None:
         return None
 
 
-def git_ignored(root, names) -> frozenset[str]:
-    """The subset of ``names`` Git ignores in ``root``; empty when Git cannot say.
+def git_ignored(root, names) -> frozenset[str] | None:
+    """The subset of ``names`` Git ignores in ``root``, or None when Git did not answer.
+
+    Empty without Git, or outside a repository. None when Git ran but gave no
+    answer for this folder: it timed out, or failed for another reason than
+    "not a git repository" (for example a folder it refuses as of dubious
+    ownership). The caller then sends nothing, as it does for settings it
+    cannot read.
 
     Git runs with inherited ``GIT_*`` overrides removed, file-system monitors
     and hooks off, and an executable planted in the folder never chosen.
@@ -337,9 +344,22 @@ def git_ignored(root, names) -> frozenset[str]:
         return frozenset()
     if executable.path is None:
         return frozenset()
+    return _ask_git(executable.path, Path(root), names, no_window_kwargs)
+
+
+_IN_SUBMODULE = re.compile(rb"pathspec '(.+?)' is in submodule '(.+?)'", re.IGNORECASE)
+_NOT_A_REPOSITORY = b"not a git repository (or any"
+
+
+def _ask_git(git: str, root: Path, names: list[str], no_window_kwargs) -> frozenset[str] | None:
+    """``git check-ignore`` for ``names`` in ``root``; a file in a submodule is asked there."""
+    if not names:
+        return frozenset()
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
-    env.update(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0")
-    command = [executable.path, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.devnull,
+    # English messages, so "not a git repository" can be told from a failure.
+    env.update(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0",
+               LC_ALL="C", LANGUAGE="C")
+    command = [git, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.devnull,
                "check-ignore", "--stdin", "-z"]
     try:
         completed = subprocess.run(
@@ -347,10 +367,30 @@ def git_ignored(root, names) -> frozenset[str]:
             capture_output=True, timeout=GIT_SECONDS, check=False,
             **no_window_kwargs(detach_stdin=False))
     except (OSError, subprocess.SubprocessError, ValueError):
-        return frozenset()
-    # 0: some ignored, 1: none ignored; anything else (128: not a repository).
+        # Git was found but did not run to an answer (timed out, blocked, ...).
+        return None
+    # 0: some ignored, 1: none ignored; 128: a fatal error, of which only
+    # "not a git repository (or any parent ...)" means there is nothing to check.
     if completed.returncode not in (0, 1):
-        return frozenset()
+        stderr = completed.stderr.lower()
+        if completed.returncode == 128 and _NOT_A_REPOSITORY in stderr:
+            return frozenset()
+        found = _IN_SUBMODULE.search(completed.stderr) if completed.returncode == 128 else None
+        if found is None:
+            return None
+        # Git refuses the whole list when one path is in a submodule: ask the
+        # submodule (its own ignore rules) about its files, and the rest here.
+        prefix = found.group(2).decode("utf-8", "replace").strip("/") + "/"
+        fold = str.casefold if os.name == "nt" else (lambda value: value)
+        inside = [name for name in names if fold(name).startswith(fold(prefix))]
+        if not inside:
+            return None
+        rest = _ask_git(git, root, [name for name in names if name not in inside], no_window_kwargs)
+        inner = _ask_git(git, root.joinpath(*prefix.strip("/").split("/")),
+                         [name[len(prefix):] for name in inside], no_window_kwargs)
+        if rest is None or inner is None:
+            return None
+        return rest | {prefix + name for name in inner}
     reported = {item.decode("utf-8", "replace") for item in completed.stdout.split(b"\0") if item}
     if os.name == "nt":
         reported = {item.casefold() for item in reported}
@@ -399,5 +439,7 @@ def screen(root, names) -> tuple[list[str], list[tuple[str, str]]]:
         else:
             allowed.append(name)
     hidden = git_ignored(root, allowed)
+    if hidden is None:
+        return [], skipped + [(name, GIT_UNANSWERED) for name in allowed]
     skipped += [(name, GIT_IGNORED) for name in allowed if name in hidden]
     return [name for name in allowed if name not in hidden], skipped
