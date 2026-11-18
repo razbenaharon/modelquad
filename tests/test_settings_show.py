@@ -174,6 +174,21 @@ def test_automatic_global_versus_this_folder(tmp_path, capsys):
     assert "2. Mode: approve each call." in _show(capsys, other)
 
 
+def test_a_relative_project_folder_is_the_same_folder(tmp_path, capsys, monkeypatch):
+    repo = _repo(tmp_path / "r")
+    monkeypatch.chdir(repo)
+
+    assert cli.main(["settings", "auto", "on", "--project", ".", "--yes"]) == 0
+    assert grant.granted(repo)
+    capsys.readouterr()
+    assert cli.main(["settings", "auto", "status", "--project", "."]) == 0
+    assert capsys.readouterr().out.strip() == "Standing grant: on for this repository"
+    assert cli.main(["settings", "repo", "off", "--project", "."]) == 0
+    assert repo_settings.read_mode(repo) == "off"
+    assert cli.main(["settings", "auto", "off", "--project", "."]) == 0
+    assert not grant.granted(repo)
+
+
 def test_an_excluded_folder_says_so(tmp_path, capsys):
     repo = _repo(tmp_path / "r")
     grant.write(True, everywhere=True)

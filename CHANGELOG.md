@@ -63,6 +63,11 @@ is the install.
 
 ### Changes
 
+- **`--project .` works.** `modelquad settings auto`, `settings repo`,
+  `settings show` and `review verdict` took a relative `--project` as it was
+  typed, so `auto on --project .` failed with "could not identify this
+  folder's repository" and `status` reported off. The folder is now made
+  absolute first.
 - **A Git check that gives no answer sends nothing.** When Git timed out
   or refused the folder (for example as of dubious ownership), the files
   it might ignore used to be sent as if it had said none. Now no file is
