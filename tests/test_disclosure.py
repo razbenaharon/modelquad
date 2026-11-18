@@ -15,7 +15,10 @@ from modelquad.disclosure import (
 def test_the_data_flow_notice_names_every_destination_and_setting():
     text = "\n".join(DATA_FLOW)
     for required in ("OpenAI", "Anthropic", "ModelQuad reads the files the request names",
-                     "asks you before each call",
+                     "each call needs your approval in Claude Code",
+                     "no file list shown to you first",
+                     "a secret under an ordinary", "keeps a record of each call on this computer",
+                     "API key or a ChatGPT workspace",
                      "employer or a client", CHATGPT_DATA_CONTROLS, CLAUDE_PRIVACY_SETTINGS,
                      "Opting out does not cover feedback", "limit or suspend accounts",
                      "unattended", "other licences", "does not change any usage limit"):

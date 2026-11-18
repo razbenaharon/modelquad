@@ -106,7 +106,24 @@ The plugin's tool names differ, so a deny rule needs both forms:
   first-call notice, a review and a verdict worked, the consultation gate
   stopped the first edit of a sensitive file once and the Stop gate blocked
   once, each followed by a real Codex call. Not checked: a click or Esc in
-  the interactive window, and bypass-permissions mode.
+  the interactive window.
+- Live check (2026-11-18), the same build plus the versioned notice, in
+  headless Claude Code 2.1.318 started with `--permission-mode
+  bypassPermissions` and `modelquad_delegate` in `--allowedTools`, a
+  throwaway project and a separate state folder. Without a grant, and again
+  after the grant was turned off: Claude Code denied the call ("requires
+  permission"); ModelQuad was not reached, nothing was recorded, Codex did
+  not start. With the grant: the first call returned the notice and started
+  nothing, the next ran a review (recorded as answered). With the grant and
+  `modelquad off`: ModelQuad refused (`modelquad_off`). With the grant and a
+  `.modelquad.toml` that turns Codex off: the grant did not apply, so the
+  tool kept its approval mark and Claude Code denied the call; ModelQuad
+  itself refuses such a call too (`repo_policy_codex_off`, checked through a
+  protocol client). With a notice record from before the notice had a
+  version: the updated notice, once, saying it changed; Codex did not start.
+  Not checked: an interactive bypass-mode session (it stops at the folder
+  trust question, which an automated run cannot answer), so whether Claude
+  Code shows a prompt there or only holds the call back is not known.
 
 ## Maintenance
 

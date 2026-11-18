@@ -71,7 +71,14 @@ is the install.
   holds no text, name, path or id from the ledger, and says what its counts
   cannot show. `--out FILE` also writes the JSON to a file you name and does
   not replace an existing file without `--force`. ModelQuad does not send
-  it; PRIVACY.md lists every field.
+  it; PRIVACY.md lists every field. The period is at least 30 days.
+- **The notice has a version, and four more lines.** The first-use notice
+  now also says that with the standing grant files go to OpenAI with no
+  prompt and no list first, that the secret screen can miss a secret under
+  an ordinary name, what the local record keeps, and that an API-key or
+  workspace sign-in has its own data settings. Someone who saw an earlier
+  notice is shown this one once, before their next Codex call, with a line
+  that says it changed.
 - **`--project .` works.** `modelquad settings auto`, `settings repo`,
   `settings show` and `review verdict` took a relative `--project` as it was
   typed, so `auto on --project .` failed with "could not identify this
