@@ -396,7 +396,7 @@ def _kill_process_tree(
     stop can see those, and ``taskkill /T`` never did either. Nor a member
     born after the stop's first census and killed before any later census
     listed it: it was never held, so its exit cannot be waited on; it was
-    terminated with the job. Containing
+    terminated with the job (tracked as issue 18). Containing
     alias targets in the job while the worker runs would close the first two;
     it is not done here.
 

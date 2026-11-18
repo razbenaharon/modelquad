@@ -191,8 +191,18 @@ ModelQuad for Codex again (`src/modelquad/mcp/worker_guard.py`,
 - The worker gets `MODELQUAD_WORKER=1`. With it set, ModelQuad's MCP tools
   refuse, so a worker cannot start another worker (see the worker guard
   above).
-- On Windows the worker runs in a Job Object that stops it, and every process
-  it started, when the MCP server process ends or the call is cancelled.
+- On Windows the worker runs in a Job Object from its first instruction.
+  When a call times out or is cancelled, the job is terminated, and so is
+  every process in it; when the MCP server process ends, Windows does the
+  same (kill on close). A reply reports the stop as `tree_kill: ok` only when
+  the job read empty and every member the stop held had finished exiting,
+  read through its own handle: Windows takes a process off the job's list as
+  soon as its exit begins, before it has finished. Not covered by `ok`: a
+  process Windows started outside the job for a member that had already
+  exited (an App Execution Alias target), one a broker started (COM, the
+  Task Scheduler, a service), and a member born after the stop's first look
+  and terminated before any later look listed it, which is stopped with the
+  job but whose exit is not waited on (issue 18).
 - At most one attempt per package runs at a time: a second identical
   request while the first runs is refused (`duplicate_in_flight`,
   `src/modelquad/review.py`), in the same session or in another one. Each
