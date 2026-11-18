@@ -121,7 +121,7 @@ def closed_result(result):
                 safe[name] = fate[name]
         tree = fate.get('tree_kill')
         safe['tree_kill'] = tree if type(tree) is str and tree in {'ok', 'direct_child_only', 'uncontained', 'census_unknown',
-                                           'job_not_empty', 'outside_unknown', 'escaped_job'} else 'census_unknown'
+                                           'job_not_empty', 'members_exiting', 'outside_unknown', 'escaped_job'} else 'census_unknown'
         clean['worker_termination'] = safe
     descendants = metadata.get('worker_descendants')
     if type(descendants) is dict:

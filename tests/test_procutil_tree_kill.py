@@ -431,7 +431,8 @@ def _run_ready_worker(argv, ready, **kwargs):
         assert not readiness_errors, readiness_errors
 
 
-def _run_in_background(argv, *, ready=None, **kwargs):
+def _run_in_background(argv, *, ready=None, on_return=None, **kwargs):
+    """Run in a thread; ``on_return`` is called the instant the stop hands control back."""
     box: dict = {}
 
     def target():
@@ -440,6 +441,9 @@ def _run_in_background(argv, *, ready=None, **kwargs):
                              _run_ready_worker(argv, ready, **kwargs))
         except BaseException as exc:  # noqa: BLE001 -- handed to the test to assert on
             box["error"] = exc
+        finally:
+            if on_return is not None:
+                on_return(box)
 
     thread = threading.Thread(target=target, daemon=True)
     thread.start()
@@ -461,9 +465,14 @@ def test_a_timeout_stops_a_grandchild_whose_parent_already_exited(dummy, sentine
         [leaf] = leaves
         pinned.pin(leaf)
 
+    def on_return(box):
+        # No clock: whether each pinned process had already finished, read
+        # through its handle the instant the stop returned.
+        box["finished_at_return"] = {pid: pinned.exited_within(pid, 0) for pid in list(pinned.handles)}
+
     thread, box = _run_in_background(
         [sys.executable, str(script), "orphaner", str(folder)], capture_output=True, text=True, timeout=6,
-        ready=ready,
+        ready=ready, on_return=on_return,
     )
     thread.join(timeout=2 * LOAD_HEADROOM_S)
     assert not thread.is_alive(), box
@@ -472,15 +481,198 @@ def test_a_timeout_stops_a_grandchild_whose_parent_already_exited(dummy, sentine
 
     error = box.get("error")
     assert isinstance(error, subprocess.TimeoutExpired), box
-    assert pinned.exited_within(leaf, 5), f"orphaned grandchild {leaf} survived the stop"
-    time.sleep(1.0)
-    assert _changed_leaves(folder, stopped_contents) == []
-    assert sentinel.poll() is None, f"an unrelated process with the same image was stopped (exit code {sentinel.returncode})"
     facts = error.worker_termination
+    # The commitment: when the stop says the tree is stopped, it already is.
+    # Read the stop's own report first, so a failure says what it claimed.
     assert facts["tree_kill"] == "ok", facts
+    assert box["finished_at_return"] == {leaf: True}, f"the stop returned {facts} before the leaf finished"
+    time.sleep(1.0)
+    assert _changed_leaves(folder, stopped_contents) == [], facts
+    assert sentinel.poll() is None, f"an unrelated process with the same image was stopped (exit code {sentinel.returncode})"
     assert facts["job_terminate"] == "ok"
     assert facts["confirmed_dead"] is True
     assert worker_confirmed_dead({"worker_termination": facts}) is True
+
+
+class _HeldExit:
+    """A process in its own job whose exit is held open by a debugger.
+
+    When the process's EXIT_PROCESS debug event arrives it is not continued
+    until :meth:`release`: the process has begun to exit but has not
+    finished. Windows already lists it as gone from the job then.
+    """
+
+    def __init__(self):
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        k32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        k32.DebugActiveProcess.argtypes = [wintypes.DWORD]
+        k32.DebugSetProcessKillOnExit.argtypes = [wintypes.BOOL]
+        k32.WaitForDebugEvent.argtypes = [wintypes.LPVOID, wintypes.DWORD]
+        k32.ContinueDebugEvent.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k32.DebugActiveProcessStop.argtypes = [wintypes.DWORD]
+        self.k32 = k32
+        self.handle = None
+        self.job = k32.CreateJobObjectW(None, None)
+        # The base interpreter: a venv launcher would put a second process in the job.
+        self.proc = subprocess.Popen(
+            [getattr(sys, "_base_executable", sys.executable), "-c",
+             "import time\nwhile True: time.sleep(0.05)"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **no_window_kwargs(),
+        )
+        # SYNCHRONIZE | QUERY_LIMITED | QUERY | SET_QUOTA | TERMINATE
+        self.handle = k32.OpenProcess(0x00100000 | 0x1000 | 0x0400 | 0x0100 | 0x0001, False,
+                                      self.proc.pid)
+        self.exiting = threading.Event()
+        self._release = threading.Event()
+        self._attached = threading.Event()
+        self._debug_error = None
+        try:
+            assert k32.AssignProcessToJobObject(self.job, self.handle), ctypes.get_last_error()
+            self._thread = threading.Thread(target=self._debug, daemon=True)
+            self._thread.start()
+            assert self._attached.wait(LOAD_HEADROOM_S), f"the debugger did not attach: {self._debug_error}"
+        except BaseException:
+            self._release.set()
+            self.close()
+            raise
+
+    def _debug(self):
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = self.k32
+        if not k32.DebugActiveProcess(self.proc.pid):
+            self._debug_error = f"DebugActiveProcess error {ctypes.get_last_error()}"
+            return
+        k32.DebugSetProcessKillOnExit(False)
+        event = ctypes.create_string_buffer(176)  # DEBUG_EVENT on x64
+        quiet_since = time.monotonic()
+        while True:
+            if not k32.WaitForDebugEvent(event, 100):
+                if self._release.is_set():
+                    k32.DebugActiveProcessStop(self.proc.pid)  # the test gave up: let go
+                    return
+                if time.monotonic() - quiet_since > 0.5:
+                    self._attached.set()
+                continue
+            code, pid, tid = ctypes.cast(event, ctypes.POINTER(wintypes.DWORD * 3)).contents
+            quiet_since = time.monotonic()
+            if code == 5:  # EXIT_PROCESS_DEBUG_EVENT
+                self.exiting.set()
+                self._release.wait(LOAD_HEADROOM_S)
+                k32.ContinueDebugEvent(pid, tid, 0x00010002)
+                return
+            k32.ContinueDebugEvent(pid, tid, 0x00010002)  # DBG_CONTINUE
+
+    def finished(self) -> bool:
+        return self.k32.WaitForSingleObject(self.handle, 0) == 0
+
+    def release(self):
+        self._release.set()
+        thread = getattr(self, "_thread", None)
+        if thread is not None:
+            thread.join(LOAD_HEADROOM_S)
+        try:
+            self.proc.wait(timeout=LOAD_HEADROOM_S)
+        except subprocess.TimeoutExpired:
+            pass  # close() ends it
+
+    def close(self):
+        if self.proc.poll() is None:
+            self.proc.kill()
+            try:
+                self.proc.wait(timeout=LOAD_HEADROOM_S)
+            except subprocess.TimeoutExpired:
+                pass
+        if self.handle:
+            self.k32.CloseHandle(self.handle)
+        self.k32.CloseHandle(self.job)
+
+
+@windows_only
+def test_an_empty_job_is_not_ok_while_a_member_is_still_exiting(monkeypatch):
+    """The census alone is not proof: Windows drops a process from the job
+    list once its exit begins. CI saw the consequence on 2026-11-18: a leaf's
+    last write landed after the stop had returned ``ok``."""
+    from modelquad import procutil
+
+    monkeypatch.setattr(procutil, "_JOB_EMPTY_SECONDS", 1.0)
+    held = _HeldExit()
+    try:
+        pins = procutil._Pins()
+        pins.pin(held.proc.pid)
+        assert procutil._terminate_job(held.job)
+        assert held.exiting.wait(LOAD_HEADROOM_S), "the exit never began"
+        assert not held.finished()
+        if procutil._census_job_pids(held.job):
+            pytest.skip("this Windows build still lists a process whose exit has begun")
+
+        facts = procutil._await_empty_job(held.job, pins, {held.proc.pid})
+
+        assert facts == {"tree_kill": "members_exiting", "job_members": 1}
+        assert not held.finished(), "the verdict was read while the exit was still held"
+        held.release()
+        assert procutil._await_empty_job(held.job, pins, {held.proc.pid}) == {"tree_kill": "ok"}
+        pins.close()
+    finally:
+        if not held._release.is_set():
+            held.release()
+        held.close()
+
+
+@windows_only
+def test_a_process_whose_exit_has_begun_is_not_counted_finished():
+    """The stop's check for a process it could not hold used ``pid_state``,
+    which reads the exit code, set when the exit begins. For the stop,
+    finished must mean the exit has finished."""
+    from modelquad import procutil
+
+    held = _HeldExit()
+    try:
+        assert procutil._terminate_job(held.job)
+        assert held.exiting.wait(LOAD_HEADROOM_S), "the exit never began"
+        # pid_state keeps its meaning ("not left running"); the stop does not rely on it.
+        assert procutil._pid_finished(held.proc.pid) is False
+        assert procutil._Pins().still_running([held.proc.pid], seconds=0.2) == [held.proc.pid]
+        held.release()
+        assert procutil._pid_finished(held.proc.pid) is True
+    finally:
+        if not held._release.is_set():
+            held.release()
+        held.close()
+
+
+def test_a_first_census_that_cannot_be_read_never_becomes_ok(monkeypatch):
+    """Members never seen cannot be waited on: a later empty census is not proof."""
+    from modelquad import procutil
+
+    readings = iter([None])
+    monkeypatch.setattr(procutil, "_census_job_pids", lambda job: next(readings, []))
+    monkeypatch.setattr(procutil, "_terminate_job", lambda job: True)
+    monkeypatch.setattr(procutil, "_stop_outside_job", lambda *args: [])
+    monkeypatch.setattr(procutil, "_taskkill_tree", lambda pid: "ok")
+    monkeypatch.setattr(procutil, "_account_outside_job", lambda *args: {})
+
+    class _Proc:
+        pid = 4242
+
+        def kill(self):
+            pass
+
+    facts = procutil._kill_process_tree(_Proc(), census_job=1)
+
+    assert facts["tree_kill"] == "census_unknown"
 
 
 @windows_only
