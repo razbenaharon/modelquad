@@ -7,10 +7,13 @@ to use ModelQuad.
 ## Do not use bypass mode on work code
 
 Claude Code's bypass-permissions mode (`--dangerously-skip-permissions`) lets
-Claude run commands and edit files without asking you. ModelQuad still asks
-before every Codex call, even in that mode, unless you turned on the standing
-grant for that folder (`modelquad settings auto on`); everything else Claude
-does would happen without a prompt. On code that matters (your employer's, a
+Claude run commands and edit files without asking you. Without the standing
+grant, ModelQuad marks its Codex call as needing your approval, and in that
+mode Claude Code still held the call back in our tests (Claude Code 2.1.318,
+non-interactive runs, 2026-11-18; whether the interactive window shows a
+prompt there was not checked). With the grant on (`modelquad settings auto
+on`), the call runs without one. Everything else Claude does would happen
+without a prompt. On code that matters (your employer's, a
 client's, anything you cannot easily restore) use the default mode, or plan
 mode when you only want ideas.
 
