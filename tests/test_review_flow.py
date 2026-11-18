@@ -656,11 +656,20 @@ def test_a_cancelled_call_asks_the_worker_to_stop(project, monkeypatch):
     monkeypatch.setattr(review_server, "_executor", Slow)
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
 
+    async def call():
+        await review_server.modelquad_delegate(
+            task_type="review", prompt="Look.", working_directory=str(project),
+            files=["app.py"], timeout=60.0)
+
     async def scenario():
-        with anyio.move_on_after(0.5):
-            await review_server.modelquad_delegate(
-                task_type="review", prompt="Look.", working_directory=str(project),
-                files=["app.py"], timeout=60.0)
+        # Cancel once the worker runs, not after a fixed time: on a loaded
+        # runner the package's Git checks alone can take longer than that.
+        async with anyio.create_task_group() as group:
+            group.start_soon(call)
+            with anyio.fail_after(30):
+                while "stop" not in seen:
+                    await anyio.sleep(0.01)
+            group.cancel_scope.cancel()
 
     anyio.run(scenario)
     try:
