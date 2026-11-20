@@ -161,9 +161,9 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
     claude plugin install modelquad@modelquad
     modelquad doctor
 
-- ModelQuad installs only from a clone of this repository. The `modelquad`
-  name on PyPI is held by the author as a placeholder with no code; do not
-  install ModelQuad from there.
+- The plugin installs from a clone of this repository. The same package is
+  on PyPI as `modelquad` (from 0.4.0); the steps above install it from the
+  clone, so the package and the plugin are the same version.
 - `pip install` puts the `modelquad` and `modelquad-mcp` commands on PATH. The
   plugin has no programs of its own and runs these two.
 - `claude plugin marketplace add .` adds this checkout as a local plugin
