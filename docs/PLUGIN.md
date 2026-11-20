@@ -52,7 +52,7 @@ the templates; `tests/test_plugin_prototype.py` fails while a copy differs.
     git clone https://github.com/razbenaharon/modelquad
     cd modelquad
     pip install .
-    claude plugin marketplace add .
+    claude plugin marketplace add ./
     claude plugin install modelquad@modelquad
     modelquad doctor
 
