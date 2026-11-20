@@ -157,7 +157,7 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
     git clone https://github.com/razbenaharon/modelquad
     cd modelquad
     pip install .
-    claude plugin marketplace add .
+    claude plugin marketplace add ./
     claude plugin install modelquad@modelquad
     modelquad doctor
 
@@ -166,7 +166,7 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
   clone, so the package and the plugin are the same version.
 - `pip install` puts the `modelquad` and `modelquad-mcp` commands on PATH. The
   plugin has no programs of its own and runs these two.
-- `claude plugin marketplace add .` adds this checkout as a local plugin
+- `claude plugin marketplace add ./` adds this checkout as a local plugin
   marketplace, and `claude plugin install modelquad@modelquad` installs the
   plugin from it. The plugin carries the server, three commands
   (`/modelquad:review`, `/modelquad:setup` and `/modelquad:settings`), the

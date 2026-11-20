@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.1 (2026-11-20)
+
+- **The install line for the plugin works.** `claude plugin marketplace add .`
+  is refused by Claude Code 2.1.318 ("Invalid marketplace source format");
+  the README and docs/PLUGIN.md now say `claude plugin marketplace add ./`,
+  which adds the clone as before.
+- **The review hooks get time to start.** Claude Code gave the plugin's hooks
+  3 seconds (5 for the Stop hook) and skipped a hook that had not answered by
+  then, with the notice "A hook didn't answer in time". Starting Python on
+  Windows alone can take most of that on a busy machine. The limit is now 10
+  seconds for each hook. The hook still bounds its own work to 1.5 seconds
+  once it is running, so a normal call is no slower.
+- **The PyPI page describes the PyPI package.** 0.4.0's page carried the
+  README from before the upload, which still called the PyPI name a
+  placeholder.
+
 ## 0.4.0 (2026-11-20)
 
 The first open-source release.
