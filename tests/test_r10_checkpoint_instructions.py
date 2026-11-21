@@ -38,7 +38,7 @@ def _instruction_sources():
 
 SOURCES = tuple(_instruction_sources())
 # The rewritten companion instructions are about 25 plain lines each; the
-# named review moments take a few more (Claude Code's own cut is 4,096).
+# named review moments take a few more.
 SIZE_CEILING_BYTES = 2400
 FORBIDDEN_PROMISES = (
     "fix it for me",
@@ -129,21 +129,45 @@ def test_each_template_has_safe_instructions(name, text, registered_names):
     assert re.search(r"not (?:as )?instructions", flat, re.I)
 
 
-def _standing_source():
+def _standing_sources():
     from modelquad.adapters.server_instructions import server_instructions
 
-    return "server instructions (standing grant)", server_instructions(True, standing=True)
+    yield "server instructions (standing grant)", server_instructions(True, standing=True)
+    yield ("server instructions (standing grant, proactive off)",
+           server_instructions(False, standing=True))
 
 
 # The standing-grant text says calls skip the per-call prompt, so it is held
 # to the size ceiling but not to the "asks the user before" fragment.
-SIZED_SOURCES = (*SOURCES, _standing_source())
+SIZED_SOURCES = (*SOURCES, *_standing_sources())
 
 
 @pytest.mark.parametrize(("name", "text"), SIZED_SOURCES, ids=[name for name, _text in SIZED_SOURCES])
 def test_template_size_ceiling(name, text):
+    """Every shipped text stays within 2,400 bytes; every variant of the server's
+    instructions also within the 2,048 characters Claude Code kept before 2.1.296."""
+    from modelquad.adapters.server_instructions import MAX_INSTRUCTION_CHARS
+
+    assert MAX_INSTRUCTION_CHARS == 2048
     assert len(text.encode("utf-8")) <= SIZE_CEILING_BYTES
     assert len(text.splitlines()) <= 30
+    if name.startswith("server instructions"):
+        assert len(text) <= MAX_INSTRUCTION_CHARS, (name, len(text))
+
+
+def test_the_retry_package_rule_comes_first_in_every_variant():
+    """A smaller package after a refusal is sent only on the user's explicit yes,
+    standing grant or not; the rule is the first thing the instructions say."""
+    from modelquad.adapters.server_instructions import server_instructions
+
+    for name, text in SIZED_SOURCES:
+        if not name.startswith("server instructions"):
+            continue
+        first = " ".join(text.split("\n\n", 1)[0].split())
+        assert "`retry_package`" in first
+        assert "what was left out, why, and what that package sends" in first
+        assert "only after the user explicitly agrees, even with a standing grant" in first
+    assert server_instructions(True) != server_instructions(True, standing=True)
 
 
 def test_top_level_template_copies_are_gone():
@@ -214,4 +238,5 @@ def test_the_mcp_server_hands_claude_code_its_instructions():
     from modelquad.adapters.server_instructions import server_instructions
 
     assert mcp_server.server.instructions in (server_instructions(False), server_instructions(True))
-    assert len(mcp_server.server.instructions) < 4096  # Claude Code cuts instructions past 4,096 characters
+    # Claude Code cut instructions past 2,048 characters before 2.1.296.
+    assert len(mcp_server.server.instructions) <= 2048
