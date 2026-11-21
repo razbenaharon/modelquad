@@ -139,7 +139,7 @@ Code asks you before each call. Three settings change that:
   refuses to run there.
 - Python 3.11 or newer. CI tests 3.11 and 3.12; 3.13 and 3.14 runs are
   advisory.
-- Git for Windows, to clone and update this repository.
+- Git for Windows: Claude Code uses it to fetch the plugin from GitHub.
 - Claude Code, installed and signed in.
 - The OpenAI Codex CLI, version 0.160.0 or newer, installed and signed in. An
   npm install works: ModelQuad runs the native `codex.exe` that the npm
@@ -154,21 +154,19 @@ Code asks you before each call. Three settings change that:
 
 ModelQuad installs as a Claude Code plugin. From PowerShell:
 
-    git clone https://github.com/razbenaharon/modelquad
-    cd modelquad
-    pip install .
-    claude plugin marketplace add ./
+    pip install modelquad
+    claude plugin marketplace add razbenaharon/modelquad#stable
     claude plugin install modelquad@modelquad
     modelquad doctor
 
-- The plugin installs from a clone of this repository. The same package is
-  on PyPI as `modelquad` (from 0.4.0); the steps above install it from the
-  clone, so the package and the plugin are the same version.
-- `pip install` puts the `modelquad` and `modelquad-mcp` commands on PATH. The
-  plugin has no programs of its own and runs these two.
-- `claude plugin marketplace add ./` adds this checkout as a local plugin
-  marketplace, and `claude plugin install modelquad@modelquad` installs the
-  plugin from it. The plugin carries the server, three commands
+- `pip install modelquad` installs the package from PyPI and puts the
+  `modelquad` and `modelquad-mcp` commands on PATH. The plugin has no
+  programs of its own and runs these two.
+- `claude plugin marketplace add razbenaharon/modelquad#stable` adds this
+  repository's `stable` branch as a plugin marketplace (Claude Code fetches
+  it with Git), and `claude plugin install modelquad@modelquad` installs the
+  plugin from it. `stable` moves only when a release is on PyPI, so the
+  plugin and the package are the same version. The plugin carries the server, three commands
   (`/modelquad:review`, `/modelquad:setup` and `/modelquad:settings`), the
   guide skill Claude reads (`/modelquad:guide`), and the review reminder with
   its two gates.
@@ -186,6 +184,12 @@ If you used an earlier build with `modelquad install claude`, run
 commands that install added, so Claude Code does not run them twice, and
 removes the quota status line and the session-start note earlier builds
 wrote.
+
+To install from a clone instead, to read or change the code: `git clone
+https://github.com/razbenaharon/modelquad`, then in that folder
+`pip install .`, `claude plugin marketplace add ./` and
+`claude plugin install modelquad@modelquad`. A clone's `main` can be ahead
+of the last release.
 
 See [docs/PLUGIN.md](https://github.com/razbenaharon/modelquad/blob/main/docs/PLUGIN.md) for what the plugin contains.
 
@@ -225,6 +229,20 @@ plugin with `claude plugin marketplace update modelquad`, then
 `claude plugin update modelquad@modelquad` (or
 `claude plugin uninstall modelquad@modelquad --keep-data` and
 `claude plugin install modelquad@modelquad`).
+
+An install from before 0.5.1 took the plugin from a clone
+(`claude plugin marketplace add ./`). To move it to PyPI and the `stable`
+branch, with Claude Code closed:
+
+    claude plugin uninstall modelquad@modelquad --keep-data
+    claude plugin marketplace remove modelquad
+    claude plugin marketplace add razbenaharon/modelquad#stable
+    claude plugin install modelquad@modelquad
+    python -P -m pip install --force-reinstall --no-deps modelquad
+
+`--force-reinstall` is there because pip counts the same version installed
+from a clone as already installed. Your settings, grant and review history
+are kept.
 
 From 0.5.0 the tools have shorter names: the plugin's are
 `mcp__plugin_modelquad_review__<tool>` and, without the plugin,

@@ -8,7 +8,7 @@
     {
       "name": "modelquad",
       "source": "./plugin",
-      "description": "The MCP server, commands and hooks for a read-only review of only the selected project files. Needs the modelquad package, installed with pip from a clone of the repository. Not affiliated with Anthropic or OpenAI."
+      "description": "The MCP server, commands and hooks for a read-only review of only the selected project files. Needs the modelquad package from PyPI (pip install modelquad). Not affiliated with Anthropic or OpenAI."
     }
   ]
 }
