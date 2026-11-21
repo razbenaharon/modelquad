@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.1 (unreleased)
+## 0.5.1 (2026-11-21)
 
 - **The plugin installs from GitHub.** The install is now
   `pip install modelquad`, `claude plugin marketplace add
