@@ -280,6 +280,13 @@ class SuppliedContextRefused(ValueError):
     def host_diagnostics(self):
         return getattr(self, "_host_diagnostics", ())
 
+    @property
+    def secret_kinds(self):
+        """{casefolded name: "path" | "name" | "content"} for each file the
+        packing pass stopped as a secret. Transient, like the diagnostics:
+        it holds names a reply must not repeat, so it is never serialised."""
+        return getattr(self, "_secret_kinds", {})
+
     def __reduce__(self):
         return (type(self), self.args)
 
@@ -941,6 +948,7 @@ def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOT
     root = Path(workspace).absolute()
     files, skipped, seen, total = [], [], set(), 0
     secret_keys, folder_keys = set(), set()
+    secret_kinds = {}  # why each secret file was stopped, from this one pass
     budget = _ReadBudget(time.monotonic() + MAX_PACK_SECONDS, MAX_READ_BYTES)
     candidates = iter(names)
     count = 0
@@ -969,6 +977,7 @@ def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOT
             continue
         if _CONTEXT_CREDENTIAL.search(name):
             skipped.append(("<path>", "secret_file"))
+            secret_kinds.setdefault(name.casefold(), "path")
             continue
         if name.casefold() in seen:
             continue
@@ -982,6 +991,7 @@ def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOT
         if _secret_reference(name):
             skipped.append(("<path>", "secret_file"))
             secret_keys.add(name.casefold())
+            secret_kinds[name.casefold()] = "name"
             continue
         try:
             # Reject the root and every ancestor too; resolve() must not erase
@@ -1005,6 +1015,7 @@ def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOT
                 "outside_workspace", "total_byte_cap", "read_byte_cap", "elapsed_work_cap"} else "file_unavailable"
             if reason == "secret_file":
                 secret_keys.add(name.casefold())
+                secret_kinds[name.casefold()] = "content"
             elif reason == "not_regular_file":
                 try:
                     # A folder is reported, not expanded: its contents were not named.
@@ -1028,6 +1039,7 @@ def pack_files(workspace, names, *, max_files=MAX_FILES, max_total_bytes=MAX_TOT
     object.__setattr__(packed, "_examined_keys", frozenset(seen))
     object.__setattr__(packed, "_secret_keys", frozenset(secret_keys))
     object.__setattr__(packed, "_folder_keys", frozenset(folder_keys))
+    object.__setattr__(packed, "_secret_kinds", dict(secret_kinds))
     return packed
 
 
@@ -1166,7 +1178,10 @@ def render_supplied(screened, pack, instruction, *, required=(), withheld=(),
             name == "<path>" and bool(missing))
         sink.append(OmissionDiagnostic(name, reason, is_required))
     if missing:
-        raise bind_host_diagnostics(SuppliedContextRefused(_missing_label(missing, pack)), sink)
+        refused = bind_host_diagnostics(SuppliedContextRefused(_missing_label(missing, pack)), sink)
+        # The reasons the explanation needs, from this pass: nothing is read again to explain.
+        object.__setattr__(refused, "_secret_kinds", dict(getattr(pack, "_secret_kinds", {})))
+        raise refused
 
     def compose(files, dropped):
         packed = SuppliedFiles(tuple(files), (*pack.skipped, *dropped))

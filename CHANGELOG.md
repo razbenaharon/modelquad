@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- **A file named like a secrets file no longer ends a review without
+  saying why.** When a file in `files` is named like an environment or
+  credential file (for example `config/billing.env.tmpl`), the reply now
+  says that its name stopped the review, not its contents, and that
+  ModelQuad did not open it. The path stays hidden as before; the reply
+  gives the file's position in Claude's own `files` list (`left_out`) and
+  whether its name, its contents or its path stopped it. It also offers the
+  same package without it (`retry_package`, with its own `package_id`) so
+  the user can decide whether the review is still useful. Nothing is sent
+  until Claude calls again with that package id, which sends that package
+  or nothing. `modelquad review package` shows the same. The explanation
+  comes from the packing pass that refused: no file is opened again to
+  explain it, so a file Git, a Read deny rule or `.modelquadignore`
+  excludes is never read for it.
+
 ## 0.5.2 (2026-11-21)
 
 - **`modelquad --version` names a release.** A copy pip installed from a

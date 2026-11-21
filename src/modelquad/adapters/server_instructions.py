@@ -77,7 +77,8 @@ _FILES = (
     "`delegate`. If a reply has a `completion_request`, nothing was added: show "
     "the user the larger package and, if they agree, call again with those files and "
     "`follows` set to that reply's decision_id (at most 2 rounds); otherwise report the "
-    "missing files as a limit of the review."
+    "missing files as a limit of the review. A refusal with a `retry_package` sent nothing: show "
+    "the user what was left out, why, and what would be sent; use its package_id only if they agree."
 )
 _REST = (
     "When the user asks for Codex's review or opinion, use `delegate`, not a "
