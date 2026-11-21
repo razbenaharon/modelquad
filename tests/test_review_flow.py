@@ -183,6 +183,60 @@ def test_the_offered_package_id_sends_that_package_or_nothing(project):
     assert executor.requests == []
 
 
+def _recording_reads(monkeypatch):
+    opened = []
+    real_read = noshell._read_file
+    monkeypatch.setattr(noshell, "_read_file", lambda root, name, *a, **k: (
+        opened.append(name), real_read(root, name, *a, **k))[1])
+    return opened
+
+
+def test_explaining_the_refusal_never_opens_a_file_the_rules_exclude(project, monkeypatch):
+    files = _env_template(project)
+    (project / "private").mkdir()
+    (project / "private" / "draft.txt").write_text("not for Codex\n", encoding="utf-8")
+    (project / ".modelquadignore").write_text("private/\n", encoding="utf-8")
+    opened = _recording_reads(monkeypatch)
+
+    shown = review.package(request_for(project, files=(*files, "private/draft.txt")))
+
+    assert "private/draft.txt" not in opened, "an excluded file is never read, not even to explain"
+    assert "config/billing.env.tmpl" not in opened
+    assert shown["reason"] == "supplied_file_secret"
+    assert shown["left_out"] == [{"position": 2, "path": "<path>", "reason": review.SECRET_NAME}]
+    assert "because of a file name, not its contents" in shown["message"]
+    assert "billing.env" not in json.dumps(shown)
+    retry = shown["retry_package"]
+    assert [item["path"] for item in retry["files"]] == ["app.py"]
+    assert {"path": "private/draft.txt", "reason": "modelquad_ignored"} in retry["skipped"]
+
+
+def test_the_refusal_reasons_come_from_the_one_packing_pass(project, monkeypatch):
+    (project / "notes.txt").write_text("-----BEGIN " + "RSA PRIVATE KEY-----\nMIIfixture\n", encoding="utf-8")
+    files = (*_env_template(project), "notes.txt")
+    opened = _recording_reads(monkeypatch)
+
+    shown = review.package(request_for(project, files=files))
+
+    # One read for the refused pack, one for the offered package; never a third look.
+    assert opened.count("notes.txt") == 1 and opened.count("app.py") == 2
+    assert shown["left_out"] == [{"position": 2, "path": "<path>", "reason": review.SECRET_NAME},
+                                 {"position": 3, "path": "<path>", "reason": review.SECRET_CONTENT}]
+    assert "looks like it holds a secret" in shown["message"]
+
+
+def test_the_offered_package_refuses_once_a_file_in_it_changed(project):
+    files = _env_template(project)
+    retry = review.package(request_for(project, files=files))["retry_package"]
+    (project / "app.py").write_text("def run():\n    return 2\n", encoding="utf-8")
+    executor = FakeExecutor()
+
+    reply = review.run(request_for(project, files=("app.py",), package_id=retry["package_id"]), executor)
+
+    assert reply["refused"] is True and reply["reason"] == review.PACKAGE_CHANGED
+    assert executor.requests == []
+
+
 def test_a_file_stopped_by_its_contents_says_so_and_never_shows_them(project):
     (project / "notes.txt").write_text("-----BEGIN " + "RSA PRIVATE KEY-----\nMIIfixture\n", encoding="utf-8")
 

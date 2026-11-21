@@ -402,7 +402,7 @@ def package(request: ReviewRequest, caps: dict | None = None) -> dict:
                    for item in (entry.to_host_dict() for entry in diagnostics)
                    if item["reason"] in noshell.AUDIT_REASONS][:noshell.MAX_SKIPPED]
         if refused.reason == "supplied_file_secret" and request.files:
-            return _secret_refusal(request, caps, skipped)
+            return _secret_refusal(request, caps, skipped, refused.secret_kinds)
         return refusal(refused.reason, skipped_files=skipped)
     result = manifest(request.task_type, request.prompt, report.get("sent", []),
                       [item for item in report.get("skipped", [])
@@ -437,7 +437,8 @@ RETRY_NEXT = ("Nothing was sent to Codex. ModelQuad does not repeat the path of 
               "instead.")
 
 
-def _secret_refusal(request: ReviewRequest, caps: dict | None, skipped: list[dict]) -> dict:
+def _secret_refusal(request: ReviewRequest, caps: dict | None, skipped: list[dict],
+                    kinds: dict[str, str]) -> dict:
     """A named file stopped the package: say which and why, and offer the package without it.
 
     The reason stays ``supplied_file_secret``. The path of such a file is never
@@ -445,6 +446,9 @@ def _secret_refusal(request: ReviewRequest, caps: dict | None, skipped: list[dic
     (``noshell._required_names``), and this keeps that. ``left_out`` gives instead
     the file's 1-based position in the request's ``files`` (Claude's own list)
     and whether its name, its contents or its path stopped it.
+    ``kinds`` is what the packing pass that refused recorded for each file it
+    stopped; this reads no file to explain it. A file the read rules withheld
+    was never packed, so it is not in ``kinds`` and is never opened here.
     ``retry_package`` is the manifest of the same request without those files.
     Starts nothing and sends nothing: a retry is a new call, sent only with that
     package_id, which the user agrees to.
@@ -452,8 +456,8 @@ def _secret_refusal(request: ReviewRequest, caps: dict | None, skipped: list[dic
     from dataclasses import replace
 
     from .execution import noshell
-    from .privacy import _CONTEXT_CREDENTIAL
 
+    by_kind = {"path": SECRET_PATH, "name": SECRET_NAME, "content": SECRET_CONTENT}
     left_out: list[dict] = []
     keep: list[str] = []
     for position, entry in enumerate(request.files, start=1):
@@ -463,13 +467,8 @@ def _secret_refusal(request: ReviewRequest, caps: dict | None, skipped: list[dic
         except noshell.TargetError:
             keep.append(entry)
             continue
-        if _CONTEXT_CREDENTIAL.search(name):
-            reason = SECRET_PATH
-        elif noshell._secret_reference(name):
-            reason = SECRET_NAME
-        elif ("<path>", "secret_file") in noshell.pack_files(request.working_directory, [name]).skipped:
-            reason = SECRET_CONTENT
-        else:
+        reason = by_kind.get(kinds.get(name.casefold(), ""))
+        if reason is None:
             keep.append(entry)
             continue
         left_out.append({"position": position, "path": "<path>", "reason": reason})

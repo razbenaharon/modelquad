@@ -12,7 +12,10 @@
   same package without it (`retry_package`, with its own `package_id`) so
   the user can decide whether the review is still useful. Nothing is sent
   until Claude calls again with that package id, which sends that package
-  or nothing. `modelquad review package` shows the same.
+  or nothing. `modelquad review package` shows the same. The explanation
+  comes from the packing pass that refused: no file is opened again to
+  explain it, so a file Git, a Read deny rule or `.modelquadignore`
+  excludes is never read for it.
 
 ## 0.5.2 (2026-11-21)
 
