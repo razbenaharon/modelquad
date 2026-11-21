@@ -49,13 +49,13 @@ _PATH_LIKE = re.compile(r"(_path|_dir|directory)$")
 #: purpose is explicitly reviewed here.
 _ALLOWED_PATH_PARAMETERS = frozenset(
     {
-        ("modelquad_delegate", "working_directory"),
+        ("delegate", "working_directory"),
         # The same workspace selector the review takes; it shows what the
         # review would send and starts nothing.
-        ("modelquad_review_package", "working_directory"),
+        ("review_package", "working_directory"),
         # The project whose per-repo setting and .modelquad.toml the status
         # reply describes; read-only.
-        ("modelquad_status", "project_directory"),
+        ("status", "project_directory"),
     }
 )
 
@@ -95,14 +95,14 @@ def test_the_contract_would_catch_the_parameter_coming_back(name):
     """The check itself, against a schema with the parameter added back."""
 
     parameters = _tool_parameters()
-    parameters["modelquad_review_verdict"] = parameters["modelquad_review_verdict"] | {name}
-    assert _forbidden_path_parameters(parameters) == [("modelquad_review_verdict", name)]
+    parameters["review_verdict"] = parameters["review_verdict"] | {name}
+    assert _forbidden_path_parameters(parameters) == [("review_verdict", name)]
 
 
 def test_the_contract_would_catch_working_directory_on_a_new_tool():
     parameters = _tool_parameters()
-    parameters["modelquad_status"] = parameters["modelquad_status"] | {"working_directory"}
-    assert _forbidden_path_parameters(parameters) == [("modelquad_status", "working_directory")]
+    parameters["status"] = parameters["status"] | {"working_directory"}
+    assert _forbidden_path_parameters(parameters) == [("status", "working_directory")]
 
 
 def test_a_tool_argument_naming_a_settings_folder_is_never_read(tmp_path, monkeypatch):
@@ -124,7 +124,7 @@ def test_a_tool_argument_naming_a_settings_folder_is_never_read(tmp_path, monkey
     payload = tool_payload(
         asyncio.run(
             mcp_server.server.call_tool(
-                "modelquad_status",
+                "status",
                 {"state_root": str(fabricated), "config_path": str(fabricated / "preferences.json"),
                  "usage_directory": str(fabricated)},
             )
@@ -183,9 +183,9 @@ def test_a_former_setter_is_unregistered_and_changes_no_protected_setting(user_s
 
 def test_the_read_only_tools_change_no_protected_setting(user_settings):
     repo, path, before = user_settings
-    asyncio.run(mcp_server.server.call_tool("modelquad_status", {}))
-    asyncio.run(mcp_server.server.call_tool("modelquad_status", {"project_directory": str(repo)}))
-    asyncio.run(mcp_server.server.call_tool("modelquad_review_package", {
+    asyncio.run(mcp_server.server.call_tool("status", {}))
+    asyncio.run(mcp_server.server.call_tool("status", {"project_directory": str(repo)}))
+    asyncio.run(mcp_server.server.call_tool("review_package", {
         "task_type": "review", "prompt": "Look.", "working_directory": str(repo), "files": ["a.py"]}))
     assert path.read_bytes() == before
 
@@ -231,5 +231,5 @@ def test_legacy_tools_are_not_registered():
 @pytest.mark.parametrize("name", ["repo_policy", "repo_state", "metered_allowed", "allowed_runtimes"])
 def test_repo_policy_argument_guard_would_catch_future_setters(name):
     parameters = _tool_parameters()
-    parameters["modelquad_status"] = parameters["modelquad_status"] | {name}
-    assert _forbidden_path_parameters(parameters) == [("modelquad_status", name)]
+    parameters["status"] = parameters["status"] | {name}
+    assert _forbidden_path_parameters(parameters) == [("status", name)]

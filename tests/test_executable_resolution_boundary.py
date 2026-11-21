@@ -236,6 +236,9 @@ ALLOW_LIST = (
     ("setupcheck.py", "_codex", "launch", 1,
      "forwarding wrapper, guard inside: CodexExecutor.unavailable_reason admits the native executable "
      "first, then run_inventory prepares the bounded provider-free listing argv in an empty folder"),
+    ("updater.py", "_run", "launch", 1,
+     "resolver call: prepare_launch pins argv[0] (git or claude from PATH, excluding the "
+     "folder it runs in; or this same running interpreter) for the user-started update"),
     ("repo_policy.py", "find_root", "launch", 1,
      "forwarding wrapper, guard inside: gitmeta._git resolves/excludes Git; one rev-parse under a deadline"),
     # Classification of the sites an earlier pass left unlisted.

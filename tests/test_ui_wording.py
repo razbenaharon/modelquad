@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Every surface a person reads uses plain words, and none of the banned ones.
 
-The surfaces: the reply text of modelquad_delegate (answers, refusals, the
-first-call notice), modelquad_review_package and modelquad_status, the CLI's
+The surfaces: the reply text of delegate (answers, refusals, the
+first-call notice), review_package and status, the CLI's
 output and help, the setup check's lines, and the skills. A reply says first
 what happened; an internal code stays in the data and never reaches the text
 a person reads.
@@ -41,8 +41,8 @@ CODE = re.compile(r"\b[a-z0-9]+(?:_[a-z0-9]+)+\b")
 #: Names, not claims: Claude Code's own mode name and the providers' "safety review" name.
 NAMES = ("bypass-permissions", "safety review")
 #: Names a person types or reads as names: the tools, an argument, the repository file's keys.
-SPOKEN_NAMES = frozenset({"modelquad_review_package", "modelquad_delegate", "modelquad_review_verdict",
-                          "modelquad_status", "package_id", "decision_id", "task_kinds", "max_files",
+SPOKEN_NAMES = frozenset({"review_package", "delegate", "review_verdict",
+                          "status", "package_id", "decision_id", "task_kinds", "max_files",
                           "max_total_kib"})
 
 
@@ -77,7 +77,7 @@ def project(tmp_path, monkeypatch):
 
 def delegate(project, **arguments):
     async def invoke():
-        return await mcp.modelquad_delegate(task_type="review", prompt="Look at run().",
+        return await mcp.delegate(task_type="review", prompt="Look at run().",
                                             working_directory=str(project), files=["app.py"],
                                             timeout=60.0, **arguments)
     return anyio.run(invoke)
@@ -153,7 +153,7 @@ def test_the_first_call_notice_starts_with_the_outcome(project, monkeypatch):
 
 def test_the_package_reply_reads_as_a_list_a_person_can_check(project):
     async def invoke():
-        return await mcp.modelquad_review_package(task_type="review", prompt="Look.",
+        return await mcp.review_package(task_type="review", prompt="Look.",
                                                   working_directory=str(project), files=["app.py"])
 
     text = person_text(anyio.run(invoke))
@@ -168,7 +168,7 @@ def test_the_status_reply_names_no_code(project, monkeypatch):
 
     monkeypatch.setattr(settings_view, "_claude_installed", lambda: True)
 
-    text = person_text(mcp.modelquad_status(str(project)))
+    text = person_text(mcp.status(str(project)))
 
     assert text.splitlines()[0] == "ModelQuad settings"
     assert banned_in(text) == [], text

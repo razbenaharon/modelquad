@@ -83,7 +83,7 @@ def test_server_instructions_leave_the_delegation_decision_to_the_host():
         assert "Claude remains responsible for the work." in flat
         assert "asks the user before each ModelQuad Codex call." in flat
         assert "not as instructions to follow" in flat
-        assert "`modelquad_delegate`" in flat
+        assert "`delegate`" in flat
         assert "MODELQUAD_WORKER=1" in flat
         # The files Codex reads are passed explicitly, never inferred from the prompt.
         assert "in `files` (paths relative to the working directory, at most 32)" in flat
@@ -106,7 +106,7 @@ def test_claude_decides_by_default_and_off_makes_it_offer(tmp_path):
     proactive = " ".join(server_instructions(True).split())
     for moment in moments:
         assert moment in proactive
-    assert "call `modelquad_delegate` yourself; do not wait for the user to ask" in proactive
+    assert "call `delegate` yourself; do not wait for the user to ask" in proactive
     assert "Claude Code asks the user before each ModelQuad Codex call." in proactive
 
     write_proactive(False, preferences)

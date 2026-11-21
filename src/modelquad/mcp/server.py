@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """The MCP server Claude Code talks to: four tools around one review flow.
 
-* ``modelquad_review_package``: what a review would send. Starts nothing.
-* ``modelquad_delegate``: the review itself. The only tool that starts Codex.
-* ``modelquad_review_verdict``: what became of Codex's findings. Local record.
-* ``modelquad_status``: whether ModelQuad is on, the mode and this folder's rules.
+* ``review_package``: what a review would send. Starts nothing.
+* ``delegate``: the review itself. The only tool that starts Codex.
+* ``review_verdict``: what became of Codex's findings. Local record.
+* ``status``: whether ModelQuad is on, the mode and this folder's rules.
 
 The flow, its gates and the package live in ``modelquad.review``; this module
 only turns tool calls into requests and replies into text and data.
@@ -202,7 +202,7 @@ async def _run_review(request: review.ReviewRequest, ctx: Context | None) -> dic
 
 
 @server.tool(title="Show what a Codex review would send", annotations=READ_ONLY)
-async def modelquad_review_package(
+async def review_package(
     task_type: str,
     prompt: str,
     working_directory: str,
@@ -212,7 +212,7 @@ async def modelquad_review_package(
     (paths relative to working_directory, at most 32), their sizes as sent, what is left
     out and why, the limits, and a package_id. Show it to the user when they want to see
     or change what Codex gets; add or remove paths in `files` and call again. Pass the
-    package_id to modelquad_delegate to send exactly this package."""
+    package_id to delegate to send exactly this package."""
     request = review.ReviewRequest(task_type=task_type, prompt=prompt,
                                    working_directory=working_directory, files=tuple(files or ()))
 
@@ -229,7 +229,7 @@ async def modelquad_review_package(
 
 @server.tool(title="Ask Codex for a read-only second opinion", annotations=STARTS_CODEX,
              meta=_DELEGATE_META)
-async def modelquad_delegate(
+async def delegate(
     task_type: str,
     prompt: str,
     working_directory: str,
@@ -246,7 +246,7 @@ async def modelquad_delegate(
     Codex sees only the task text and the files listed in `files` (paths relative to
     working_directory, at most 32); a path named only in the task text is not sent.
     `trigger` says why: review_gate, pre_change, user or claude. `package_id` (from
-    modelquad_review_package) sends only that exact package. `follows` is the
+    review_package) sends only that exact package. `follows` is the
     decision_id of an earlier reply whose completion_request this call answers, at
     most 2 rounds. Without the user's standing grant Claude Code asks before every call."""
     request = review.ReviewRequest(
@@ -273,7 +273,7 @@ class FindingVerdict(BaseModel):
 
 
 @server.tool(title="Record what became of Codex's findings", annotations=LOCAL_RECORD)
-def modelquad_review_verdict(
+def review_verdict(
     decision_id: str,
     verdicts: Annotated[list[FindingVerdict], Field(min_length=1, max_length=50)],
 ) -> CallToolResult:
@@ -313,7 +313,7 @@ def status_payload(project_directory: str | None) -> tuple[dict, list[str]]:
 
 
 @server.tool(title="ModelQuad status", annotations=READ_ONLY)
-def modelquad_status(project_directory: str | None = None) -> CallToolResult:
+def status(project_directory: str | None = None) -> CallToolResult:
     """Whether ModelQuad is on, whether Codex calls are automatic or approved one by one,
     what this folder's own rules allow, and a one-line history. Reads only; starts nothing."""
     payload, lines = status_payload(project_directory)

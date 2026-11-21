@@ -61,12 +61,12 @@ FINDINGS_NOTE = (
     "For each finding, check the claim and its reasoning against the code and the user's "
     "requirements before changing anything; Codex did not see the conversation and can be "
     "wrong, and neither its confidence nor your agreement is proof. Record your verdict and "
-    "its evidence with modelquad_review_verdict (this decision_id; action to_fix for one you "
+    "its evidence with review_verdict (this decision_id; action to_fix for one you "
     "accept), then fix, then record it again with action fixed and fix_verified.")
 COMPLETION_NOTE = (
     "Codex said these files would have helped and they were not sent. Nothing is added by "
-    "itself. To send them, show the user the larger package (modelquad_review_package with "
-    "these files added) and, if they agree, call modelquad_delegate again with the files and "
+    "itself. To send them, show the user the larger package (review_package with "
+    "these files added) and, if they agree, call delegate again with the files and "
     "follows set to this decision_id.")
 OUTPUT_CUT_MARKER = (
     "\n\n[ModelQuad cut this answer here: the first {shown} of {whole} characters are shown. "
@@ -91,7 +91,7 @@ _LINES: dict[str, str] = {
                                 "or architecture tasks."),
     PACKAGE_CHANGED: ("The files changed since the package was shown, or the request names "
                       "different files, so nothing was sent. Show the package again "
-                      "(modelquad_review_package) and ask again with its package_id."),
+                      "(review_package) and ask again with its package_id."),
     ROUNDS_EXHAUSTED: (f"This review already had {MAX_COMPLETION_ROUNDS} completion rounds, so "
                        "ModelQuad started nothing. Report what Codex could not see as a limit "
                        "of the review, or start a new review."),

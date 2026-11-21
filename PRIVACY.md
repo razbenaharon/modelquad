@@ -24,7 +24,9 @@ print a usage report and pass it on yourself
 ## Summary
 
 - ModelQuad's own processes connect only to loopback addresses
-  ([NETWORK.md](NETWORK.md)). It has no telemetry.
+  ([NETWORK.md](NETWORK.md)). It has no telemetry. `python -m modelquad update`, only
+  when you run it, starts pip and Git, which go online to fetch the new
+  version.
 - For a Codex call, ModelQuad reads only the files listed in the call's
   `files` argument, which Claude Code shows you in its approval prompt
   unless you turned on the standing grant ([below](#the-standing-grant)). It
@@ -54,10 +56,10 @@ and their terms.
 
 #### A Codex call
 
-`modelquad_delegate` is the only tool that starts Codex. When Claude Code
+`delegate` is the only tool that starts Codex. When Claude Code
 calls it and you approve the call (or the standing grant below lets it run),
 ModelQuad prepares the input in its own process and then starts the Codex
-CLI. `modelquad_review_package` and `modelquad review package` show the same
+CLI. `review_package` and `modelquad review package` show the same
 input as a package (below) and start nothing and send nothing.
 
 1. **The task text** is the text Claude Code wrote. If it holds a private key,
@@ -214,11 +216,11 @@ input as a package (below) and start nothing and send nothing.
 
 #### The package and its id
 
-`modelquad_review_package` (or `modelquad review package` in a terminal)
+`review_package` (or `modelquad review package` in a terminal)
 packs the files exactly as a call would, with the same rules, screening and
 limits, and returns the manifest and a package id. It reads the files and
 sends nothing anywhere. The id is a digest over the task kind, the task text
-and each sent file's path, size and digest. A `modelquad_delegate` call given
+and each sent file's path, size and digest. A `delegate` call given
 that id sends that exact package or nothing: if anything changed, the call is
 refused (`package_changed`).
 
@@ -233,7 +235,7 @@ grant as any other.
 `modelquad settings auto on --yes`, run by you in a terminal or chosen by you
 in `/modelquad:settings`, turns on
 a standing grant for one repository (or, with `--global`, for every folder).
-In a Claude Code session started in a granted folder, `modelquad_delegate`
+In a Claude Code session started in a granted folder, `delegate`
 carries no per-call approval mark, so Claude Code's own permissions decide
 whether you are asked. With the grant on and the allow rule added (or "don't
 ask again" chosen at the first prompt), files go to OpenAI with no per-call
@@ -257,12 +259,12 @@ sends to Anthropic, or to the cloud provider you set Claude Code up to use:
   package id), the token counts and time Codex reported, each finding's
   reference, severity, file, line, category and Codex's confidence, and the
   names of files Codex said it needed.
-- The package from `modelquad_review_package`: the same manifest, the limits
+- The package from `review_package`: the same manifest, the limits
   and the package id.
-- From `modelquad_status`: whether ModelQuad is on, whether Codex calls are
+- From `status`: whether ModelQuad is on, whether Codex calls are
   automatic or approved one by one, what the folder's own settings and
   `.modelquad.toml` allow, and one line of history from the review ledger.
-- From `modelquad_review_verdict`: how many verdicts were recorded, and which
+- From `review_verdict`: how many verdicts were recorded, and which
   were not kept and why.
 - With the plugin, the review reminder's and the review gates' fixed lines,
   which carry a count of changed files or the kind of a sensitive file, and
@@ -303,7 +305,7 @@ or inspects that file** (`tests/test_hook_transcript_boundary.py`).
 - **Review reminder and review gates** (`modelquad hook-review claude`, in the
   plugin, after Claude edits a file or runs a command, before it edits a
   file, and when it stops): the event and tool names, the session id, the
-  working directory and the edited file's path; for a `modelquad_delegate`
+  working directory and the edited file's path; for a `delegate`
   call, its task kind and trigger and whether its reply carries an answer.
   It never reads file contents, even though an edit's payload carries them,
   and never the transcript. To choose its wording it reads
@@ -323,12 +325,21 @@ or inspects that file** (`tests/test_hook_transcript_boundary.py`).
 ### Other reads
 
 - **Environment variables**: `CLAUDE_PROJECT_DIR` (the folder a session
-  started in, to check the standing grant), `CLAUDE_CONFIG_DIR` (only to warn
-  that ModelQuad does not follow it), ModelQuad's own `MODELQUAD_*` settings,
+  started in, to check the standing grant), `CLAUDE_CONFIG_DIR` (to find the
+  permission rules in your user settings, and to warn that install does not
+  follow it), ModelQuad's own `MODELQUAD_*` settings,
   the folders it uses to find Codex and Git (`PATH`, `PATHEXT`,
   `LOCALAPPDATA`), the home, `AppData` and `TEMP` folders it removes from
   stored text, and the two variables that tell WSL apart. It passes Codex the
   filtered environment described above.
+- **Claude Code's permission rules**, for `modelquad doctor`: the
+  `permissions.allow` and `permissions.deny` lists of
+  Claude Code's managed settings, your user settings (in `CLAUDE_CONFIG_DIR`
+  when it is set, otherwise `%USERPROFILE%\.claude\settings.json`) and the
+  project's `.claude\settings.json` and `.claude\settings.local.json`,
+  read-only, to name any rule that still uses a ModelQuad tool name from
+  before 0.5.0. It shows only those rules; nothing else in the files is
+  shown or stored, and the files are never changed.
 - **Claude Code's plugin record** (`.claude\plugins\installed_plugins.json`),
   read-only, so `modelquad doctor`, `modelquad settings` and install can tell
   whether the plugin is installed. An unreadable record reads as unknown.
@@ -337,7 +348,7 @@ or inspects that file** (`tests/test_hook_transcript_boundary.py`).
   Code settings files named there, the `.modelquadignore` files named there,
   and Git's answer to `git check-ignore` for the listed paths.
 - **The repository's `.modelquad.toml`**, if there is one, on each Codex call
-  and package, for `modelquad_status`, `modelquad settings` and
+  and package, for `status`, `modelquad settings` and
   `modelquad doctor`, and in the review hook
   ([docs/REPO-POLICY.md](docs/REPO-POLICY.md)). Its contents, path and key
   names are not stored.

@@ -286,7 +286,7 @@ def test_doctor_json_reports_every_check_without_starting_codex(tmp_path, capsys
     assert main(["doctor", "--json", "--project", str(project)]) == code
     payload = json.loads(capsys.readouterr().out)
     assert [item["name"] for item in payload["checks"]] == [
-        "platform", "codex", "claude_code", "settings", "folder"]
+        "platform", "codex", "claude_code", "settings", "folder", "permission_rules"]
     assert payload["ok"] is (code == 0)
     assert payload["checks"][1]["ok"] is codex_ok
 

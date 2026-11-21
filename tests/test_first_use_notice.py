@@ -51,7 +51,7 @@ class _Started:
 
 def _delegate(folder):
     async def invoke():
-        return await server.modelquad_delegate(task_type="review", prompt="Review it.",
+        return await server.delegate(task_type="review", prompt="Review it.",
                                                working_directory=str(folder), timeout=60.0)
 
     return anyio.run(invoke)
@@ -84,7 +84,7 @@ def test_showing_a_package_neither_waits_for_the_notice_nor_spends_it(fresh_inst
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
 
     async def invoke():
-        return await server.modelquad_review_package(task_type="review", prompt="Review it.",
+        return await server.review_package(task_type="review", prompt="Review it.",
                                                      working_directory=str(tmp_path), files=["a.py"])
 
     shown = _payload(anyio.run(invoke))

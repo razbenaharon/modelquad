@@ -31,6 +31,15 @@ LAUNCHER_LIMIT_MS = 10 * 60 * 1000
 TOOL_KINDS = {
     "Edit": "edit", "Write": "edit", "MultiEdit": "edit", "NotebookEdit": "edit",
     "Bash": "run", "PowerShell": "run",
+    # The review tool by every id it can have (review_reminder.DELEGATE_TOOLS):
+    # the plugin's server since 0.5.0 and before, and the install without the
+    # plugin, each with the tool's name since 0.5.0 and before.
+    "mcp__plugin_modelquad_review__delegate": "modelquad",
+    "mcp__plugin_modelquad_review__modelquad_delegate": "modelquad",
+    "mcp__plugin_modelquad_modelquad__delegate": "modelquad",
+    "mcp__plugin_modelquad_modelquad__modelquad_delegate": "modelquad",
+    "mcp__modelquad__delegate": "modelquad",
+    "mcp__modelquad__modelquad_delegate": "modelquad",
 }
 
 
@@ -114,8 +123,7 @@ def finished(mark: dict | None, facts: dict) -> None:
         _append(mark["path"], {
             "id": mark["id"], "phase": "end",
             "event": event if event in ("PreToolUse", "PostToolUse", "Stop") else None,
-            "tool": (TOOL_KINDS.get(tool) or ("modelquad" if isinstance(tool, str)
-                     and tool.endswith("modelquad_delegate") else "other")) if tool else None,
+            "tool": ((TOOL_KINDS.get(tool) if isinstance(tool, str) else None) or "other") if tool else None,
             "work_ms": round((time.monotonic() - mark["clock"]) * 1000),
         })
     except Exception:

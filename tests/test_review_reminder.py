@@ -58,7 +58,8 @@ def test_it_reminds_when_a_command_runs_after_three_different_files(tmp_path):
     assert _run(tmp_path, _event(tool="MultiEdit", path="C:/proj/c.py")) == ""  # no reminder mid-edit
     text = _context(_run_tests(tmp_path))
     assert "changed 3 files" in text and "Before your final message" in text
-    assert "`modelquad_delegate`" in text and "trigger review_gate" in text
+    assert "`mcp__plugin_modelquad_review__delegate`" in text and "trigger review_gate" in text
+    assert "`mcp__modelquad__delegate`" in text
     assert "declines, carry on without Codex" in text
     assert _run_tests(tmp_path) == ""  # no new edit since
 
@@ -82,7 +83,7 @@ def test_a_command_alone_keeps_nothing(tmp_path):
 def test_a_codex_call_starts_the_count_again(tmp_path):
     for name in ("a", "b", "c"):
         _run(tmp_path, _event(path=f"C:/proj/{name}.py"))
-    assert _run(tmp_path, _event(tool="mcp__plugin_modelquad_modelquad__modelquad_delegate",
+    assert _run(tmp_path, _event(tool="mcp__plugin_modelquad_review__delegate",
                                  tool_input={"task_type": "review"})) == ""
     for name in ("d", "e"):
         _run(tmp_path, _event(path=f"C:/proj/{name}.py"))
@@ -95,7 +96,7 @@ def test_in_offer_mode_it_says_offer(tmp_path):
     for name in ("a", "b", "c"):
         _run(tmp_path, _event(path=f"C:/proj/{name}.py"), mode="offer")
     text = _context(_run_tests(tmp_path, mode="offer"))
-    assert "offer the user a Codex review" in text and "modelquad_delegate" not in text
+    assert "offer the user a Codex review" in text and "delegate" not in text
 
 
 @pytest.mark.parametrize("mode", [None, "on_request"])
@@ -173,7 +174,7 @@ def test_the_plugin_runs_it_after_edits_and_codex_calls():
     (hook,) = entry["hooks"]
     assert hook["command"] == "modelquad" and hook["args"] == ["hook-review", "claude"]
     for tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "PowerShell",
-                 "mcp__plugin_modelquad_modelquad__modelquad_delegate"):
+                 "mcp__plugin_modelquad_review__delegate"):
         assert re.fullmatch(entry["matcher"], tool)
     assert not re.fullmatch(entry["matcher"], "Read")
 
@@ -196,8 +197,8 @@ def _edits(tmp_path, *names):
         _run(tmp_path, _event(path=f"C:/proj/{name}"))
 
 
-def _delegate(tmp_path, response):
-    return _run(tmp_path, _event(tool="mcp__plugin_modelquad_modelquad__modelquad_delegate",
+def _delegate(tmp_path, response, tool="mcp__plugin_modelquad_review__delegate"):
+    return _run(tmp_path, _event(tool=tool,
                                  tool_input={"task_type": "review", "trigger": "review_gate"},
                                  tool_response=response))
 
@@ -283,6 +284,18 @@ def test_a_review_clears_the_gate(tmp_path):
     assert json.loads(_stop(tmp_path))["decision"] == "block"
 
 
+@pytest.mark.parametrize("tool", sorted(
+    f"mcp__{server}__{name}"
+    for server in ("plugin_modelquad_review", "plugin_modelquad_modelquad", "modelquad")
+    for name in ("delegate", "modelquad_delegate")))
+def test_a_review_by_any_live_id_clears_the_gate(tmp_path, tool):
+    # After an upgrade the package and the cached plugin can differ in version.
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _stop(tmp_path)
+    _delegate(tmp_path, {"content": [{"type": "text", "text": "FINDINGS: none"}]}, tool=tool)
+    assert _stop(tmp_path) == ""
+
+
 def test_a_failed_review_is_reported_not_blocked_again(tmp_path):
     _edits(tmp_path, "a.py", "b.py", "c.py")
     _stop(tmp_path)
@@ -347,7 +360,7 @@ def test_fixes_after_a_review_are_not_reported_as_unreviewed(tmp_path):
 
 def _consult(tmp_path, failed=False):
     text = "Codex was not started." if failed else "Use a Decimal for money."
-    return _run(tmp_path, _event(tool="mcp__plugin_modelquad_modelquad__modelquad_delegate",
+    return _run(tmp_path, _event(tool="mcp__plugin_modelquad_review__delegate",
                                  tool_input={"task_type": "architecture", "trigger": "pre_change"},
                                  tool_response=[{"type": "text", "text": text}]))
 

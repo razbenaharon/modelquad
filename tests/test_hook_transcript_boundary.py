@@ -335,7 +335,7 @@ def test_a_codex_reply_is_read_from_the_event_not_the_transcript(tmp_path, capsy
     for name in ("a.py", "b.py", "c.py"):
         _review_hook(monkeypatch, capsys, canary, _edit(repo, name))
     reply = {"hook_event_name": "PostToolUse", "cwd": str(repo),
-             "tool_name": "mcp__plugin_modelquad_modelquad__modelquad_delegate",
+             "tool_name": "mcp__plugin_modelquad_review__delegate",
              "tool_input": {"task_type": "review", "trigger": "review_gate"},
              "tool_response": [{"type": "text", "text": "ModelQuad: Codex answered.\nNo findings."}]}
     assert _review_hook(monkeypatch, capsys, canary, reply) == ""

@@ -282,7 +282,7 @@ def tool_payload(result) -> object:
 
     - Some tools return a plain ``dict``. The SDK JSON-dumps it into the
       result's single text block and sets no ``structuredContent``.
-    - Others (``modelquad_delegate`` among them) return a ``CallToolResult``
+    - Others (``delegate`` among them) return a ``CallToolResult``
       whose text block is a short human summary and whose
       ``structuredContent`` carries the canonical object; their text is not
       JSON.

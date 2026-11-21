@@ -580,16 +580,16 @@ def tool(name):
 def test_the_server_offers_exactly_four_tools():
     names = sorted(item.name for item in anyio.run(review_server.server.list_tools))
 
-    assert names == ["modelquad_delegate", "modelquad_review_package",
-                     "modelquad_review_verdict", "modelquad_status"]
+    assert names == ["delegate", "review_package",
+                     "review_verdict", "status"]
 
 
 def test_only_the_review_starts_codex_and_it_asks_the_user_each_time():
-    delegate = tool("modelquad_delegate")
+    delegate = tool("delegate")
 
     assert delegate.meta == {"anthropic/requiresUserInteraction": True}
     assert delegate.annotations.read_only_hint is False
-    for name in ("modelquad_review_package", "modelquad_status"):
+    for name in ("review_package", "status"):
         assert tool(name).annotations.read_only_hint is True
         assert not tool(name).meta
 
@@ -604,7 +604,7 @@ def call(function, **arguments):
 def test_the_package_tool_shows_the_package_without_an_executor(project, monkeypatch):
     monkeypatch.setattr(review_server, "_executor", lambda: pytest.fail("a preview starts nothing"))
 
-    result = call(review_server.modelquad_review_package, task_type="review", prompt="Look.",
+    result = call(review_server.review_package, task_type="review", prompt="Look.",
                   working_directory=str(project), files=["app.py"])
 
     assert result.content[0].text.startswith("Codex would get the task text")
@@ -616,7 +616,7 @@ def test_the_review_tool_replies_with_the_outcome_first_and_the_data_after(proje
     monkeypatch.setattr(review_server, "_executor", lambda: executor)
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
 
-    result = call(review_server.modelquad_delegate, task_type="review", prompt="Look.",
+    result = call(review_server.delegate, task_type="review", prompt="Look.",
                   working_directory=str(project), files=["app.py"], timeout=60.0)
 
     lines = result.content[0].text.splitlines()
@@ -635,7 +635,7 @@ def test_a_refused_review_says_so_on_the_first_line(project, monkeypatch):
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
     switch.write(False)
 
-    result = call(review_server.modelquad_delegate, task_type="review", prompt="Look.",
+    result = call(review_server.delegate, task_type="review", prompt="Look.",
                   working_directory=str(project), files=["app.py"], timeout=60.0)
 
     assert result.content[0].text.splitlines()[0] == "Codex was not started."
@@ -657,7 +657,7 @@ def test_a_cancelled_call_asks_the_worker_to_stop(project, monkeypatch):
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
 
     async def call():
-        await review_server.modelquad_delegate(
+        await review_server.delegate(
             task_type="review", prompt="Look.", working_directory=str(project),
             files=["app.py"], timeout=60.0)
 
@@ -685,7 +685,7 @@ def test_the_status_tool_reads_the_switch_and_the_folder(project, monkeypatch):
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
     switch.write(False)
 
-    result = review_server.modelquad_status(str(project))
+    result = review_server.status(str(project))
 
     assert result.structured_content["modelquad"] == "off"
     assert "1. ModelQuad in Claude Code: off" in result.content[0].text
@@ -705,7 +705,7 @@ def test_a_ledger_that_cannot_be_written_is_said_in_the_reply(project, monkeypat
     monkeypatch.setattr(review_server, "_executor", lambda: executor)
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
 
-    result = call(review_server.modelquad_delegate, task_type="review", prompt="Look.",
+    result = call(review_server.delegate, task_type="review", prompt="Look.",
                   working_directory=str(project), files=["app.py"], timeout=60.0)
 
     lines = result.content[0].text.splitlines()
@@ -736,7 +736,7 @@ def test_an_error_codex_reports_is_named_without_its_text(project, monkeypatch):
     monkeypatch.setattr(review_server, "_executor", FailingExecutor)
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
 
-    result = call(review_server.modelquad_delegate, task_type="review", prompt="Look.",
+    result = call(review_server.delegate, task_type="review", prompt="Look.",
                   working_directory=str(project), files=["app.py"], timeout=60.0,
                   model="gpt-not-a-model")
 

@@ -170,7 +170,7 @@ def view(folder: Path | None) -> dict:
 
 
 def lines_from(data: dict, folder: Path | None = None) -> list[str]:
-    """What ``modelquad settings`` and ``modelquad_status`` print for a view."""
+    """What ``modelquad settings`` and ``status`` print for a view."""
     out = ["ModelQuad settings", *data["lines"], "",
            "To change them (pick it in /modelquad:settings, or run it in your own terminal):",
            "  ModelQuad off:                 modelquad off",

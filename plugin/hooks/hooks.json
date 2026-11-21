@@ -2,7 +2,7 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|mcp__.*modelquad_delegate",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|mcp__(plugin_modelquad_review|plugin_modelquad_modelquad|modelquad)__(modelquad_)?delegate",
         "hooks": [
           {
             "type": "command",

@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """``modelquad doctor``: can a review run here, and if not, what to do next.
 
-Five checks, each ``ok`` (True, False, or None for unknown) with one line and
-one next step. The Codex check runs Codex's own ``--version`` and ``features
+Six checks, each ``ok`` (True, False, or None for unknown) with one line and
+one next step. The last reads Claude Code's settings files for a permission
+rule that names a ModelQuad tool by its name before 0.5.0; it never writes
+them and shows only the rules that name ModelQuad. The Codex check runs Codex's own ``--version`` and ``features
 list``, which contact no provider; nothing here starts a review or sends a
 file anywhere.
 """
@@ -120,8 +122,190 @@ def _folder(project: str | None) -> dict:
                   "is signed in, so every call here is refused." if facts["account"] == "workspace" else None)
 
 
+#: Scopes whose deny rules apply where a rule of the given scope applies:
+#: managed and user rules apply in every project, a project's only there. An
+#: old deny is covered only by a new rule from a scope listed for it.
+_COVERING_SCOPES = {
+    "managed": ("managed",),
+    "user": ("managed", "user"),
+    "project": ("managed", "user", "project"),
+}
+#: The deny rules that keep ModelQuad out whichever build runs: both names of
+#: the plugin's server and the install's server. In a mixed state after an
+#: upgrade (new package, stale cached plugin, or the reverse) a tool can be
+#: named mcp__plugin_modelquad_modelquad__delegate or
+#: mcp__plugin_modelquad_review__modelquad_delegate, so only wildcards hold.
+RECOMMENDED_DENY = ("mcp__plugin_modelquad_review__*", "mcp__plugin_modelquad_modelquad__*",
+                    "mcp__modelquad")
+
+
+def renamed_rule(rule: str) -> str | None:
+    """The rule to use since 0.5.0 for a permission rule that names a ModelQuad
+    tool by its name before 0.5.0; None when the rule names no old name.
+
+    Before 0.5.0 the plugin's server was named ``modelquad`` (tools
+    ``mcp__plugin_modelquad_modelquad__modelquad_<tool>``) and every tool
+    carried a ``modelquad_`` prefix (``mcp__modelquad__modelquad_<tool>``
+    without the plugin). ``mcp__modelquad`` and ``mcp__modelquad__*`` still
+    match: the install's server kept its name.
+    """
+    from .branding import INSTALL_TOOL_PREFIX, OLD_PLUGIN_SERVER_ID, OLD_TOOL_NAMES, PLUGIN_TOOL_PREFIX
+
+    if not isinstance(rule, str):
+        return None
+    text = rule.strip()
+    renamed = {old: new for new, old in OLD_TOOL_NAMES.items()}
+    if text == OLD_PLUGIN_SERVER_ID:
+        return PLUGIN_TOOL_PREFIX.rstrip("_")
+    if text.startswith(OLD_PLUGIN_SERVER_ID + "__"):
+        tool = text[len(OLD_PLUGIN_SERVER_ID) + 2:]
+        return PLUGIN_TOOL_PREFIX + renamed.get(tool, tool)
+    if text.startswith(INSTALL_TOOL_PREFIX):
+        tool = text[len(INSTALL_TOOL_PREFIX):]
+        if tool in renamed:
+            return INSTALL_TOOL_PREFIX + renamed[tool]
+    return None
+
+
+def deny_rule_for(rule: str) -> str | None:
+    """The wildcard deny rule that replaces an old deny rule; None when it is not old.
+    Never an exact id: in a mixed state the live id may carry either tool name."""
+    from .branding import OLD_PLUGIN_SERVER_ID, PLUGIN_TOOL_PREFIX
+
+    new = renamed_rule(rule)
+    if new is None:
+        return None
+    if rule.strip().startswith(OLD_PLUGIN_SERVER_ID):
+        return PLUGIN_TOOL_PREFIX + "*"
+    return "mcp__modelquad"
+
+
+def _covering(new_rule: str) -> set[str]:
+    """The rules that match every tool of ``new_rule``'s server."""
+    server = new_rule[:-1].rstrip("_") if new_rule.endswith("*") else new_rule
+    return {server, server + "__*"}
+
+
+def _read_permissions(path: Path) -> dict | None:
+    """``permissions.allow`` and ``permissions.deny`` of one settings file: {} when the
+    file is absent, None when it cannot be read. Nothing else in the file is kept."""
+    import json
+
+    try:
+        if not path.is_file():
+            return {} if not path.exists() else None
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    permissions = payload.get("permissions") if isinstance(payload, dict) else None
+    if not isinstance(permissions, dict):
+        return {}
+    found = {}
+    for kind in ("allow", "deny"):
+        value = permissions.get(kind)
+        if isinstance(value, list):
+            found[kind] = [item for item in value if isinstance(item, str)]
+    return found
+
+
+def _permission_files(folder: Path) -> list[tuple[str, str, Path]]:
+    """(scope, label, path) of the settings files Claude Code reads for ``folder``:
+    managed, user (``CLAUDE_CONFIG_DIR`` or ``~/.claude``), then the project's
+    ``.claude/settings.json`` and ``.claude/settings.local.json``
+    (``execution.file_rules.settings_files``, the files the review flow reads).
+
+    A ``settings.local.json`` in the user folder is not read: Claude Code's
+    documentation names local settings only for a project, so this check does
+    not claim to know whether it applies.
+    """
+    from .execution import file_rules
+
+    managed = file_rules.MANAGED_SETTINGS
+    user = file_rules._user_settings_directory() / "settings.json"
+    files = []
+    for path in file_rules.settings_files(folder):
+        if path == managed:
+            files.append(("managed", "Claude Code's managed settings", path))
+        elif path == user:
+            files.append(("user", f"your Claude Code settings ({path})", path))
+        else:
+            files.append(("project", f"this project's .claude/{path.name}", path))
+    return files
+
+
+def _permission_rules(project: str | None) -> dict:
+    """Whether a Claude Code permission rule still names a ModelQuad tool by its name
+    before 0.5.0. A stale deny no longer protects; a stale allow only brings the
+    prompt back. Reads the settings files; never writes them."""
+    folder = Path(os.path.abspath(project or os.getcwd()))
+    try:
+        files = _permission_files(folder)
+    except Exception:  # noqa: BLE001 -- unknown, not a crash
+        return _check("permission_rules", None, "Which Claude Code settings files apply here "
+                      "could not be worked out.") | {"stale_rules": [], "unreadable": []}
+    read: list[tuple[str, str, dict]] = []
+    unreadable = []
+    for scope, label, path in files:
+        found = _read_permissions(path)
+        if found is None:
+            unreadable.append(label)
+        else:
+            read.append((scope, label, found))
+    denied = {scope: set() for scope in _COVERING_SCOPES}
+    for scope, _label, found in read:
+        denied[scope].update(rule.strip() for rule in found.get("deny", []))
+    open_denies, covered_denies, allows = [], [], []
+    for scope, label, found in read:
+        for kind in ("deny", "allow"):
+            for rule in found.get(kind, []):
+                if renamed_rule(rule) is None:
+                    continue
+                use = deny_rule_for(rule) if kind == "deny" else renamed_rule(rule)
+                item = {"file": label, "scope": scope, "kind": kind, "rule": rule.strip(), "use": use}
+                if kind == "allow":
+                    allows.append(item)
+                elif any(_covering(use) & denied[other] for other in _COVERING_SCOPES[scope]):
+                    covered_denies.append(item)
+                else:
+                    open_denies.append(item)
+    stale = open_denies + allows + covered_denies
+
+    def line(item: dict) -> str:
+        return f"{item['kind']} rule {item['rule']} in {item['file']}: use {item['use']}"
+
+    not_read = (" " + ", ".join(unreadable) + " could not be read.") if unreadable else ""
+    if open_denies:
+        check = _check("permission_rules", False,
+                       "A deny rule names a ModelQuad tool by its name before 0.5.0 and no longer "
+                       "keeps that tool out: " + "; ".join(line(item) for item in open_denies) + "."
+                       + not_read,
+                       "In the same file, deny " + ", ".join(RECOMMENDED_DENY) + ": these hold "
+                       "for this build, an older one, and a mix of both after an upgrade. "
+                       "ModelQuad does not change these files.")
+    elif unreadable:
+        check = _check("permission_rules", None,
+                       "Whether a Claude Code deny rule still names an old ModelQuad tool name is "
+                       "unknown:" + not_read
+                       + "".join(f" An allow {line(item)[len('allow '):]}." for item in allows))
+    elif allows:
+        check = _check("permission_rules", True,
+                       "An allow rule names a ModelQuad tool by its name before 0.5.0, so Claude "
+                       "Code asks again before that tool: " + "; ".join(line(item) for item in allows) + ".",
+                       "To skip that prompt again, put the new name in the allow rule. ModelQuad "
+                       "does not change these files.")
+    else:
+        check = _check("permission_rules", True,
+                       "No Claude Code permission rule needs a new ModelQuad tool name"
+                       + (" (a deny rule with an old name is also there under the new name)."
+                          if covered_denies else "."))
+    check["stale_rules"] = stale
+    check["unreadable"] = unreadable
+    return check
+
+
 def run(project: str | None = None) -> dict:
-    checks = [_platform(), _codex(), _connection(), _settings(), _folder(project)]
+    checks = [_platform(), _codex(), _connection(), _settings(), _folder(project),
+              _permission_rules(project)]
     return {"ok": all(item["ok"] is not False for item in checks), "checks": checks}
 
 

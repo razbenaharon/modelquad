@@ -104,7 +104,7 @@ def test_a_session_without_the_marker_refuses_an_ungranted_folder(tmp_path, monk
     monkeypatch.setattr(server._grant, "allows", lambda directory: False)
     monkeypatch.setattr(server, "_executor", lambda: _Recorder([]))
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
-    result = asyncio.run(server.modelquad_delegate(
+    result = asyncio.run(server.delegate(
         task_type="review", prompt="look", working_directory=str(tmp_path), timeout=10))
     payload = result.structured_content
     assert payload["refused"] is True and payload["started"] is False
@@ -117,7 +117,7 @@ def test_the_marker_is_set_without_a_grant():
     from modelquad.mcp import server
 
     tools = {tool.name: tool for tool in asyncio.run(server.server.list_tools())}
-    assert tools["modelquad_delegate"].meta["anthropic/requiresUserInteraction"] is True
+    assert tools["delegate"].meta["anthropic/requiresUserInteraction"] is True
 
 
 def test_with_a_grant_the_server_registers_delegate_without_the_marker(tmp_path):
@@ -136,7 +136,7 @@ def test_with_a_grant_the_server_registers_delegate_without_the_marker(tmp_path)
     show = ("import asyncio, json; from modelquad.mcp import server; "
             "tools = {t.name: t.meta for t in asyncio.run(server.server.list_tools())}; "
             "print(json.dumps({'standing': server._STANDING_GRANT, "
-            "'delegate': tools['modelquad_delegate']}))")
+            "'delegate': tools['delegate']}))")
     out = subprocess.run([sys.executable, "-c", show], env=dict(env, CLAUDE_PROJECT_DIR=str(repo)),
                          check=True, capture_output=True, text=True, timeout=180, cwd=str(repo),
                          **no_window_kwargs())
@@ -154,6 +154,8 @@ def test_the_cli_needs_a_typed_yes(tmp_path, capsys, monkeypatch):
     assert cli.main(["settings", "auto", "on", "--project", str(repo), "--yes"]) == 0
     out = capsys.readouterr().out
     assert grant.ALLOW_RULE in out and "never writes permission rules" in out
+    assert grant.INSTALL_ALLOW_RULE in out and "modelquad doctor" in out
+    assert grant.ALLOW_RULE == "mcp__plugin_modelquad_review__delegate"
     assert grant.granted(repo)
     assert cli.main(["settings", "auto", "status", "--project", str(repo)]) == 0
     assert "Standing grant: on" in capsys.readouterr().out
@@ -357,7 +359,7 @@ def test_without_the_prompt_a_call_stays_inside_the_sessions_folder(tmp_path, mo
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
     reached = []
     monkeypatch.setattr(server, "_executor", lambda: _Recorder(reached))
-    result = asyncio.run(server.modelquad_delegate(
+    result = asyncio.run(server.delegate(
         task_type="review", prompt="look", working_directory=str(other), timeout=10))
     payload = result.structured_content
     assert payload["refused"] is True and payload["started"] is False
@@ -365,11 +367,11 @@ def test_without_the_prompt_a_call_stays_inside_the_sessions_folder(tmp_path, mo
     assert payload["message"] == grant.OTHER_FOLDER_MESSAGE
     assert reached == []
     for inside in (project, project / "sub"):
-        asyncio.run(server.modelquad_delegate(
+        asyncio.run(server.delegate(
             task_type="review", prompt="look", working_directory=str(inside), timeout=10))
     assert reached == [str(project), str(project / "sub")]
     # With the per-call prompt (no grant at start) any folder may be named: the user sees it.
     monkeypatch.setattr(server, "_STANDING_GRANT", False)
-    asyncio.run(server.modelquad_delegate(
+    asyncio.run(server.delegate(
         task_type="review", prompt="look", working_directory=str(other), timeout=10))
     assert reached[-1] == str(other)

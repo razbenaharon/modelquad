@@ -40,9 +40,9 @@ def write_policy(folder, text):
 
 
 def delegate(task_type, prompt, working_directory, files=None):
-    """The data half of one ``modelquad_delegate`` call."""
+    """The data half of one ``delegate`` call."""
     async def invoke():
-        return await mcp.modelquad_delegate(task_type=task_type, prompt=prompt,
+        return await mcp.delegate(task_type=task_type, prompt=prompt,
                                             working_directory=working_directory,
                                             files=files, timeout=60.0)
 
@@ -50,9 +50,9 @@ def delegate(task_type, prompt, working_directory, files=None):
 
 
 def package(task_type, prompt, working_directory, files=None):
-    """The data half of one ``modelquad_review_package`` call."""
+    """The data half of one ``review_package`` call."""
     async def invoke():
-        return await mcp.modelquad_review_package(task_type=task_type, prompt=prompt,
+        return await mcp.review_package(task_type=task_type, prompt=prompt,
                                                   working_directory=working_directory, files=files)
 
     return anyio.run(invoke).structured_content
@@ -228,7 +228,7 @@ def test_empty_task_kinds_read_as_codex_off_everywhere(tmp_path, no_start):
     assert (applied.refusal, applied.offer) == (rp.KIND_REMOVED, rs.OFF)
     repo = git_repo(tmp_path / "repo")
     write_policy(repo, EMPTY_KINDS.decode())
-    rules = mcp.modelquad_status(str(repo)).structured_content["folder_rules"]
+    rules = mcp.status(str(repo)).structured_content["folder_rules"]
     assert (rules["state"], rules["codex_allowed"], rules["task_kinds"]) == ("file", False, [])
     for kind in rp.TASK_KINDS:
         assert delegate(kind, "Review it.", str(repo))["reason"] == rp.KIND_REMOVED

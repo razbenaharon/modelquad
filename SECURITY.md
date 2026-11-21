@@ -64,18 +64,18 @@ programs ModelQuad starts. Provider traffic is made by the provider CLIs. See
 
 **MCP server.** Claude Code starts it as a child process and talks to it over
 standard input and output. It does not listen on a port, and ModelQuad has no
-local service. It has four tools. `modelquad_delegate` is the only one that
+local service. It has four tools. `delegate` is the only one that
 starts Codex. Without a standing grant it is marked
 `anthropic/requiresUserInteraction`, so Claude Code asks the user before every
-call (`tests/test_oss_export_surface.py`). `modelquad_review_package` and
-`modelquad_status` only read, and `modelquad_review_verdict` writes only the
+call (`tests/test_oss_export_surface.py`). `review_package` and
+`status` only read, and `review_verdict` writes only the
 local review ledger; none of the three starts Codex or sends anything.
 
 **The standing grant.** A user who wants Claude to consult Codex without a
 prompt for each call turns a standing grant on, for one repository or for
 every folder (`modelquad settings auto on --yes`, after a notice;
 `src/modelquad/grant.py`). A Claude Code session that starts in a granted
-folder then registers `modelquad_delegate` without
+folder then registers `delegate` without
 `anthropic/requiresUserInteraction`, so Claude Code's own permissions apply:
 the user's allow rule, or "don't ask again" on the first prompt, lets the
 calls run. Every call re-checks the grant for its own folder and refuses

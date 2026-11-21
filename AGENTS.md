@@ -9,7 +9,7 @@ the instrument for developing it.
 
 ## Current state
 
-- Version `0.4.2`, review ledger schema `3`.
+- Version `0.5.0`, review ledger schema `3`.
   `python scripts/check.py docs` checks these against the code.
 - One product, one flow: Claude Code asks the user's own Codex CLI for a
   read-only review of a named context package, and ModelQuad records what was
@@ -24,10 +24,28 @@ the instrument for developing it.
 - One backend: the Codex CLI, under the user's own login, read-only. There
   is no direct API path, no second provider, no background service, no
   background job, no quota reading and no division of work.
-- Four MCP tools (`mcp/server.py`): `modelquad_review_package` (what a review
-  would send; starts nothing), `modelquad_delegate` (the review; the only tool
-  that starts Codex), `modelquad_review_verdict` (what became of a finding)
-  and `modelquad_status`.
+- Four MCP tools (`mcp/server.py`): `review_package` (what a review
+  would send; starts nothing), `delegate` (the review; the only tool
+  that starts Codex), `review_verdict` (what became of a finding)
+  and `status`. Inside the plugin the server is named `review`, so Claude
+  Code shows `mcp__plugin_modelquad_review__<tool>`; without the plugin,
+  `mcp__modelquad__<tool>` (`branding.tool_ids`). Before 0.5.0 they were
+  `mcp__plugin_modelquad_modelquad__modelquad_<tool>` and
+  `mcp__modelquad__modelquad_<tool>`; `modelquad doctor` names a Claude
+  Code permission rule that still uses one (it reads those settings files
+  and never writes them).
+- `python -m modelquad update` (`updater.py`, `__main__.py`), user-started:
+  refuses unless started as `python -m modelquad` (pip cannot replace a
+  running `modelquad.exe`), in a worker, and while Claude Code, the Claude
+  app, `modelquad-mcp.exe` or another `modelquad.exe` runs; otherwise pip
+  (PyPI) or `git pull --ff-only` on a clean `main` and `pip install .`
+  (clone) as child processes, then `claude plugin update` for an enabled
+  user-scope plugin, the doctor checks and the version. Its children go
+  online; ModelQuad's own process does not. Nothing updates by itself.
+- After an upgrade the package and Claude Code's cached plugin can differ in
+  version, so the review tool's id can be any of six
+  (`branding.delegate_ids`); the hook matcher, the reminder and the hook
+  timing record accept all of them.
 - The context package (`review.py`): only the files Claude names. The manifest
   lists each file as sent (path, size, digest prefix), what was left out and
   why, and a package id. A run given a package id sends that package or
@@ -42,7 +60,7 @@ the instrument for developing it.
   several files change. `modelquad settings proactive off` makes Claude offer
   instead. Without the user's standing grant (`grant.py`,
   `modelquad settings auto`), Claude Code asks the user before every call that
-  would start Codex. In a granted folder `modelquad_delegate` follows Claude
+  would start Codex. In a granted folder `delegate` follows Claude
   Code's own permissions, a Stop-hook review gate asks once for a Codex
   review before a multi-file or sensitive change is handed over, and a
   PreToolUse consultation gate stops, once, the first edit of a sensitive
@@ -163,14 +181,14 @@ releases and recorded in SECURITY.md.
    the user can turn it off at any time; no MCP tool can turn it on, and when
    a call is refused for lack of a grant ModelQuad tells Claude to tell the
    user and turn nothing back on (`tests/test_standing_grant.py`,
-   `tests/test_settings_show.py`). Without a grant, `modelquad_delegate`
+   `tests/test_settings_show.py`). Without a grant, `delegate`
    carries `anthropic/requiresUserInteraction`, so Claude Code shows its
    approval prompt for each call (`tests/test_oss_export_surface.py`). Every
    call re-checks the global switch, the grant and the repository's choices,
    which outrank it. A refusal, a grant turned off or a provider refusal is
    final for that request: ModelQuad never starts Codex by another way.
    ModelQuad installs no permission rule for its tools. Showing a package
-   (`modelquad_review_package`) starts nothing and sends nothing.
+   (`review_package`) starts nothing and sends nothing.
 8. **Codex stays read-only, and gets only the package.** Only review,
    exploration and architecture run. Codex runs in an empty temporary folder
    with `--sandbox read-only`, `--ignore-user-config`, its agents off and its

@@ -48,7 +48,7 @@ unfamiliar code.
    files is done, before a commit or PR, after a bug survived one fix. You can
    also ask with `/modelquad:review`.
 2. Claude names the files. ModelQuad can show the **context package** first
-   (`modelquad_review_package`, or `modelquad review package` in a terminal):
+   (`review_package`, or `modelquad review package` in a terminal):
    each file with its size as sent, what is left out and why, the limits, and
    a package id (in a terminal, with `--json`). Add or remove files and look again. Showing a package starts
    nothing and sends nothing.
@@ -172,10 +172,11 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
   (`/modelquad:review`, `/modelquad:setup` and `/modelquad:settings`), the
   guide skill Claude reads (`/modelquad:guide`), and the review reminder with
   its two gates.
-- `modelquad doctor` checks five things and says what to do about each:
+- `modelquad doctor` checks six things and says what to do about each:
   Windows, the Codex CLI (found, new enough, and its own listing confirms the
-  switched-off tools), the connection to Claude Code, your settings, and the
-  current folder's rules. It runs Codex's `--version` and `features list`,
+  switched-off tools), the connection to Claude Code, your settings, the
+  current folder's rules, and whether a Claude Code permission rule still
+  names a ModelQuad tool by its name before 0.5.0. It runs Codex's `--version` and `features list`,
   which contact no provider.
 - The first Codex call shows, once, what ModelQuad sends where, instead of
   starting. Ask again to go ahead.
@@ -188,16 +189,54 @@ wrote.
 
 See [docs/PLUGIN.md](https://github.com/razbenaharon/modelquad/blob/main/docs/PLUGIN.md) for what the plugin contains.
 
-To upgrade, close every Claude Code window first (in a terminal session, type
-`/exit`), then run `git pull` and the same `pip install` again, and refresh the
+### Upgrade
+
+Close every Claude Code window and the Claude app first (in a terminal
+session, type `/exit`), then, in PowerShell, with the Python ModelQuad is
+installed in:
+
+    python -m modelquad update
+
+Run it as `python -m modelquad`, not as `modelquad update`: pip has to
+replace `modelquad.exe`, and Windows does not let it replace a running
+program. Started through `modelquad.exe`, the update refuses and prints the
+exact `"...\python.exe" -m modelquad update` command to run instead.
+
+It also refuses while Claude Code (`claude.exe`), the Claude app
+(`Claude.exe`), `modelquad-mcp.exe` or another `modelquad.exe` is running,
+and lists what is running: an upgrade then fails halfway and leaves
+ModelQuad uninstalled. Otherwise it upgrades the package the way it was
+installed (`python -P -m pip install --upgrade modelquad` for PyPI; for a
+clone, `git pull --ff-only`, only on a clean `main`, then `pip install .` in
+the clone), refreshes the plugin with `claude plugin update` if
+`claude plugin list --json` shows it installed and enabled, runs the checks
+of `modelquad doctor` and prints the new version. It exits with an error
+when the plugin could not be refreshed (disabled, installed for a project,
+or `claude` not found) and says what to run. pip and Git go online for this;
+ModelQuad itself does not, and nothing updates unless you run the command.
+`python -m modelquad update --dry-run` prints the steps and runs nothing.
+When it cannot tell how ModelQuad was installed, it says so and prints the
+commands instead.
+
+The same by hand, if the update cannot run: with Claude Code closed, run
+`git pull` and the same `pip install` again (or
+`python -m pip install --upgrade modelquad` for PyPI), and refresh the
 plugin with `claude plugin marketplace update modelquad`, then
-`claude plugin uninstall modelquad@modelquad` and
-`claude plugin install modelquad@modelquad` (Claude Code keeps a copy of the
-plugin per version number, so an update alone can keep old files when the
-version did not change). A running Claude Code keeps `modelquad-mcp.exe`
-open, and Windows does not let pip replace a running program: the upgrade
-then fails halfway and leaves ModelQuad uninstalled until you run it again
-with Claude Code closed.
+`claude plugin update modelquad@modelquad` (or
+`claude plugin uninstall modelquad@modelquad --keep-data` and
+`claude plugin install modelquad@modelquad`).
+
+From 0.5.0 the tools have shorter names: the plugin's are
+`mcp__plugin_modelquad_review__<tool>` and, without the plugin,
+`mcp__modelquad__<tool>`, where the tools are `review_package`, `delegate`,
+`review_verdict` and `status`. A permission rule you wrote for an earlier
+name no longer matches: an allow rule only makes Claude Code ask again, but
+a deny rule no longer keeps the tool out. Until the plugin is refreshed,
+Claude Code can run the new package under the old plugin (or the reverse),
+and the ids then mix the two names. Deny with the wildcards
+`mcp__plugin_modelquad_review__*`, `mcp__plugin_modelquad_modelquad__*` and
+`mcp__modelquad`, which hold in every case. `modelquad doctor` names any
+rule with an old name.
 
 A plain install keeps its state in `%USERPROFILE%\.local\share\modelquad`,
 outside `AppData`: Windows gives the Claude desktop app's programs a private
@@ -301,7 +340,7 @@ stops it by default, and what you set to allow it:
   asks for it, so a script or a headless `claude -p` run cannot start Codex
   (checked: the call is denied). To allow it, turn the grant on for the one
   folder the automation works in (`modelquad settings auto on --project DIR`,
-  not `--global`) and allow only `mcp__plugin_modelquad_modelquad__modelquad_delegate`
+  not `--global`) and allow only `mcp__plugin_modelquad_review__delegate`
   in that run (`--allowedTools`). A `.modelquad.toml` in the repository can
   narrow it further: task kinds, the number and size of files.
 - **One defined task per run.** Give each run one task and name its files;

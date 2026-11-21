@@ -47,7 +47,7 @@ def _review(project, ctx, executor, monkeypatch):
     monkeypatch.setattr(mcp, "_executor", lambda: executor)
 
     async def invoke():
-        return await mcp.modelquad_delegate(task_type="review", prompt=PROMPT,
+        return await mcp.delegate(task_type="review", prompt=PROMPT,
                                             working_directory=str(project), timeout=60.0,
                                             ctx=ctx, files=[FILENAME])
 
