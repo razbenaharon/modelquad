@@ -31,7 +31,7 @@ It works alongside OpenAI's own Codex plugin for Claude Code, which lets
 Codex work inside the repository with its tools. ModelQuad is for the other
 case: a second opinion on material you chose, with a record.
 
-Status: early, source-only release. Windows only.
+Status: early release, on PyPI. Windows only.
 
 ## Who it is for
 
