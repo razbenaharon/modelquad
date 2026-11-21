@@ -411,7 +411,135 @@ def package(request: ReviewRequest, caps: dict | None = None) -> dict:
     if lowered:
         result["limits"].update(lowered)
         result["limits"]["lowered_by"] = ".modelquad.toml"
+    hint = may_also_need(request.working_directory, [item["path"] for item in result["files"]],
+                         request.files)
+    if hint:
+        result["may_also_need"] = hint
     return result
+
+
+# ------------------------------------------------------------ the package hint
+
+
+#: At most this many test files are offered per package.
+MAX_MAY_ALSO_NEED = 3
+_TESTS_FOLDER = "tests"
+_JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts")
+
+
+def _listing(root, folder: str, cache: dict) -> list[str]:
+    """The names of the plain files in one folder, from its listing alone.
+
+    A directory listing, never an open: no file is read to find a test.
+    Links and junctions are left out, as the package leaves them out, and a
+    folder reached through one is not listed.
+    """
+    import os
+    import stat
+
+    from .execution.noshell import _linked
+
+    if folder not in cache:
+        names: list[str] = []
+        try:
+            path = root
+            for part in folder.split("/") if folder else ():
+                path = os.path.join(path, part)
+                info = os.lstat(path)
+                if _linked(info) or not stat.S_ISDIR(info.st_mode):
+                    raise OSError("not a plain folder")
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if stat.S_ISREG(info.st_mode) and not _linked(info):
+                        names.append(entry.name)
+        except OSError:
+            names = []
+        cache[folder] = sorted(names)
+    return cache[folder]
+
+
+def _tests_for(root, path: str, cache: dict) -> tuple[list[str], list[str]]:
+    """(exact, related) test paths for one source path, by naming convention only.
+
+    Python ``pkg/foo.py``: ``tests/test_foo.py``, then ``tests/test_foo_*.py``.
+    JS/TS ``dir/foo.ts``: ``dir/foo.test.*`` and ``dir/foo.spec.*``, then
+    ``dir/__tests__/foo.*``.
+    """
+    folder, _, name = path.rpartition("/")
+    stem, dot, suffix = name.partition(".")
+    suffix = dot + suffix
+    lowered = name.casefold()
+    if suffix.casefold() == ".py":
+        key = stem.casefold()
+        if (not key or key.startswith("test_") or key.endswith("_test") or key == "conftest"
+                or _TESTS_FOLDER in folder.casefold().split("/")):
+            return [], []
+        listed = _listing(root, _TESTS_FOLDER, cache)
+        exact = [f"{_TESTS_FOLDER}/{item}" for item in listed if item.casefold() == f"test_{key}.py"]
+        related = [f"{_TESTS_FOLDER}/{item}" for item in listed
+                   if item.casefold().startswith(f"test_{key}_") and item.casefold().endswith(".py")]
+        return exact, related
+    if lowered.endswith(_JS_SUFFIXES) and suffix.count(".") == 1:
+        if not stem or "__tests__" in folder.split("/"):
+            return [], []
+        prefix = f"{folder}/" if folder else ""
+        key = stem.casefold()
+        exact = [prefix + item for item in _listing(root, folder, cache)
+                 if item.casefold().endswith(_JS_SUFFIXES)
+                 and item.casefold().startswith((f"{key}.test.", f"{key}.spec."))
+                 and item.count(".") == 2]
+        inner = f"{prefix}__tests__"
+        related = [f"{inner}/{item}" for item in _listing(root, inner, cache)
+                   if item.casefold().startswith(f"{key}.") and item.casefold().endswith(_JS_SUFFIXES)]
+        return exact, related
+    return [], []
+
+
+def may_also_need(working_directory: str, sent: list[str], named) -> list[str]:
+    """Test files that may cover the sent files and are not in the package.
+
+    A hint for Claude, found by naming convention from folder listings only:
+    no file is opened, nothing is added to the package and the package id
+    does not change. Every candidate passes the same file rules as a named
+    file, and a secret-shaped name is never offered. Exact name matches come
+    first, then the others one per source file in turn; at most
+    ``MAX_MAY_ALSO_NEED``.
+    """
+    import os
+
+    from .execution import file_rules, noshell
+
+    if not sent:
+        return []
+    root = os.path.abspath(working_directory)
+    taken = {str(name).replace("\\", "/").removeprefix("./").casefold() for name in named}
+    taken.update(path.casefold() for path in sent)
+    cache: dict = {}
+    exact: list[str] = []
+    related: list[list[str]] = []
+    for path in sent:
+        first, rest = _tests_for(root, path, cache)
+        exact += first
+        related.append(rest)
+    ordered = list(exact)
+    for turn in range(max((len(group) for group in related), default=0)):
+        ordered += [group[turn] for group in related if turn < len(group)]
+    candidates = [path for path in dict.fromkeys(ordered)
+                  if path.casefold() not in taken and not noshell._secret_reference(path)]
+    if not candidates:
+        return []
+    allowed, _skipped = file_rules.screen(root, candidates)
+    allowed = set(allowed)
+    return [path for path in candidates if path in allowed][:MAX_MAY_ALSO_NEED]
+
+
+def may_also_need_line(paths) -> str:
+    """The hint, for a person: test files Codex may also need, which were not added."""
+    return "Codex may also need (not added): " + ", ".join(paths) + "."
 
 
 def package_lines(result: dict) -> list[str]:
@@ -428,6 +556,8 @@ def package_lines(result: dict) -> list[str]:
     if result["skipped"]:
         lines.append("Left out: " + ", ".join(
             f"{item['path']} ({item['reason']})" for item in result["skipped"]))
+    if result.get("may_also_need"):
+        lines.append(may_also_need_line(result["may_also_need"]))
     limits = result["limits"]
     lines.append(f"Limits: {limits['max_files']} files, {limits['max_total_bytes']} bytes in all"
                  + (" (lowered by this repository's .modelquad.toml)." if "lowered_by" in limits else "."))
@@ -570,6 +700,8 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         return shown
     if request.package_id is not None and shown["package_id"] != request.package_id:
         return refusal(PACKAGE_CHANGED)
+    # A hint for the reply, not part of what was sent: it stays out of the record.
+    hint = shown.pop("may_also_need", None)
     digests = {item["path"]: item["sha256"] for item in shown["files"]}
     metadata: dict[str, Any] = {"supplied_files": list(request.files), "approval": "delegate",
                                 "approved_digests": digests}
@@ -650,6 +782,8 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         payload["sent_files"] = audit["sent"]
         payload["skipped_files"] = audit["skipped"]
     payload["package_round"] = round_number
+    if hint:
+        payload["may_also_need"] = hint
     needed = noshell.needed_files(payload.get("output"), request.working_directory,
                                   {item["path"] for item in payload.get("sent_files", ())})
     if needed:

@@ -135,6 +135,131 @@ def test_a_repository_file_can_only_lower_the_package_limits(project):
     assert shown["reason"] == "supplied_files_over_limit"
 
 
+# ------------------------------------------------------------ the package hint
+
+
+def _tests_folder(project, *names):
+    folder = project / "tests"
+    folder.mkdir(exist_ok=True)
+    for name in names:
+        (folder / name).write_text("def test_it():\n    assert True\n", encoding="utf-8")
+    return folder
+
+
+@pytest.fixture
+def reads(monkeypatch):
+    """The names ModelQuad opens to build a package."""
+    opened: list[str] = []
+    real = noshell._read_file
+
+    def recording(root, name, *args, **kwargs):
+        opened.append(name)
+        return real(root, name, *args, **kwargs)
+
+    monkeypatch.setattr(noshell, "_read_file", recording)
+    return opened
+
+
+def test_the_package_names_tests_codex_may_also_need_without_opening_them(project, reads):
+    _tests_folder(project, "test_app_extra.py", "test_app.py", "test_util.py")
+
+    shown = review.package(request_for(project))
+
+    assert shown["may_also_need"] == ["tests/test_app.py", "tests/test_app_extra.py"]
+    assert [item["path"] for item in shown["files"]] == ["app.py"]
+    assert set(reads) == {"app.py"}
+    assert ("Codex may also need (not added): tests/test_app.py, tests/test_app_extra.py."
+            in review.package_lines(shown))
+
+
+def test_an_excluded_or_secret_named_test_is_never_offered(project, reads):
+    _tests_folder(project, "test_app.py", "test_app_kept.py", "test_app_-password=hunter2.py")
+    (project / ".modelquadignore").write_text("tests/test_app.py\n", encoding="utf-8")
+
+    shown = review.package(request_for(project))
+
+    assert shown["may_also_need"] == ["tests/test_app_kept.py"]
+    assert "hunter2" not in json.dumps(shown)
+    assert set(reads) == {"app.py"}
+
+
+def test_a_named_test_is_not_offered_again(project):
+    _tests_folder(project, "test_app.py", "test_app_extra.py")
+
+    shown = review.package(request_for(project, files=("app.py", "tests/test_app.py")))
+
+    assert shown["may_also_need"] == ["tests/test_app_extra.py"]
+
+
+def test_the_hint_does_not_change_the_package_id(project):
+    without = review.package(request_for(project))
+    _tests_folder(project, "test_app.py")
+
+    shown = review.package(request_for(project))
+
+    assert "may_also_need" not in without
+    assert shown["may_also_need"] == ["tests/test_app.py"]
+    assert shown["package_id"] == without["package_id"]
+
+
+def test_the_hint_offers_at_most_three_exact_matches_first(project):
+    _tests_folder(project, "test_app_a.py", "test_app_b.py", "test_util_a.py", "test_util.py",
+                  "test_app.py")
+
+    shown = review.package(request_for(project, files=("app.py", "util.py")))
+
+    # Exact names first, then one related test per source file in turn.
+    assert shown["may_also_need"] == ["tests/test_app.py", "tests/test_util.py", "tests/test_app_a.py"]
+    assert len(shown["may_also_need"]) == review.MAX_MAY_ALSO_NEED
+
+
+def test_a_tests_folder_reached_through_a_junction_is_not_listed(project, tmp_path):
+    import subprocess
+
+    from modelquad.procutil import no_window_kwargs
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "test_app.py").write_text("def test_it():\n    pass\n", encoding="utf-8")
+    made = subprocess.run(["cmd", "/c", "mklink", "/J", str(project / "tests"), str(elsewhere)],
+                          capture_output=True, check=False, **no_window_kwargs())
+    if made.returncode != 0:
+        pytest.skip("this machine cannot make a junction")
+
+    assert "may_also_need" not in review.package(request_for(project))
+
+
+def test_the_hint_finds_script_tests_beside_the_file_and_in_tests_folders(project):
+    web = project / "web"
+    (web / "__tests__").mkdir(parents=True)
+    (web / "button.ts").write_text("export const a = 1;\n", encoding="utf-8")
+    (web / "button.test.ts").write_text("test('a', () => {});\n", encoding="utf-8")
+    (web / "__tests__" / "button.tsx").write_text("test('b', () => {});\n", encoding="utf-8")
+
+    shown = review.package(request_for(project, files=("web/button.ts",)))
+
+    assert shown["may_also_need"] == ["web/button.test.ts", "web/__tests__/button.tsx"]
+
+
+def test_the_hint_reaches_the_reply_but_not_the_record(project, monkeypatch):
+    _tests_folder(project, "test_app.py")
+    executor = FakeExecutor("Looks right.\nFINDINGS: none")
+    monkeypatch.setattr(review_server, "_executor", lambda: executor)
+    monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
+
+    shown = call(review_server.review_package, task_type="review", prompt="Look.",
+                 working_directory=str(project), files=["app.py"])
+    result = call(review_server.delegate, task_type="review", prompt="Look.",
+                  working_directory=str(project), files=["app.py"], timeout=60.0)
+
+    assert shown.structured_content["may_also_need"] == ["tests/test_app.py"]
+    assert result.structured_content["may_also_need"] == ["tests/test_app.py"]
+    assert "Codex may also need (not added): tests/test_app.py." in result.content[0].text.splitlines()
+    assert executor.requests[0].metadata["supplied_files"] == ["app.py"]
+    _runs, packages = _ledger_rows()
+    assert "may_also_need" not in json.loads(packages[0]["manifest"])
+
+
 # --------------------------------------------------------------------- the run
 
 

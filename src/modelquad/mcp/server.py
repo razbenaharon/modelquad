@@ -98,7 +98,7 @@ _VISIBLE = ("task_type", "provider", "task_status", "task_completed", "output", 
             "delegated", "executed", "reason", "message", "decision_id", "package", "package_round",
             "skipped_files", "completion_request", "findings", "findings_note", "ledger_note", "usage",
             "limitations", "worker_note", "output_truncated", "output_chars", "status", "notice",
-            "next", "note", "codex_started")
+            "next", "note", "codex_started", "may_also_need")
 
 
 def _review_lines(payload: dict) -> list[str]:
@@ -117,6 +117,8 @@ def _review_lines(payload: dict) -> list[str]:
         if package["skipped"]:
             lines.append("Left out: " + ", ".join(
                 f"{item['path']} ({item['reason']})" for item in package["skipped"]))
+    if payload.get("may_also_need"):
+        lines.append(review.may_also_need_line(payload["may_also_need"]))
     usage = payload.get("usage") or {}
     if usage.get("tokens_source"):
         lines.append(f"Codex reported {usage.get('input_tokens')} input and "
