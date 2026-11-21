@@ -108,9 +108,15 @@ unfamiliar code.
 - Not a file chooser. ModelQuad sends what Claude names and you approve; it
   does not pick files, rank them or search the repository, and Git is not
   asked which files changed.
-- Not a cost estimator. Sizes are bytes. Token counts are the ones Codex
-  reports after a run; ModelQuad does not estimate tokens or a price, and a
-  run under a ChatGPT plan has no per-call price to show.
+- Not a cost estimator. Sizes are bytes, and the package preview gives the
+  exact size of the whole payload ModelQuad sends. Input tokens before a run
+  are an estimate, not a count: a range taken from the last 50 (at least 20)
+  successful reviews on your computer, shown only when there are enough of
+  them and the package is within the sizes they cover; otherwise the preview
+  says the tokens are unknown and why. After a run the reply shows the bytes
+  sent beside the input, cached and uncached tokens Codex reported.
+  ModelQuad estimates no price, and a run under a ChatGPT plan has no
+  per-call price to show.
 - Not a proof that Codex has no tools. Codex has no mode without tools.
   ModelQuad switches off what Codex lets it switch off and checks what Codex
   reports; SECURITY.md lists what remains.

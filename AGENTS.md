@@ -56,8 +56,15 @@ the instrument for developing it.
   nothing. When Codex says it needed more files, the reply carries a
   completion request; nothing is added by itself, and a review has at most two
   completion rounds. Git is not asked which files changed (asking can run a
-  repository's own filters), and no token count is estimated: the only token
-  counts are the ones Codex reports after a run.
+  repository's own filters). The preview gives the exact bytes of the whole
+  payload. Input tokens before a run are a labelled range from the ledger's
+  own record (`review_ledger.input_token_estimate`: a line through the last
+  50 successful reviews, widened by their largest miss, shown only from 20
+  of them and within the sizes they cover), otherwise unknown with the
+  reason; no tokenizer is used and no price is estimated. Only the preview
+  computes it (`package(..., estimate=True)`); the run skips it, and a
+  locked ledger reads as unknown at once. After a run the
+  reply puts the bytes sent beside Codex's input, cached and uncached tokens.
 - By default Claude decides on its own to ask Codex at the moments the
   server's instructions name (`adapters/server_instructions.py`), and a
   PostToolUse reminder (`adapters/review_reminder.py`) names that moment after

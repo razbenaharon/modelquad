@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **The package preview gives its exact size and, when the record allows,
+  an input-token range.** `review_package` and `modelquad review package`
+  now give the size of the whole payload ModelQuad sends (`payload_bytes`:
+  the task text, the files with their labels and line numbers, and
+  ModelQuad's own instructions), measured on the same rendering the run
+  sends. Input tokens are an estimate, never a count
+  (`input_tokens_estimate`): a straight line through the last 50
+  successful reviews recorded on this computer (task text and file bytes
+  against the input tokens Codex reported), widened by the largest miss
+  among them and rounded outward to the thousand. It is shown only from 20
+  such reviews and only for a package within the sizes they cover;
+  otherwise the preview says the tokens are unknown and why. No tokenizer
+  is used and no price is estimated. The ledger is read, never created,
+  and the range is not written to it. Only the preview computes the range:
+  the call that starts Codex does not read the ledger for it, and a ledger
+  another process holds locked reads as unknown at once instead of holding
+  up the preview. After a run, the reply puts the
+  bytes sent beside the input tokens Codex reported, how many came from
+  its cache and how many did not (`usage.payload_bytes`,
+  `usage.uncached_input_tokens`), and the ledger's package manifest keeps
+  the payload size.
 - **A file named like a secrets file no longer ends a review without
   saying why.** When a file in `files` is named like an environment or
   credential file (for example `config/billing.env.tmpl`), the reply now

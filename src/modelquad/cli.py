@@ -1020,7 +1020,7 @@ def _run_package_command(args: argparse.Namespace) -> int:
                                    working_directory=folder, files=tuple(args.files))
     policies: list = []
     result = (review.gate(request, review.Session(), starts_codex=False, policy_out=policies)
-              or review.package(request, policies[0].caps if policies else None))
+              or review.package(request, policies[0].caps if policies else None, estimate=True))
     if args.as_json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:

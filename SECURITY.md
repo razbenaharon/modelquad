@@ -132,6 +132,15 @@ our runs on 0.165.0-alpha.1.2 and 0.169.0 (2026-11-18), a package of one or
 two files of a few hundred bytes was reported as 18,100 to 19,700 input
 tokens: nearly all of it is what Codex adds. Those numbers are from one
 computer with one global instructions file and will differ on another.
+That is why the input-token range a package preview shows is taken from
+the reviews recorded on the same computer, not from a tokenizer: no Codex
+tokenizer is installed, and Codex's own part cannot be seen from outside.
+It is a straight line through the last 50 successful reviews (task text and
+file bytes against the input tokens Codex reported), widened by the largest
+miss among them, and it is shown only from 20 such reviews and only for a
+package within the sizes they cover. A new Codex release or model can move
+Codex's own part; the range catches up as new reviews replace the old ones.
+How much Codex will serve from its cache is not estimated.
 
 **Completion rounds.** When Codex's reply names files it needed and was not
 given, ModelQuad adds nothing by itself. The reply lists the names; a new
