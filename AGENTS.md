@@ -9,7 +9,7 @@ the instrument for developing it.
 
 ## Current state
 
-- Version `0.4.1`, review ledger schema `3`.
+- Version `0.4.2`, review ledger schema `3`.
   `python scripts/check.py docs` checks these against the code.
 - One product, one flow: Claude Code asks the user's own Codex CLI for a
   read-only review of a named context package, and ModelQuad records what was

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2 (2026-11-21)
 
 - **The review hook records how long it took.** Claude Code still showed "A
   hook didn't answer in time" once with the 10-second limit, and the cause
