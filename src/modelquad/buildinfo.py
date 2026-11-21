@@ -30,6 +30,9 @@ from .executable_resolution import resolve_executable
 UNKNOWN = "unknown"
 
 CHANNEL_SOURCE = "source"
+#: An installed copy pip took from a package index: the version names the
+#: release, whose files and hashes are published with it.
+CHANNEL_INDEX = "release from a package index"
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _GIT_TIMEOUT_SECONDS = 5.0
@@ -57,7 +60,11 @@ class BuildInfo:
     def label(self) -> str:
         """``<version>+<sha7> (<channel>)``, or ``<version> (unknown build)``."""
 
-        return f"{self.identity} ({self.channel})" if self.known else f"{self.version} (unknown build)"
+        if self.known:
+            return f"{self.identity} ({self.channel})"
+        if self.channel == CHANNEL_INDEX:
+            return f"{self.version} ({CHANNEL_INDEX})"
+        return f"{self.version} (unknown build)"
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -70,6 +77,15 @@ class BuildInfo:
 
 
 GitRunner = Callable[[Path], "str | None"]
+InstallReader = Callable[[], str]
+
+
+def _install_kind() -> str:
+    """How pip installed this copy (PEP 610), as ``updater.detect_install`` reads it."""
+
+    from .updater import detect_install
+
+    return detect_install().kind
 
 
 def _commit_or_unknown(value: object) -> str:
@@ -116,18 +132,29 @@ def read_build_info(
     *,
     source_root: Path | None = None,
     git_head: GitRunner | None = None,
+    install_kind: InstallReader | None = None,
 ) -> BuildInfo:
     """Resolve the build identity now. Every argument defaults to this process."""
 
     version = installed_version(UNKNOWN) or UNKNOWN
     root = source_root if source_root is not None else _source_checkout_root()
     commit = _commit_or_unknown((git_head or _git_head)(root)) if root is not None else UNKNOWN
+    channel = CHANNEL_SOURCE
+    if root is None and version != UNKNOWN:
+        from .updater import PYPI
+
+        try:
+            from_index = (install_kind or _install_kind)() == PYPI
+        except Exception:  # noqa: BLE001 -- unknown stays unknown
+            from_index = False
+        if from_index:
+            channel = CHANNEL_INDEX
     return BuildInfo(
         version=version,
         source_commit=commit,
         short=commit[:7] if commit != UNKNOWN else UNKNOWN,
         built_at_utc=UNKNOWN,
-        channel=CHANNEL_SOURCE,
+        channel=channel,
     )
 
 

@@ -164,3 +164,28 @@ def test_mcp_initialize_names_the_build():
     assert server_info is not None
     assert server_info.version == buildinfo.current_build_info().identity
     assert server_info.version.startswith(VERSION)
+
+
+def test_a_copy_pip_took_from_a_package_index_names_the_release(monkeypatch):
+    """No checkout to ask: pip's own record (no direct URL) says it came from an index."""
+    monkeypatch.setattr(buildinfo, "_source_checkout_root", lambda: None)
+    info = buildinfo.read_build_info(install_kind=lambda: "pypi")
+    assert info.channel == buildinfo.CHANNEL_INDEX
+    assert info.label == f"{VERSION} (release from a package index)"
+    assert info.source_commit == "unknown"  # the commit itself is still not claimed
+
+
+@pytest.mark.parametrize("kind", ["clone", "editable", "unknown"])
+def test_any_other_installed_copy_stays_an_unknown_build(kind, monkeypatch):
+    monkeypatch.setattr(buildinfo, "_source_checkout_root", lambda: None)
+    info = buildinfo.read_build_info(install_kind=lambda: kind)
+    assert info.label == f"{VERSION} (unknown build)"
+
+
+def test_an_unreadable_install_record_stays_unknown(monkeypatch):
+    monkeypatch.setattr(buildinfo, "_source_checkout_root", lambda: None)
+
+    def broken():
+        raise OSError("no record")
+
+    assert buildinfo.read_build_info(install_kind=broken).label == f"{VERSION} (unknown build)"
