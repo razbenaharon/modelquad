@@ -48,7 +48,7 @@ unfamiliar code.
    files is done, before a commit or PR, after a bug survived one fix. You can
    also ask with `/modelquad:review`.
 2. Claude names the files. ModelQuad can show the **context package** first
-   (`modelquad_review_package`, or `modelquad review package` in a terminal):
+   (`review_package`, or `modelquad review package` in a terminal):
    each file with its size as sent, what is left out and why, the limits, and
    a package id (in a terminal, with `--json`). Add or remove files and look again. Showing a package starts
    nothing and sends nothing.
@@ -301,7 +301,7 @@ stops it by default, and what you set to allow it:
   asks for it, so a script or a headless `claude -p` run cannot start Codex
   (checked: the call is denied). To allow it, turn the grant on for the one
   folder the automation works in (`modelquad settings auto on --project DIR`,
-  not `--global`) and allow only `mcp__plugin_modelquad_modelquad__modelquad_delegate`
+  not `--global`) and allow only `mcp__plugin_modelquad_review__delegate`
   in that run (`--allowedTools`). A `.modelquad.toml` in the repository can
   narrow it further: task kinds, the number and size of files.
 - **One defined task per run.** Give each run one task and name its files;

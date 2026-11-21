@@ -24,10 +24,10 @@ the instrument for developing it.
 - One backend: the Codex CLI, under the user's own login, read-only. There
   is no direct API path, no second provider, no background service, no
   background job, no quota reading and no division of work.
-- Four MCP tools (`mcp/server.py`): `modelquad_review_package` (what a review
-  would send; starts nothing), `modelquad_delegate` (the review; the only tool
-  that starts Codex), `modelquad_review_verdict` (what became of a finding)
-  and `modelquad_status`.
+- Four MCP tools (`mcp/server.py`): `review_package` (what a review
+  would send; starts nothing), `delegate` (the review; the only tool
+  that starts Codex), `review_verdict` (what became of a finding)
+  and `status`.
 - The context package (`review.py`): only the files Claude names. The manifest
   lists each file as sent (path, size, digest prefix), what was left out and
   why, and a package id. A run given a package id sends that package or
@@ -42,7 +42,7 @@ the instrument for developing it.
   several files change. `modelquad settings proactive off` makes Claude offer
   instead. Without the user's standing grant (`grant.py`,
   `modelquad settings auto`), Claude Code asks the user before every call that
-  would start Codex. In a granted folder `modelquad_delegate` follows Claude
+  would start Codex. In a granted folder `delegate` follows Claude
   Code's own permissions, a Stop-hook review gate asks once for a Codex
   review before a multi-file or sensitive change is handed over, and a
   PreToolUse consultation gate stops, once, the first edit of a sensitive
@@ -163,14 +163,14 @@ releases and recorded in SECURITY.md.
    the user can turn it off at any time; no MCP tool can turn it on, and when
    a call is refused for lack of a grant ModelQuad tells Claude to tell the
    user and turn nothing back on (`tests/test_standing_grant.py`,
-   `tests/test_settings_show.py`). Without a grant, `modelquad_delegate`
+   `tests/test_settings_show.py`). Without a grant, `delegate`
    carries `anthropic/requiresUserInteraction`, so Claude Code shows its
    approval prompt for each call (`tests/test_oss_export_surface.py`). Every
    call re-checks the global switch, the grant and the repository's choices,
    which outrank it. A refusal, a grant turned off or a provider refusal is
    final for that request: ModelQuad never starts Codex by another way.
    ModelQuad installs no permission rule for its tools. Showing a package
-   (`modelquad_review_package`) starts nothing and sends nothing.
+   (`review_package`) starts nothing and sends nothing.
 8. **Codex stays read-only, and gets only the package.** Only review,
    exploration and architecture run. Codex runs in an empty temporary folder
    with `--sandbox read-only`, `--ignore-user-config`, its agents off and its

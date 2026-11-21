@@ -76,7 +76,7 @@ def test_the_review_hook_is_silent_while_modelquad_is_off(tmp_path):
     assert _edits(tmp_path / "off", 3) == ""
 
     switch.write(True)
-    assert "modelquad_delegate" in _edits(tmp_path / "on", 3)
+    assert "delegate" in _edits(tmp_path / "on", 3)
 
 
 def test_the_review_hook_is_silent_when_the_switch_cannot_be_read(tmp_path):

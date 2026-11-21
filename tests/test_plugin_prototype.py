@@ -43,12 +43,31 @@ def test_plugin_server_is_the_packaged_entry():
     # The same entry `modelquad install claude` writes: the bare command pip
     # puts on PATH, no absolute path, no env, and the same tool timeout.
     sync = _sync_module()
-    assert (PLUGIN / ".mcp.json").read_bytes() == sync.MCP_TEMPLATE.read_bytes(), (
+    assert (PLUGIN / ".mcp.json").read_bytes() == sync.plugin_mcp(), (
         "plugin/.mcp.json is stale: run python scripts/sync_plugin.py")
     servers = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
-    assert list(servers) == ["modelquad"]
-    assert servers["modelquad"]["command"] == "modelquad-mcp"
-    assert "env" not in servers["modelquad"]
+    # Inside the plugin the server is named "review": Claude Code shows
+    # mcp__plugin_modelquad_review__<tool>. Its entry is the install's entry.
+    assert list(servers) == ["review"]
+    template = json.loads(sync.MCP_TEMPLATE.read_text(encoding="utf-8"))["mcpServers"]
+    assert servers["review"] == template["modelquad"]
+    assert servers["review"]["command"] == "modelquad-mcp"
+    assert "env" not in servers["review"]
+
+
+def test_plugin_hook_matches_the_review_tool_in_both_installs():
+    import re
+
+    from modelquad.adapters.review_reminder import DELEGATE_TOOLS
+    from modelquad.branding import tool_ids
+
+    assert DELEGATE_TOOLS == frozenset(tool_ids("delegate"))
+    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    matcher = hooks["PostToolUse"][0]["matcher"]
+    for tool in tool_ids("delegate"):
+        assert re.fullmatch(matcher, tool), tool
+    for other in ("mcp__plugin_modelquad_review__status", "mcp__other__delegate", "mcp__x__subdelegate"):
+        assert not re.fullmatch(matcher, other), other
 
 
 def test_plugin_carries_the_licence_and_notice():

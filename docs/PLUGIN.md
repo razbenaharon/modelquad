@@ -11,7 +11,9 @@ available for a setup without it (README, "Without the plugin").
 - **The ModelQuad MCP server** (`plugin/.mcp.json`), a copy of the entry
   `modelquad install claude` writes: it launches `modelquad-mcp`, the command
   pip puts on PATH, with a tool timeout of 15 minutes. A plugin's server tools
-  are named `mcp__plugin_modelquad_modelquad__<tool>` instead of
+  is named `review` inside the plugin, so its tools are named
+  `mcp__plugin_modelquad_review__<tool>` (for example
+  `mcp__plugin_modelquad_review__delegate`) instead of
   `mcp__modelquad__<tool>`; the four tools and their annotations are the
   same, so Claude Code asks the user before every call that would start
   Codex, unless the session started in a folder with the standing grant
@@ -77,15 +79,18 @@ record reads as unknown, never as installed.
 
 `modelquad install` prints what ModelQuad sends where before it writes
 anything. Someone who installs only the plugin does not run it, so their
-first `modelquad_delegate` call returns that notice instead, and Codex does
+first `delegate` call returns that notice instead, and Codex does
 not start; calling again, after Claude Code asks again, runs normally. An
 install that printed the notice, including any 0.3.0 install, counts as
 shown.
 
 ## Keeping ModelQuad out of a project
 
-The plugin's tool names differ, so a deny rule needs both forms:
-`"deny": ["mcp__modelquad", "mcp__plugin_modelquad_modelquad__*"]`. See
+The plugin's tool names differ, so a deny rule needs both forms, and
+the plugin's names before 0.5.0 as well:
+`"deny": ["mcp__modelquad", "mcp__plugin_modelquad_review__*", "mcp__plugin_modelquad_modelquad__*"]`.
+`modelquad doctor` names any Claude Code permission rule that still uses a
+name from before 0.5.0. See
 [RECOMMENDED-SETTINGS.md](RECOMMENDED-SETTINGS.md).
 
 ## Tested
@@ -96,7 +101,7 @@ The plugin's tool names differ, so a deny rule needs both forms:
   `modelquad install claude --plugin` leaving one copy of each.
 - Live check (2026-11-04), on the earlier 0.4.0 plugin build with quota,
   handoff and the SessionStart reminder: in auto mode Claude Code showed its
-  approval prompt before `modelquad_delegate`, and after approval a read-only
+  approval prompt before `delegate`, and after approval a read-only
   Codex review came back in about 40 s.
 - Live check (2026-11-18), the reduced plugin described here, in headless
   Claude Code 2.1.318 (`claude -p`) with Codex 0.165.0-alpha.1.2, a throwaway
@@ -109,7 +114,7 @@ The plugin's tool names differ, so a deny rule needs both forms:
   the interactive window.
 - Live check (2026-11-18), the same build plus the versioned notice, in
   headless Claude Code 2.1.318 started with `--permission-mode
-  bypassPermissions` and `modelquad_delegate` in `--allowedTools`, a
+  bypassPermissions` and `delegate` in `--allowedTools`, a
   throwaway project and a separate state folder. Without a grant, and again
   after the grant was turned off: Claude Code denied the call ("requires
   permission"); ModelQuad was not reached, nothing was recorded, Codex did

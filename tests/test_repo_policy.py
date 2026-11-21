@@ -383,7 +383,7 @@ def no_start(monkeypatch):
 
 def _delegate(tmp_path, task_type="review"):
     async def invoke():
-        return await mcp.modelquad_delegate(task_type=task_type, prompt="Review this.",
+        return await mcp.delegate(task_type=task_type, prompt="Review this.",
                                             working_directory=str(tmp_path), timeout=60.0)
 
     return anyio.run(invoke)
@@ -391,7 +391,7 @@ def _delegate(tmp_path, task_type="review"):
 
 def _package(tmp_path, task_type="review"):
     async def invoke():
-        return await mcp.modelquad_review_package(task_type=task_type, prompt="Review this.",
+        return await mcp.review_package(task_type=task_type, prompt="Review this.",
                                                   working_directory=str(tmp_path))
 
     return anyio.run(invoke)
@@ -450,7 +450,7 @@ def test_tool_annotations_and_meta_do_not_move_with_any_repo_file(tmp_path, monk
 
     monkeypatch.chdir(tmp_path)
     before = anyio.run(listing)
-    assert before["modelquad_delegate"][1]["anthropic/requiresUserInteraction"] is True
+    assert before["delegate"][1]["anthropic/requiresUserInteraction"] is True
     for text in (render(1, {"allowed": False}),
                  render(1, top={"requiresUserInteraction": False, "auto_approve": True,
                                 "permissions": ["mcp__modelquad"], "proactive": True}),

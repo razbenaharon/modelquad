@@ -744,6 +744,10 @@ def _run_auto_setting(args: argparse.Namespace, *, input_fn=input) -> int:
         print("For Claude Code to skip its prompt, add this rule to permissions.allow in your "
               "Claude Code settings (or answer \"don't ask again\" on the first prompt):")
         print("  " + grant.ALLOW_RULE)
+        print("Without the plugin (modelquad install claude), the rule is:")
+        print("  " + grant.INSTALL_ALLOW_RULE)
+        print("A rule written for a ModelQuad before 0.5.0 names an old id and no longer "
+              "applies; modelquad doctor lists such rules.")
         print("Takes effect in new Claude Code sessions.")
     elif folder is not None and grant.granted(folder):
         # The grant for every folder still covers this one: say so, never "off".
@@ -1179,7 +1183,8 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Install the server, commands and hooks directly again (the default).")
     doctor = subcommands.add_parser(
         "doctor", help="Check the setup: Codex, the Claude Code connection, your settings "
-                       "and the .modelquad.toml of this folder, with what to do next.")
+                       "the .modelquad.toml of this folder and any Claude Code permission rule "
+                       "that names an old ModelQuad tool name, with what to do next.")
     doctor.add_argument("--json", action="store_true", dest="as_json", help="Print the report as JSON.")
     doctor.add_argument('--project', metavar='DIR',
                         help='The project folder (default: the current folder).')

@@ -92,7 +92,7 @@ Other keys, such as `allow`, `auto_approve`, `permissions`, `proactive`,
 `trusted`, `include`, `files`, `model`, `effort` or `sandbox`, are unknown to
 schema 1. ModelQuad ignores them and acts on none of them. An unknown key
 alone does not refuse a call. `modelquad doctor` shows what the file sets,
-and `modelquad_status` reports how many keys were ignored, so a misspelt key
+and `status` reports how many keys were ignored, so a misspelt key
 can be noticed.
 
 ## Examples
@@ -210,7 +210,7 @@ not know the repository. The per-repository mode reaches Claude in two ways:
   Claude to call Codex, to offer Codex in one sentence, or nothing, according
   to the mode that applies in the folder.
 
-`modelquad_status` and `modelquad settings` show what applies in a folder.
+`status` and `modelquad settings` show what applies in a folder.
 Earlier builds also added one line at session start through a `SessionStart`
 hook; this build has no such hook.
 

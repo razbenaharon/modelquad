@@ -25,15 +25,23 @@ rule to that project's `.claude/settings.json`:
 ```json
 {
   "permissions": {
-    "deny": ["mcp__modelquad", "mcp__plugin_modelquad_modelquad__*"]
+    "deny": [
+      "mcp__modelquad", "mcp__plugin_modelquad_review__*",
+      "mcp__plugin_modelquad_modelquad__*"
+    ]
   }
 }
 ```
 
 `mcp__modelquad` covers every ModelQuad tool from `modelquad install
-claude`. The ModelQuad plugin's server names its tools
-`mcp__plugin_modelquad_modelquad__...`, so the second rule covers those; keep
-both, and the rule holds however ModelQuad was installed. Commit the file so the rule
+claude`. The ModelQuad plugin names its tools
+`mcp__plugin_modelquad_review__...` (since 0.5.0), so the second rule covers
+those; the third covers the plugin's names before 0.5.0
+(`mcp__plugin_modelquad_modelquad__...`), so the rule also holds on a
+computer that still runs an older build. Keep all three, and the rule holds
+however ModelQuad was installed. A deny rule written for an older build that
+names only the old plugin names no longer covers the plugin's tools:
+`modelquad doctor` names such a rule and the name to use instead. Commit the file so the rule
 applies to everyone who opens the repository, or put the same rule in
 `.claude/settings.local.json` to apply it only on your computer. Other
 projects keep ModelQuad.
@@ -48,7 +56,8 @@ shell rules next to the others:
 {
   "permissions": {
     "deny": [
-      "mcp__modelquad", "mcp__plugin_modelquad_modelquad__*",
+      "mcp__modelquad", "mcp__plugin_modelquad_review__*",
+      "mcp__plugin_modelquad_modelquad__*",
       "Bash(codex *)", "PowerShell(codex *)"
     ]
   }
@@ -106,7 +115,7 @@ off` makes Claude offer instead and call Codex only when you agree or ask;
 to new Claude Code sessions.
 
 The standing grant (`modelquad settings auto on --yes`, for one repository or
-with `--global`) lets `modelquad_delegate` run without Claude Code's prompt
+with `--global`) lets `delegate` run without Claude Code's prompt
 for each call, once you add the allow rule it prints or choose "don't ask
 again". You turn it on yourself, in a terminal or by choosing automatic in
 `/modelquad:settings`; Claude never turns it on by itself.
@@ -149,7 +158,8 @@ ModelQuad off a whole fleet:
   the command and its arguments exactly, so a server started another way (a
   full path, or `python -m`) needs its own entry, or
 - deny its tools with
-  `"permissions": {"deny": ["mcp__modelquad", "mcp__plugin_modelquad_modelquad__*"]}`.
+  `"permissions": {"deny": ["mcp__modelquad", "mcp__plugin_modelquad_review__*", "mcp__plugin_modelquad_modelquad__*"]}`
+  (the last one covers the plugin's tool names before 0.5.0).
 
 Both of these also match by a name, which a user can choose. Claude Code's
 documentation warns that a `serverName` entry is a label, not a security
@@ -158,11 +168,11 @@ which servers may run at all, use an allowlist with
 `allowManagedMcpServersOnly`, or a fixed `managed-mcp.json`.
 
 What makes a person approve each Codex call is Claude Code's own
-approval prompt: `modelquad_delegate`, the one tool that starts Codex, is
+approval prompt: `delegate`, the one tool that starts Codex, is
 marked as requiring user interaction, which no allow rule or mode skips,
 unless you turn the standing grant on for a folder
 (`modelquad settings auto on`): sessions there register
-`modelquad_delegate` without that mark, and your allow rule applies.
+`delegate` without that mark, and your allow rule applies.
 
 See Claude Code's documentation on managed settings and on controlling MCP
 server access (`managed-mcp`) for where the managed settings file lives on

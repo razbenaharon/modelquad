@@ -60,7 +60,7 @@ REQUIRED_SENTENCE_FRAGMENTS = (
     "read-only",
     "asks the user before",
     "MODELQUAD_WORKER=1",
-    "`modelquad_review_package`",
+    "`review_package`",
     "`completion_request`",
     "`follows`",
 )

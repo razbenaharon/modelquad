@@ -121,7 +121,7 @@ def share_tripwire(monkeypatch):
 
 @pytest.mark.parametrize("path", REMOTE[:4])
 def test_status_does_not_open_a_share(share_tripwire, path):
-    result = mcp.modelquad_status(project_directory=path)
+    result = mcp.status(project_directory=path)
     # Nothing about the folder is read or reported: not its mode, not its rules.
     assert "folder_rules" not in result.structured_content
     assert "own_grant" not in result.structured_content
@@ -145,7 +145,7 @@ def test_delegate_refuses_a_share_before_opening_it(share_tripwire, monkeypatch,
     monkeypatch.setattr(mcp, "_executor", lambda: executor)
 
     async def invoke():
-        return await mcp.modelquad_delegate(task_type="review", prompt="Review it.",
+        return await mcp.delegate(task_type="review", prompt="Review it.",
                                             working_directory=path, files=["a.py"], timeout=60.0)
 
     result = anyio.run(invoke)
@@ -159,7 +159,7 @@ def test_delegate_refuses_a_share_before_opening_it(share_tripwire, monkeypatch,
 @pytest.mark.parametrize("path", REMOTE)
 def test_the_package_tool_refuses_a_share_before_opening_it(share_tripwire, path):
     async def invoke():
-        return await mcp.modelquad_review_package(task_type="review", prompt="Review it.",
+        return await mcp.review_package(task_type="review", prompt="Review it.",
                                                   working_directory=path, files=["a.py"])
 
     payload = anyio.run(invoke).structured_content

@@ -268,7 +268,7 @@ def no_start(monkeypatch):
 
 def delegate(repo):
     async def invoke():
-        return await mcp.modelquad_delegate(task_type="review", prompt="Review this.",
+        return await mcp.delegate(task_type="review", prompt="Review this.",
                                             working_directory=str(repo), timeout=60.0)
 
     return anyio.run(invoke)
@@ -276,7 +276,7 @@ def delegate(repo):
 
 def package(repo):
     async def invoke():
-        return await mcp.modelquad_review_package(task_type="review", prompt="Review this.",
+        return await mcp.review_package(task_type="review", prompt="Review this.",
                                                   working_directory=str(repo))
 
     return anyio.run(invoke)

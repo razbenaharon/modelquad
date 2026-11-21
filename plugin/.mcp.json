@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "modelquad": {
+    "review": {
       "command": "modelquad-mcp",
       "args": [],
       "timeout": 900000

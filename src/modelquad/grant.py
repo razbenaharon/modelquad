@@ -9,7 +9,7 @@ time, turns a standing grant on for one repository or for every folder:
 
     modelquad settings auto on [--project DIR | --global] --yes
 
-ModelQuad then registers ``modelquad_delegate`` without that marker for a
+ModelQuad then registers ``delegate`` without that marker for a
 Claude Code session started in a granted folder, so Claude Code's ordinary
 permissions apply: the user's own allow rule (or "don't ask again" on the
 first prompt) lets the calls run. ModelQuad never writes that rule.
@@ -53,8 +53,13 @@ GLOBAL_NOTICE = (
     "a client's code. To keep a folder out, run in it: modelquad settings repo off",
 )
 
-#: The allow rule the user adds to Claude Code's settings (permissions.allow).
-ALLOW_RULE = "mcp__plugin_modelquad_modelquad__modelquad_delegate"
+#: The allow rule the user adds to Claude Code's settings (permissions.allow):
+#: the plugin's id of the review tool, and its id without the plugin. Before
+#: 0.5.0 they were mcp__plugin_modelquad_modelquad__modelquad_delegate and
+#: mcp__modelquad__modelquad_delegate; an allow rule with an old id no longer
+#: matches (`modelquad doctor` names it).
+ALLOW_RULE = "mcp__plugin_modelquad_review__delegate"
+INSTALL_ALLOW_RULE = "mcp__modelquad__delegate"
 
 NO_GRANT = "no_standing_grant"
 NO_GRANT_MESSAGE = (

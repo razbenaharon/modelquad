@@ -19,6 +19,32 @@ DISTRIBUTION_NAME = "modelquad"
 # The name Claude Code's configuration registers this MCP server under.
 MCP_SERVER_NAME = "modelquad"
 
+# The plugin's name and the name its MCP server has inside the plugin
+# (plugin/.mcp.json). Claude Code names a plugin's tools
+# mcp__plugin_<plugin>_<server>__<tool>.
+PLUGIN_NAME = "modelquad"
+PLUGIN_SERVER_NAME = "review"
+
+# The four MCP tools, and the names they had before 0.5.0.
+TOOL_NAMES = ("review_package", "delegate", "review_verdict", "status")
+OLD_TOOL_NAMES = {name: f"modelquad_{name}" for name in TOOL_NAMES}
+# The tool-name prefix Claude Code shows for each install.
+PLUGIN_TOOL_PREFIX = f"mcp__plugin_{PLUGIN_NAME}_{PLUGIN_SERVER_NAME}__"
+INSTALL_TOOL_PREFIX = f"mcp__{MCP_SERVER_NAME}__"
+# Before 0.5.0 the plugin's server was named like the install's.
+OLD_PLUGIN_SERVER_ID = f"mcp__plugin_{PLUGIN_NAME}_{MCP_SERVER_NAME}"
+
+
+def tool_ids(tool: str) -> tuple[str, str]:
+    """The ids Claude Code gives one tool: (plugin install, install without the plugin)."""
+    return PLUGIN_TOOL_PREFIX + tool, INSTALL_TOOL_PREFIX + tool
+
+
+def old_tool_ids(tool: str) -> tuple[str, str]:
+    """The ids the same tool had before 0.5.0: (plugin install, install without the plugin)."""
+    return f"{OLD_PLUGIN_SERVER_ID}__{OLD_TOOL_NAMES[tool]}", INSTALL_TOOL_PREFIX + OLD_TOOL_NAMES[tool]
+
+
 # Console entry points.
 CLI_COMMAND = "modelquad"
 MCP_COMMAND = "modelquad-mcp"

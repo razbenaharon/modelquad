@@ -256,7 +256,7 @@ def test_absolute_rules_cover_network_share_paths(rule):
 
 def test_the_package_applies_project_rules_from_a_subfolder(project):
     settings(project / ".claude" / "settings.json", "Read(./config/**)")
-    result = asyncio.run(mcp.modelquad_review_package(
+    result = asyncio.run(mcp.review_package(
         task_type="review", prompt="task", working_directory=str(project / "config"),
         files=["secrets.txt"]))
     text = "\n".join(item.text for item in result.content)
@@ -268,7 +268,7 @@ def test_the_package_applies_project_rules_from_a_subfolder(project):
 
 
 def test_the_package_without_files_says_only_the_task_is_sent(project):
-    result = asyncio.run(mcp.modelquad_review_package(
+    result = asyncio.run(mcp.review_package(
         task_type="review", prompt="task", working_directory=str(project)))
     assert result.content[0].text.startswith("Codex would get only the task text (")
     assert result.structured_content["files"] == [] and result.structured_content["skipped"] == []
@@ -285,12 +285,12 @@ class _NotStarted:
 
 @pytest.fixture
 def delegate(monkeypatch):
-    """One ``modelquad_delegate`` call, as Claude Code makes it, outside a worker."""
+    """One ``delegate`` call, as Claude Code makes it, outside a worker."""
     monkeypatch.setattr(worker_guard, "is_worker", lambda *args: False)
 
     def call(project, files, executor=None, prompt="task"):
         monkeypatch.setattr(mcp, "_executor", lambda: executor or _NotStarted())
-        return asyncio.run(mcp.modelquad_delegate(
+        return asyncio.run(mcp.delegate(
             task_type="review", prompt=prompt, working_directory=str(project), timeout=60.0,
             files=files))
 
@@ -501,7 +501,7 @@ def test_closed_file_audit_drops_anything_outside_its_shape():
 
 def test_both_tools_take_an_explicit_bounded_files_argument():
     tools = mcp.server._tool_manager._tools
-    for name in ("modelquad_delegate", "modelquad_review_package"):
+    for name in ("delegate", "review_package"):
         schema = tools[name].parameters["properties"]["files"]
         array, = [item for item in schema["anyOf"] if item.get("type") == "array"]
         assert array["maxItems"] == 32 and array["items"] == {"type": "string"}
@@ -521,7 +521,7 @@ def test_more_than_32_files_are_refused_by_the_tool(project, delegate):
 
     names = [f"f{index}.py" for index in range(33)]
     with pytest.raises(ToolError):
-        asyncio.run(mcp.server.call_tool("modelquad_delegate", {
+        asyncio.run(mcp.server.call_tool("delegate", {
             "task_type": "review", "prompt": "task", "working_directory": str(project),
             "files": names}))
     # Reached without the schema (a direct call), the flow refuses them itself.

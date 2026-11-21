@@ -248,7 +248,7 @@ def test_the_delegate_tool_records_its_trigger(tmp_path, monkeypatch):
 
     def delegate(trigger, prompt):
         async def invoke():
-            return await mcp.modelquad_delegate(task_type="review", prompt=prompt,
+            return await mcp.delegate(task_type="review", prompt=prompt,
                                                 working_directory=str(tmp_path), files=["a.py"],
                                                 timeout=60.0, trigger=trigger)
         return anyio.run(invoke)
@@ -260,7 +260,7 @@ def test_the_delegate_tool_records_its_trigger(tmp_path, monkeypatch):
     delegate("made_up", "Review it again.")
     assert rl.report(workspace=rl.workspace_id(tmp_path))["runs_by_trigger"] == {
         "review_gate": 1, "claude": 1}
-    assert "review_gate" in mcp.modelquad_delegate.__doc__
+    assert "review_gate" in mcp.delegate.__doc__
 
 
 # ------------------------------------------------------------ the package record
@@ -423,7 +423,7 @@ def test_the_verdict_tool_says_when_a_record_was_not_kept(tmp_path):
     rl.record_run(_payload(), working_directory=tmp_path, task_type="review", trigger="claude")
     rl.record_verdicts("d-1", [{"finding": "F1", "verdict": "confirmed", "evidence": "none",
                                 "action": "to_fix"}], source="user")
-    tool = getattr(server.modelquad_review_verdict, "fn", None) or server.modelquad_review_verdict
+    tool = getattr(server.review_verdict, "fn", None) or server.review_verdict
 
     def call(action, verdict="confirmed"):
         return tool("d-1", [server.FindingVerdict(finding="F1", verdict=verdict, evidence="test",

@@ -54,10 +54,10 @@ and their terms.
 
 #### A Codex call
 
-`modelquad_delegate` is the only tool that starts Codex. When Claude Code
+`delegate` is the only tool that starts Codex. When Claude Code
 calls it and you approve the call (or the standing grant below lets it run),
 ModelQuad prepares the input in its own process and then starts the Codex
-CLI. `modelquad_review_package` and `modelquad review package` show the same
+CLI. `review_package` and `modelquad review package` show the same
 input as a package (below) and start nothing and send nothing.
 
 1. **The task text** is the text Claude Code wrote. If it holds a private key,
@@ -214,11 +214,11 @@ input as a package (below) and start nothing and send nothing.
 
 #### The package and its id
 
-`modelquad_review_package` (or `modelquad review package` in a terminal)
+`review_package` (or `modelquad review package` in a terminal)
 packs the files exactly as a call would, with the same rules, screening and
 limits, and returns the manifest and a package id. It reads the files and
 sends nothing anywhere. The id is a digest over the task kind, the task text
-and each sent file's path, size and digest. A `modelquad_delegate` call given
+and each sent file's path, size and digest. A `delegate` call given
 that id sends that exact package or nothing: if anything changed, the call is
 refused (`package_changed`).
 
@@ -233,7 +233,7 @@ grant as any other.
 `modelquad settings auto on --yes`, run by you in a terminal or chosen by you
 in `/modelquad:settings`, turns on
 a standing grant for one repository (or, with `--global`, for every folder).
-In a Claude Code session started in a granted folder, `modelquad_delegate`
+In a Claude Code session started in a granted folder, `delegate`
 carries no per-call approval mark, so Claude Code's own permissions decide
 whether you are asked. With the grant on and the allow rule added (or "don't
 ask again" chosen at the first prompt), files go to OpenAI with no per-call
@@ -257,12 +257,12 @@ sends to Anthropic, or to the cloud provider you set Claude Code up to use:
   package id), the token counts and time Codex reported, each finding's
   reference, severity, file, line, category and Codex's confidence, and the
   names of files Codex said it needed.
-- The package from `modelquad_review_package`: the same manifest, the limits
+- The package from `review_package`: the same manifest, the limits
   and the package id.
-- From `modelquad_status`: whether ModelQuad is on, whether Codex calls are
+- From `status`: whether ModelQuad is on, whether Codex calls are
   automatic or approved one by one, what the folder's own settings and
   `.modelquad.toml` allow, and one line of history from the review ledger.
-- From `modelquad_review_verdict`: how many verdicts were recorded, and which
+- From `review_verdict`: how many verdicts were recorded, and which
   were not kept and why.
 - With the plugin, the review reminder's and the review gates' fixed lines,
   which carry a count of changed files or the kind of a sensitive file, and
@@ -303,7 +303,7 @@ or inspects that file** (`tests/test_hook_transcript_boundary.py`).
 - **Review reminder and review gates** (`modelquad hook-review claude`, in the
   plugin, after Claude edits a file or runs a command, before it edits a
   file, and when it stops): the event and tool names, the session id, the
-  working directory and the edited file's path; for a `modelquad_delegate`
+  working directory and the edited file's path; for a `delegate`
   call, its task kind and trigger and whether its reply carries an answer.
   It never reads file contents, even though an edit's payload carries them,
   and never the transcript. To choose its wording it reads
@@ -337,7 +337,7 @@ or inspects that file** (`tests/test_hook_transcript_boundary.py`).
   Code settings files named there, the `.modelquadignore` files named there,
   and Git's answer to `git check-ignore` for the listed paths.
 - **The repository's `.modelquad.toml`**, if there is one, on each Codex call
-  and package, for `modelquad_status`, `modelquad settings` and
+  and package, for `status`, `modelquad settings` and
   `modelquad doctor`, and in the review hook
   ([docs/REPO-POLICY.md](docs/REPO-POLICY.md)). Its contents, path and key
   names are not stored.
