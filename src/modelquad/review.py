@@ -401,6 +401,8 @@ def package(request: ReviewRequest, caps: dict | None = None) -> dict:
         skipped = [{"path": item["path"], "reason": item["reason"]}
                    for item in (entry.to_host_dict() for entry in diagnostics)
                    if item["reason"] in noshell.AUDIT_REASONS][:noshell.MAX_SKIPPED]
+        if refused.reason == "supplied_file_secret" and request.files:
+            return _secret_refusal(request, caps, skipped, refused.secret_kinds)
         return refusal(refused.reason, skipped_files=skipped)
     result = manifest(request.task_type, request.prompt, report.get("sent", []),
                       [item for item in report.get("skipped", [])
@@ -418,6 +420,82 @@ def package(request: ReviewRequest, caps: dict | None = None) -> dict:
     return result
 
 
+#: Why a named file was left out of the retry package (``left_out`` in a refusal).
+SECRET_NAME = "secret_file_name"        # named like a secrets file; never opened
+SECRET_CONTENT = "secret_file_content"  # its text holds a recognisable credential
+SECRET_PATH = "secret_path"             # the path itself looks like a credential
+
+_LEFT_OUT_WHY = {
+    SECRET_NAME: "its name looks like a secrets file (an environment or credential file), so "
+                 "ModelQuad did not open it; its contents were not checked",
+    SECRET_CONTENT: "its text contains what looks like a real credential (a private key or a "
+                    "recognisable access token)",
+    SECRET_PATH: "the path itself looks like a credential",
+}
+_LEFT_OUT_SHORT = {SECRET_NAME: "its name", SECRET_CONTENT: "its contents", SECRET_PATH: "its path"}
+RETRY_NEXT = ("Nothing was sent to Codex. ModelQuad does not repeat the path of a file like this. "
+              "The package below leaves it out: tell the user which file it is (by its position in "
+              "your files list) and why, show the files that would be sent, and ask whether the "
+              "review is still useful without it. Only if they agree, call again with exactly those "
+              "files and its package_id. If Codex needs what the file holds, supply a redacted copy "
+              "instead.")
+
+
+def _secret_refusal(request: ReviewRequest, caps: dict | None, skipped: list[dict],
+                    kinds: dict[str, str]) -> dict:
+    """A named file stopped the package: say which and why, and offer the package without it.
+
+    The reason stays ``supplied_file_secret``. The path of such a file is never
+    echoed: the packer's privacy screen reports it as ``<path>``
+    (``noshell._required_names``), and this keeps that. ``left_out`` gives instead
+    the file's 1-based position in the request's ``files`` (Claude's own list)
+    and whether its name, its contents or its path stopped it.
+    ``kinds`` is what the packing pass that refused recorded for each file it
+    stopped; this reads no file to explain it. A file the read rules withheld
+    was never packed, so it is not in ``kinds`` and is never opened here.
+    ``retry_package`` is the manifest of the same request without those files.
+    Starts nothing and sends nothing: a retry is a new call, sent only with that
+    package_id, which the user agrees to.
+    """
+    from dataclasses import replace
+
+    from .execution import noshell
+
+    by_kind = {"path": SECRET_PATH, "name": SECRET_NAME, "content": SECRET_CONTENT}
+    left_out: list[dict] = []
+    keep: list[str] = []
+    for position, entry in enumerate(request.files, start=1):
+        name = noshell.relevant_entry(entry, request.working_directory) if isinstance(entry, str) else ""
+        try:
+            name = noshell.canonical_path(name)
+        except noshell.TargetError:
+            keep.append(entry)
+            continue
+        reason = by_kind.get(kinds.get(name.casefold(), ""))
+        if reason is None:
+            keep.append(entry)
+            continue
+        left_out.append({"position": position, "path": "<path>", "reason": reason})
+    if not left_out:
+        return refusal("supplied_file_secret", skipped_files=skipped)
+    reasons = {item["reason"] for item in left_out}
+    named = "; ".join(f"The file listed as number {item['position']} in files: "
+                      f"{_LEFT_OUT_WHY[item['reason']]}" for item in left_out)
+    if reasons == {SECRET_NAME}:
+        first = "ModelQuad stopped this review because of a file name, not its contents. "
+    else:
+        first = "ModelQuad stopped this review because a named file looks like it holds a secret. "
+    message = first + named + ". "
+    retry = package(replace(request, files=tuple(keep), package_id=None), caps)
+    extra: dict[str, Any] = {"skipped_files": skipped, "left_out": left_out}
+    if retry.get("refused"):
+        message += "A package without those files cannot be sent either: " + refusal_line(retry)
+    else:
+        extra["retry_package"] = retry
+        message += RETRY_NEXT
+        if not retry["files"]:
+            message += " Without them Codex would get only the task text."
+    return refusal("supplied_file_secret", message, **extra)
 # ------------------------------------------------------------ the package hint
 
 
@@ -545,7 +623,8 @@ def may_also_need_line(paths) -> str:
 def package_lines(result: dict) -> list[str]:
     """The package, for a person: what Codex would get, its size, and what is left out."""
     if result.get("refused"):
-        return ["This package cannot be sent.", refusal_line(result)]
+        lines = ["This package cannot be sent.", refusal_line(result)]
+        return lines + retry_lines(result)
     files = result["files"]
     if not files:
         lines = [f"Codex would get only the task text ({result['prompt']['bytes']} bytes)."]
@@ -565,6 +644,18 @@ def package_lines(result: dict) -> list[str]:
                  "Codex's own and are known only after a run; ModelQuad does not estimate them "
                  "or a price.")
     return lines
+
+
+def retry_lines(result: dict) -> list[str]:
+    """For a refusal that offers one: what was left out, and the package without it."""
+    retry = result.get("retry_package")
+    if not isinstance(retry, dict):
+        return []
+    lines = ["Left out: " + ", ".join(
+        f"file {item['position']} in the list (stopped by {_LEFT_OUT_SHORT[item['reason']]})"
+        for item in result.get("left_out", []))]
+    lines.append(f"Without it, the package is {retry['package_id']}:")
+    return lines + package_lines(retry)
 
 
 # ------------------------------------------------------------------- the run

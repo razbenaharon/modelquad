@@ -118,6 +118,165 @@ def test_a_secret_file_makes_the_package_unsendable_and_says_which(project):
     assert review.package_lines(shown)[0] == "This package cannot be sent."
 
 
+def _env_template(project):
+    (project / "config").mkdir()
+    (project / "config" / "billing.env.tmpl").write_text(
+        "DATABASE_URL=postgresql://app@{host}:{port}/billing\n", encoding="utf-8")
+    return ("app.py", "config/billing.env.tmpl")
+
+
+def test_a_file_stopped_by_its_name_is_named_and_a_package_without_it_is_offered(project, monkeypatch):
+    files = _env_template(project)
+    opened = []
+    real_read = noshell._read_file
+    monkeypatch.setattr(noshell, "_read_file", lambda root, name, *a, **k: (
+        opened.append(name), real_read(root, name, *a, **k))[1])
+
+    shown = review.package(request_for(project, files=files))
+
+    assert shown["refused"] is True and shown["started"] is False
+    assert shown["reason"] == "supplied_file_secret"
+    assert shown["left_out"] == [{"position": 2, "path": "<path>", "reason": review.SECRET_NAME}]
+    assert "because of a file name, not its contents" in shown["message"]
+    assert "number 2 in files" in shown["message"]
+    assert "contains what looks like a real credential" not in shown["message"]
+    assert "config/billing.env.tmpl" not in opened, "a secret-named file is never opened"
+    # The packer's privacy screen hides such a path; the reply keeps it hidden everywhere.
+    assert "billing.env" not in json.dumps(shown) and "{host}" not in json.dumps(shown)
+    retry = shown["retry_package"]
+    assert [item["path"] for item in retry["files"]] == ["app.py"]
+    assert retry["package_id"] == review.package(request_for(project, files=("app.py",)))["package_id"]
+    text = "\n".join(review.package_lines(shown))
+    assert "Left out: file 2 in the list (stopped by its name)" in text
+    assert "billing.env" not in text
+    assert f"Without it, the package is {retry['package_id']}:" in text and "- app.py (" in text
+
+
+def test_the_package_without_it_runs_only_when_asked_again_and_the_original_still_refuses(project):
+    files = _env_template(project)
+    executor = FakeExecutor()
+
+    refused = review.run(request_for(project, files=files), executor)
+    again = review.run(request_for(project, files=files), executor)
+
+    assert refused["refused"] is True and again["refused"] is True
+    assert executor.requests == [], "nothing starts until the smaller package is asked for"
+    retry = refused["retry_package"]
+    reply = review.run(request_for(project, files=tuple(item["path"] for item in retry["files"]),
+                                   package_id=retry["package_id"]), executor)
+    assert review.headline(reply) == "Codex answered."
+    assert [item["path"] for item in reply["sent_files"]] == ["app.py"]
+    assert reply["package"]["package_id"] == retry["package_id"]
+
+
+def test_the_offered_package_id_sends_that_package_or_nothing(project):
+    files = _env_template(project)
+    retry = review.package(request_for(project, files=files))["retry_package"]
+    executor = FakeExecutor()
+
+    widened = review.run(request_for(project, files=("app.py", "util.py"),
+                                     package_id=retry["package_id"]), executor)
+    with_the_file = review.run(request_for(project, files=files, package_id=retry["package_id"]), executor)
+
+    assert widened["refused"] is True and widened["reason"] == review.PACKAGE_CHANGED
+    assert with_the_file["refused"] is True
+    assert executor.requests == []
+
+
+def _recording_reads(monkeypatch):
+    opened = []
+    real_read = noshell._read_file
+    monkeypatch.setattr(noshell, "_read_file", lambda root, name, *a, **k: (
+        opened.append(name), real_read(root, name, *a, **k))[1])
+    return opened
+
+
+def test_explaining_the_refusal_never_opens_a_file_the_rules_exclude(project, monkeypatch):
+    files = _env_template(project)
+    (project / "private").mkdir()
+    (project / "private" / "draft.txt").write_text("not for Codex\n", encoding="utf-8")
+    (project / ".modelquadignore").write_text("private/\n", encoding="utf-8")
+    opened = _recording_reads(monkeypatch)
+
+    shown = review.package(request_for(project, files=(*files, "private/draft.txt")))
+
+    assert "private/draft.txt" not in opened, "an excluded file is never read, not even to explain"
+    assert "config/billing.env.tmpl" not in opened
+    assert shown["reason"] == "supplied_file_secret"
+    assert shown["left_out"] == [{"position": 2, "path": "<path>", "reason": review.SECRET_NAME}]
+    assert "because of a file name, not its contents" in shown["message"]
+    assert "billing.env" not in json.dumps(shown)
+    retry = shown["retry_package"]
+    assert [item["path"] for item in retry["files"]] == ["app.py"]
+    assert {"path": "private/draft.txt", "reason": "modelquad_ignored"} in retry["skipped"]
+
+
+def test_the_refusal_reasons_come_from_the_one_packing_pass(project, monkeypatch):
+    (project / "notes.txt").write_text("-----BEGIN " + "RSA PRIVATE KEY-----\nMIIfixture\n", encoding="utf-8")
+    files = (*_env_template(project), "notes.txt")
+    opened = _recording_reads(monkeypatch)
+
+    shown = review.package(request_for(project, files=files))
+
+    # One read for the refused pack, one for the offered package; never a third look.
+    assert opened.count("notes.txt") == 1 and opened.count("app.py") == 2
+    assert shown["left_out"] == [{"position": 2, "path": "<path>", "reason": review.SECRET_NAME},
+                                 {"position": 3, "path": "<path>", "reason": review.SECRET_CONTENT}]
+    assert "looks like it holds a secret" in shown["message"]
+
+
+def test_the_offered_package_refuses_once_a_file_in_it_changed(project):
+    files = _env_template(project)
+    retry = review.package(request_for(project, files=files))["retry_package"]
+    (project / "app.py").write_text("def run():\n    return 2\n", encoding="utf-8")
+    executor = FakeExecutor()
+
+    reply = review.run(request_for(project, files=("app.py",), package_id=retry["package_id"]), executor)
+
+    assert reply["refused"] is True and reply["reason"] == review.PACKAGE_CHANGED
+    assert executor.requests == []
+
+
+def test_a_file_stopped_by_its_contents_says_so_and_never_shows_them(project):
+    (project / "notes.txt").write_text("-----BEGIN " + "RSA PRIVATE KEY-----\nMIIfixture\n", encoding="utf-8")
+
+    shown = review.package(request_for(project, files=("app.py", "notes.txt")))
+
+    assert shown["left_out"] == [{"position": 2, "path": "<path>", "reason": review.SECRET_CONTENT}]
+    assert "looks like it holds a secret" in shown["message"]
+    assert "MIIfixture" not in json.dumps(shown) and "notes.txt" not in json.dumps(shown)
+    assert [item["path"] for item in shown["retry_package"]["files"]] == ["app.py"]
+
+
+def test_a_path_that_looks_like_a_credential_is_not_shown(project):
+    name = "ghp_" + "A1b2C3d4E5f6G7h8" + ".txt"
+    (project / name).write_text("inert\n", encoding="utf-8")
+
+    shown = review.package(request_for(project, files=(name, "app.py")))
+
+    assert shown["left_out"] == [{"position": 1, "path": "<path>", "reason": review.SECRET_PATH}]
+    assert name not in json.dumps(shown)
+
+
+def test_when_only_secret_files_were_named_the_offer_says_only_the_task_text_goes(project):
+    _env_template(project)
+
+    shown = review.package(request_for(project, files=("config/billing.env.tmpl",)))
+
+    assert shown["retry_package"]["files"] == []
+    assert "only the task text" in shown["message"]
+
+
+def test_the_server_passes_the_offer_to_claude_and_shows_it(project):
+    shown = review.package(request_for(project, files=_env_template(project)))
+
+    assert {"left_out", "retry_package"} <= set(review_server._VISIBLE)
+    lines = review_server._review_lines(shown)
+    assert any("file 2 in the list (stopped by its name)" in line for line in lines)
+    assert not any("billing.env" in line for line in lines)
+    assert any(line.startswith("Without it, the package is ") for line in lines)
+
+
 def test_the_package_lines_separate_bytes_from_tokens_and_promise_no_price(project):
     text = "\n".join(review.package_lines(review.package(request_for(project))))
 
