@@ -47,7 +47,10 @@ def test_names_outside_the_fixed_sets_are_not_kept(tmp_path, on):
 
 
 def test_the_delegate_tool_and_a_run_are_named_by_kind(tmp_path, on):
-    for tool, kind in (("mcp__plugin_modelquad_modelquad__modelquad_delegate", "modelquad"),
+    for tool, kind in (("mcp__plugin_modelquad_review__delegate", "modelquad"),
+                       ("mcp__modelquad__delegate", "modelquad"),
+                       ("mcp__plugin_modelquad_modelquad__modelquad_delegate", "other"),
+                       ("mcp__other__delegate", "other"),
                        ("PowerShell", "run")):
         hook_timing.finished(hook_timing.started(state=tmp_path), {"event": "PostToolUse", "tool": tool})
         assert _lines(tmp_path)[-1]["tool"] == kind

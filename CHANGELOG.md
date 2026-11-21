@@ -9,7 +9,8 @@
   plugin their ids are `mcp__plugin_modelquad_review__<tool>`; without it
   (`modelquad install claude`, whose server keeps the name `modelquad`),
   `mcp__modelquad__<tool>`. The CLI commands keep their names. The plugin's
-  hook matches the new id of `delegate` in both installs.
+  hook, and the tool kind in `hook-timing.jsonl`, match the new id of
+  `delegate` in both installs.
 - **`modelquad doctor` names permission rules with an old tool name.** A
   sixth check reads `permissions.allow` and `permissions.deny` in
   `%USERPROFILE%\.claude\settings.json`, `settings.local.json` there and the

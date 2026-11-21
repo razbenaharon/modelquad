@@ -61,7 +61,10 @@ def test_plugin_hook_matches_the_review_tool_in_both_installs():
     from modelquad.adapters.review_reminder import DELEGATE_TOOLS
     from modelquad.branding import tool_ids
 
+    from modelquad.adapters.hook_timing import TOOL_KINDS
+
     assert DELEGATE_TOOLS == frozenset(tool_ids("delegate"))
+    assert {tool for tool, kind in TOOL_KINDS.items() if kind == "modelquad"} == DELEGATE_TOOLS
     hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
     matcher = hooks["PostToolUse"][0]["matcher"]
     for tool in tool_ids("delegate"):
