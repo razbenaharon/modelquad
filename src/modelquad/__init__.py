@@ -2,4 +2,4 @@
 # SPDX-License-Identifier: Apache-2.0
 """ModelQuad: a read-only second-opinion review of only the selected project files."""
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"

@@ -511,6 +511,16 @@ that cannot be waived.
 ModelQuad was developed with substantial help from AI coding agents. The
 maintainer directed, reviewed and tested the work and is responsible for it.
 
+## Questions and new versions
+
+- Questions and bugs: open an issue on GitHub, or write to
+  support@modelquad.com.
+- Security problems: see [SECURITY.md](https://github.com/razbenaharon/modelquad/blob/main/SECURITY.md); never a public issue.
+- To hear about new versions, choose **Watch**, then **Custom**, then
+  **Releases** on this repository's GitHub page. ModelQuad does not check
+  for updates by itself; `python -m modelquad update` installs one when you
+  run it.
+
 ## Documentation
 
 - [PRIVACY.md](https://github.com/razbenaharon/modelquad/blob/main/PRIVACY.md): what ModelQuad reads, sends and stores, and how to

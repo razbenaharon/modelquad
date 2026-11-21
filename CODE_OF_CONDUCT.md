@@ -17,7 +17,7 @@ If someone's behaviour concerns you, report it privately:
 
 - through GitHub's private reporting on this repository (the **Security**
   tab, **Report a vulnerability**), with "Code of conduct" in the title; or
-- through the contact options on the maintainer's GitHub profile.
+- by e-mail to support@modelquad.com, with "Code of conduct" in the subject.
 
 Please do not report conduct problems in a public issue.
 

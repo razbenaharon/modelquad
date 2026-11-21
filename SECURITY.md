@@ -6,8 +6,8 @@ Please report vulnerabilities privately, through GitHub's private
 vulnerability reporting: open this repository's **Security** tab and choose
 **Report a vulnerability**.
 
-Do not open a public issue, pull request or discussion for a vulnerability.
-There is no security e-mail address.
+If you cannot use that form, write to security@modelquad.com. Do not open a
+public issue, pull request or discussion for a vulnerability.
 
 Please include:
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2 (2026-11-21)
+
+- **`modelquad --version` names a release.** A copy pip installed from a
+  package index printed `(unknown build)`; it now prints
+  `0.5.2 (release from a package index)`, read from pip's own record of
+  the install. The commit is still not claimed; a source checkout still
+  names its commit, and any other install still says `(unknown build)`.
+- **Contact addresses.** support@modelquad.com for questions, and
+  security@modelquad.com for a vulnerability when GitHub's private form
+  cannot be used. The README says how to follow new releases on GitHub.
+
 ## 0.5.1 (2026-11-21)
 
 - **The plugin installs from GitHub.** The install is now
