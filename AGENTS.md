@@ -9,7 +9,7 @@ the instrument for developing it.
 
 ## Current state
 
-- Version `0.4.2`, review ledger schema `3`.
+- Version `0.5.0`, review ledger schema `3`.
   `python scripts/check.py docs` checks these against the code.
 - One product, one flow: Claude Code asks the user's own Codex CLI for a
   read-only review of a named context package, and ModelQuad records what was
@@ -27,7 +27,19 @@ the instrument for developing it.
 - Four MCP tools (`mcp/server.py`): `review_package` (what a review
   would send; starts nothing), `delegate` (the review; the only tool
   that starts Codex), `review_verdict` (what became of a finding)
-  and `status`.
+  and `status`. Inside the plugin the server is named `review`, so Claude
+  Code shows `mcp__plugin_modelquad_review__<tool>`; without the plugin,
+  `mcp__modelquad__<tool>` (`branding.tool_ids`). Before 0.5.0 they were
+  `mcp__plugin_modelquad_modelquad__modelquad_<tool>` and
+  `mcp__modelquad__modelquad_<tool>`; `modelquad doctor` names a Claude
+  Code permission rule that still uses one (it reads those settings files
+  and never writes them).
+- `modelquad update` (`updater.py`), user-started: refuses while Claude
+  Code, the Claude app or `modelquad-mcp.exe` runs; otherwise pip (PyPI) or
+  `git pull --ff-only` and `pip install .` (clone) as child processes, then
+  reinstalls the plugin, runs the doctor checks and prints the version. Its
+  children go online; ModelQuad's own process does not. Nothing updates by
+  itself.
 - The context package (`review.py`): only the files Claude names. The manifest
   lists each file as sent (path, size, digest prefix), what was left out and
   why, and a package id. A run given a package id sends that package or

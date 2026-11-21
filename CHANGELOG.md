@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+- **Shorter tool names.** Claude Code showed the review tool as
+  `modelquad:modelquad - modelquad_delegate`. The plugin's MCP server is now
+  named `review` and the four tools lose their `modelquad_` prefix:
+  `review_package`, `delegate`, `review_verdict` and `status`. With the
+  plugin their ids are `mcp__plugin_modelquad_review__<tool>`; without it
+  (`modelquad install claude`, whose server keeps the name `modelquad`),
+  `mcp__modelquad__<tool>`. The CLI commands keep their names. The plugin's
+  hook matches the new id of `delegate` in both installs.
+- **`modelquad doctor` names permission rules with an old tool name.** A
+  sixth check reads `permissions.allow` and `permissions.deny` in
+  `%USERPROFILE%\.claude\settings.json`, `settings.local.json` there and the
+  project's `.claude\settings.json` and `.claude\settings.local.json`,
+  read-only, and names every rule that still uses an id from before 0.5.0,
+  with the id to use. A deny rule that no longer covers its tool is a
+  problem; an allow rule is a note; an unreadable file reads as unknown.
+  ModelQuad still writes no permission rule.
+- **The recommended deny rules cover both names**
+  (`mcp__plugin_modelquad_review__*` and `mcp__plugin_modelquad_modelquad__*`
+  next to `mcp__modelquad`), so a rule holds on a computer that still runs an
+  older build. `modelquad settings auto on` prints the allow rule for both
+  installs.
+- **`modelquad update`.** One user-started step: it refuses while Claude
+  Code (`claude.exe`), the Claude app (`Claude.exe`) or `modelquad-mcp.exe`
+  is running and lists them; otherwise it upgrades the package the way it
+  was installed (`python -m pip install --upgrade modelquad` with the same
+  interpreter for PyPI; `git pull --ff-only`, then `pip install .`, or
+  `pip install -e .` for an editable install, in the clone), reinstalls the
+  plugin when `claude plugin list` shows it, runs the doctor checks and
+  prints the new version. When it cannot tell how ModelQuad was installed it
+  says so and prints the commands instead. `--dry-run` runs nothing. pip,
+  Git and `claude plugin` go online themselves; ModelQuad's own process
+  still connects only to loopback, and nothing updates unless you run the
+  command.
+
+### If you upgrade
+
+- The tool ids change: `mcp__plugin_modelquad_modelquad__modelquad_delegate`
+  is now `mcp__plugin_modelquad_review__delegate`, and
+  `mcp__modelquad__modelquad_delegate` is now `mcp__modelquad__delegate`
+  (the same for `review_package`, `review_verdict` and `status`).
+- An **allow** rule for an old id stops matching: Claude Code asks again
+  before the call. Put the new id in the rule to skip the prompt again.
+- A **deny** rule for an old id (or `mcp__plugin_modelquad_modelquad__*`) no
+  longer covers the tool, so it no longer keeps ModelQuad out. Add the new id
+  (or `mcp__plugin_modelquad_review__*`). `mcp__modelquad` and
+  `mcp__modelquad__*` still match the install without the plugin.
+- `modelquad doctor` names every such rule in your Claude Code settings and
+  the project's, with the id to use. It does not change the files.
+- Refresh the plugin after upgrading (`modelquad update` does it), so Claude
+  Code picks up the renamed server and the new hook matcher.
+
 ## 0.4.2 (2026-11-21)
 
 - **The review hook records how long it took.** Claude Code still showed "A

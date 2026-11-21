@@ -24,7 +24,9 @@ print a usage report and pass it on yourself
 ## Summary
 
 - ModelQuad's own processes connect only to loopback addresses
-  ([NETWORK.md](NETWORK.md)). It has no telemetry.
+  ([NETWORK.md](NETWORK.md)). It has no telemetry. `modelquad update`, only
+  when you run it, starts pip and Git, which go online to fetch the new
+  version.
 - For a Codex call, ModelQuad reads only the files listed in the call's
   `files` argument, which Claude Code shows you in its approval prompt
   unless you turned on the standing grant ([below](#the-standing-grant)). It
@@ -329,6 +331,13 @@ or inspects that file** (`tests/test_hook_transcript_boundary.py`).
   `LOCALAPPDATA`), the home, `AppData` and `TEMP` folders it removes from
   stored text, and the two variables that tell WSL apart. It passes Codex the
   filtered environment described above.
+- **Claude Code's permission rules**, for `modelquad doctor`: the
+  `permissions.allow` and `permissions.deny` lists of
+  `%USERPROFILE%\.claude\settings.json`, `settings.local.json` there, and the
+  project's `.claude\settings.json` and `.claude\settings.local.json`,
+  read-only, to name any rule that still uses a ModelQuad tool name from
+  before 0.5.0. It shows only those rules; nothing else in the files is
+  shown or stored, and the files are never changed.
 - **Claude Code's plugin record** (`.claude\plugins\installed_plugins.json`),
   read-only, so `modelquad doctor`, `modelquad settings` and install can tell
   whether the plugin is installed. An unreadable record reads as unknown.

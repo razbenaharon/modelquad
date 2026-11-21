@@ -1188,6 +1188,11 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--json", action="store_true", dest="as_json", help="Print the report as JSON.")
     doctor.add_argument('--project', metavar='DIR',
                         help='The project folder (default: the current folder).')
+    update_cmd = subcommands.add_parser(
+        "update", help="Upgrade ModelQuad and refresh its Claude Code plugin, with Claude Code "
+                       "closed. pip and git go online for it; ModelQuad does not.")
+    update_cmd.add_argument("--dry-run", action="store_true",
+                            help="Print the steps and run nothing.")
     subcommands.add_parser("mcp", help="Run the MCP server Claude Code talks to (stdio).")
     review_hook = subcommands.add_parser(
         "hook-review", help="The review reminder Claude Code runs; not for manual use.")
@@ -1282,5 +1287,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_privacy(args)
     if args.command == "doctor":
         return _run_doctor(args)
+    if args.command == "update":
+        from . import updater
+
+        return updater.update(dry_run=args.dry_run)
     parser.error(f"unknown command {args.command!r}")
     return 2

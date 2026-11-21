@@ -75,6 +75,27 @@ plugin from Claude Code's own plugin record
 install. Claude Code does not document that file as stable, so an unreadable
 record reads as unknown, never as installed.
 
+## Upgrading
+
+With every Claude Code window and the Claude app closed, run
+`modelquad update`. It refuses while `claude.exe`, `Claude.exe` or
+`modelquad-mcp.exe` is running. It upgrades the package the way it was
+installed (pip from PyPI, or `git pull --ff-only` and `pip install .` in the
+clone), then, if `claude plugin list` shows `modelquad@modelquad`, runs
+`claude plugin marketplace update modelquad`,
+`claude plugin uninstall modelquad@modelquad` and
+`claude plugin install modelquad@modelquad` (Claude Code keeps a copy of the
+plugin per version number, so an update alone can keep old files), and
+then the checks of `modelquad doctor`. `--dry-run` prints the steps only.
+pip, Git and `claude plugin` go online themselves; ModelQuad does not
+([NETWORK.md](../NETWORK.md)). The steps by hand are in the README.
+
+Since 0.5.0 the server is named `review` inside the plugin and the tools
+have no `modelquad_` prefix: `mcp__plugin_modelquad_review__delegate` where
+it was `mcp__plugin_modelquad_modelquad__modelquad_delegate`. Claude Code
+permission rules with the old names stop matching; `modelquad doctor` names
+them.
+
 ## The notice before first use
 
 `modelquad install` prints what ModelQuad sends where before it writes
