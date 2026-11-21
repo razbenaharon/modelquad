@@ -15,7 +15,10 @@
   such reviews and only for a package within the sizes they cover;
   otherwise the preview says the tokens are unknown and why. No tokenizer
   is used and no price is estimated. The ledger is read, never created,
-  and the range is not written to it. After a run, the reply puts the
+  and the range is not written to it. Only the preview computes the range:
+  the call that starts Codex does not read the ledger for it, and a ledger
+  another process holds locked reads as unknown at once instead of holding
+  up the preview. After a run, the reply puts the
   bytes sent beside the input tokens Codex reported, how many came from
   its cache and how many did not (`usage.payload_bytes`,
   `usage.uncached_input_tokens`), and the ledger's package manifest keeps

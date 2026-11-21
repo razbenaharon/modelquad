@@ -386,12 +386,14 @@ def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict],
     }
 
 
-def package(request: ReviewRequest, caps: dict | None = None) -> dict:
+def package(request: ReviewRequest, caps: dict | None = None, *, estimate: bool = False) -> dict:
     """What a run of this request would send now. Starts nothing.
 
     Packs the files exactly as the run does (the read rules, the secret
     screen, the caps) and returns the manifest, or the closed refusal the run
-    would give. Reads the files; sends nothing anywhere.
+    would give. Reads the files; sends nothing anywhere. Only a preview asks
+    for the input-token ``estimate``: the run that starts Codex skips it and
+    the ledger read it needs, and reports Codex's own counts instead.
     """
     from .execution import noshell
 
@@ -406,7 +408,8 @@ def package(request: ReviewRequest, caps: dict | None = None) -> dict:
                    for item in (entry.to_host_dict() for entry in diagnostics)
                    if item["reason"] in noshell.AUDIT_REASONS][:noshell.MAX_SKIPPED]
         if refused.reason == "supplied_file_secret" and request.files:
-            return _secret_refusal(request, caps, skipped, refused.secret_kinds)
+            return _secret_refusal(request, caps, skipped, refused.secret_kinds,
+                                   estimate=estimate)
         return refusal(refused.reason, skipped_files=skipped)
     result = manifest(request.task_type, request.prompt, report.get("sent", []),
                       [item for item in report.get("skipped", [])
@@ -422,7 +425,8 @@ def package(request: ReviewRequest, caps: dict | None = None) -> dict:
                          request.files)
     if hint:
         result["may_also_need"] = hint
-    result["input_tokens_estimate"] = _estimate(result["prompt"]["bytes"] + result["total_bytes"])
+    if estimate:
+        result["input_tokens_estimate"] = _estimate(result["prompt"]["bytes"] + result["total_bytes"])
     return result
 
 
@@ -459,7 +463,7 @@ RETRY_NEXT = ("Nothing was sent to Codex. ModelQuad does not repeat the path of 
 
 
 def _secret_refusal(request: ReviewRequest, caps: dict | None, skipped: list[dict],
-                    kinds: dict[str, str]) -> dict:
+                    kinds: dict[str, str], *, estimate: bool = False) -> dict:
     """A named file stopped the package: say which and why, and offer the package without it.
 
     The reason stays ``supplied_file_secret``. The path of such a file is never
@@ -503,7 +507,7 @@ def _secret_refusal(request: ReviewRequest, caps: dict | None, skipped: list[dic
     else:
         first = "ModelQuad stopped this review because a named file looks like it holds a secret. "
     message = first + named + ". "
-    retry = package(replace(request, files=tuple(keep), package_id=None), caps)
+    retry = package(replace(request, files=tuple(keep), package_id=None), caps, estimate=estimate)
     extra: dict[str, Any] = {"skipped_files": skipped, "left_out": left_out}
     if retry.get("refused"):
         message += "A package without those files cannot be sent either: " + refusal_line(retry)
@@ -643,6 +647,7 @@ _ESTIMATE_UNKNOWN = {
     "outside_recorded_sizes": "this package is smaller or larger than every recorded review",
     "no_steady_relation": "the recorded reviews show no steady relation between bytes and tokens",
     "ledger_unreadable": "the review ledger could not be read",
+    "ledger_busy": "the review ledger was in use, and the preview does not wait for it",
     "no_package": "there is no package to measure",
 }
 
@@ -684,7 +689,8 @@ def package_lines(result: dict) -> list[str]:
         lines.append(f"The whole payload is {result['payload_bytes']} bytes: the task text, the "
                      "files with their labels and line numbers, and ModelQuad's own instructions.")
     lines.append("Sizes are bytes as sent, after credentials are redacted.")
-    lines.append(estimate_line(result.get("input_tokens_estimate")))
+    if "input_tokens_estimate" in result:
+        lines.append(estimate_line(result["input_tokens_estimate"]))
     return lines
 
 
@@ -841,8 +847,6 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         return refusal(PACKAGE_CHANGED)
     # A hint for the reply, not part of what was sent: it stays out of the record.
     hint = shown.pop("may_also_need", None)
-    # Shown before the run; after it, Codex's own counts replace it.
-    shown.pop("input_tokens_estimate", None)
     digests = {item["path"]: item["sha256"] for item in shown["files"]}
     metadata: dict[str, Any] = {"supplied_files": list(request.files), "approval": "delegate",
                                 "approved_digests": digests}

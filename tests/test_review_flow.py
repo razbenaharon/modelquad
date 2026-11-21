@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 
 import anyio
 import pytest
@@ -290,7 +291,7 @@ def test_the_package_gives_the_exact_size_of_the_whole_payload(project):
 
 
 def test_with_no_recorded_review_the_input_tokens_are_unknown_and_no_price_is_given(project):
-    shown = review.package(request_for(project))
+    shown = review.package(request_for(project), estimate=True)
 
     assert shown["input_tokens_estimate"] == {"known": False, "reason": "too_few_runs", "runs": 0,
                                               "min_runs": review_ledger.MIN_ESTIMATE_RUNS}
@@ -408,25 +409,64 @@ def test_an_unreadable_ledger_leaves_the_estimate_unknown():
     assert path.read_bytes() == b"not a database"
 
 
-def test_the_preview_shows_the_range_and_the_run_keeps_it_out_of_the_record(project):
+def _seed_around(project):
     sent = review.package(request_for(project))
     size = sent["prompt"]["bytes"] + sent["total_bytes"]
     _seed_runs([(size + offset, 18_000 + offset) for offset in range(0, 40_000, 2_000)])
+    return sent
 
-    shown = review.package(request_for(project))
+
+def test_the_preview_tool_shows_the_range(project):
+    sent = _seed_around(project)
+
+    result = call(review_server.review_package, task_type="review",
+                  prompt="Review the change to run().", working_directory=str(project),
+                  files=["app.py"])
+
+    shown = result.structured_content
     assert shown["input_tokens_estimate"]["known"] is True
-    assert any(line.startswith("Input tokens, estimated from the last 20")
-               for line in review.package_lines(shown))
     assert shown["package_id"] == sent["package_id"]
+    assert any(line.startswith("Input tokens, estimated from the last 20")
+               for line in result.content[0].text.splitlines())
 
-    reply = review.run(request_for(project, package_id=shown["package_id"]), FakeExecutor())
 
+def test_the_run_that_starts_codex_never_reads_the_ledger_for_an_estimate(project, monkeypatch):
+    _seed_around(project)
+    asked = []
+    monkeypatch.setattr(review_ledger, "input_token_estimate",
+                        lambda *args, **kwargs: asked.append(args) or {"known": False})
+
+    reply = review.run(request_for(project), FakeExecutor())
+
+    assert asked == []
     assert "input_tokens_estimate" not in reply
-    conn = review_ledger.connect()
-    row = conn.execute("SELECT manifest FROM packages WHERE decision_id = ?",
-                       (reply["decision_id"],)).fetchone()
-    conn.close()
-    assert "input_tokens_estimate" not in json.loads(row["manifest"])
+    # The size sent and Codex's own counts are still there.
+    assert type(reply["package"]["payload_bytes"]) is int
+    assert reply["usage"]["payload_bytes"] == reply["package"]["payload_bytes"]
+    assert (reply["usage"]["input_tokens"], reply["usage"]["uncached_input_tokens"]) == (1200, 1000)
+    assert not any(line.startswith("Input tokens") for line in review_server._review_lines(reply))
+    _runs, packages = _ledger_rows()
+    assert "input_tokens_estimate" not in json.loads(packages[-1]["manifest"])
+
+
+def test_a_locked_ledger_leaves_the_estimate_unknown_without_holding_up_the_preview(project):
+    _seed_around(project)
+    holder = sqlite3.connect(str(review_ledger.ledger_path()), timeout=0)
+    holder.execute("BEGIN EXCLUSIVE")  # as a review being recorded holds it
+    try:
+        started = time.monotonic()
+        shown = review.package(request_for(project), estimate=True)
+        elapsed = time.monotonic() - started
+    finally:
+        holder.rollback()
+        holder.close()
+
+    assert elapsed < 1.0
+    assert type(shown["payload_bytes"]) is int
+    estimate = shown["input_tokens_estimate"]
+    assert (estimate["known"], estimate["reason"]) == (False, "ledger_busy")
+    assert ("Input tokens: unknown before a run (the review ledger was in use, and the preview "
+            "does not wait for it). No price is estimated.") in review.package_lines(shown)
 
 
 def test_a_repository_file_can_only_lower_the_package_limits(project):

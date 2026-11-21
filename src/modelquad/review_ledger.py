@@ -502,7 +502,9 @@ def input_token_estimate(sent_bytes: int, *, path: Path | None = None) -> dict:
     widened by the largest relative miss among those same reviews. With fewer
     than ``MIN_ESTIMATE_RUNS`` such reviews, or a package outside the sizes
     they cover, the answer is unknown and says why. Reads the ledger
-    read-only and never creates it; sends nothing.
+    read-only and never creates it; sends nothing. It never waits: a ledger
+    another process holds locked (a review being recorded) reads as unknown
+    at once, so a preview is never held up by its estimate.
     """
     def unknown(reason: str, runs: int = 0) -> dict:
         return {"known": False, "reason": reason, "runs": runs, "min_runs": MIN_ESTIMATE_RUNS}
@@ -513,7 +515,7 @@ def input_token_estimate(sent_bytes: int, *, path: Path | None = None) -> dict:
     if not target.is_file():
         return unknown("too_few_runs")
     try:
-        conn = sqlite3.connect(target.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0)
+        conn = sqlite3.connect(target.resolve().as_uri() + "?mode=ro", uri=True, timeout=0)
         try:
             rows = conn.execute(
                 "SELECT r.input_tokens, p.manifest FROM runs r JOIN packages p "
@@ -522,6 +524,9 @@ def input_token_estimate(sent_bytes: int, *, path: Path | None = None) -> dict:
                 "ORDER BY r.created_at DESC LIMIT ?", (MAX_ESTIMATE_RUNS,)).fetchall()
         finally:
             conn.close()
+    except sqlite3.OperationalError as error:
+        text = str(error).casefold()
+        return unknown("ledger_busy" if "locked" in text or "busy" in text else "ledger_unreadable")
     except (sqlite3.Error, OSError, ValueError):
         return unknown("ledger_unreadable")
     points = [(sent, tokens) for tokens, text in rows

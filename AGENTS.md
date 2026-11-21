@@ -61,7 +61,9 @@ the instrument for developing it.
   own record (`review_ledger.input_token_estimate`: a line through the last
   50 successful reviews, widened by their largest miss, shown only from 20
   of them and within the sizes they cover), otherwise unknown with the
-  reason; no tokenizer is used and no price is estimated. After a run the
+  reason; no tokenizer is used and no price is estimated. Only the preview
+  computes it (`package(..., estimate=True)`); the run skips it, and a
+  locked ledger reads as unknown at once. After a run the
   reply puts the bytes sent beside Codex's input, cached and uncached tokens.
 - By default Claude decides on its own to ask Codex at the moments the
   server's instructions name (`adapters/server_instructions.py`), and a
