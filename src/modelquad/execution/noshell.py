@@ -1211,6 +1211,8 @@ def render_supplied(screened, pack, instruction, *, required=(), withheld=(),
         report["sent"] = [sent_entry(name, text) for name, text in files]
         report["skipped"] = [{"path": name, "reason": reason}
                              for name, reason in (*withheld, *pack.skipped, *dropped)]
+        # The whole payload as Codex gets it: task text, instruction, labelled files, envelope.
+        report["payload_bytes"] = len(rendered.encode("utf-8"))
     return rendered
 
 
@@ -1393,12 +1395,17 @@ def closed_file_audit(value):
                      for item in skipped[:MAX_SKIPPED + 1]
                      if type(item) is dict and type(item.get("path")) is str
                      and item.get("reason") in AUDIT_REASONS]
-    return {"approval": value["approval"], "sent": clean_sent, "skipped": clean_skipped,
-            "total_bytes": sum(item["bytes"] for item in clean_sent)}
+    audit = {"approval": value["approval"], "sent": clean_sent, "skipped": clean_skipped,
+             "total_bytes": sum(item["bytes"] for item in clean_sent)}
+    payload_bytes = value.get("payload_bytes")
+    if type(payload_bytes) is int and 0 <= payload_bytes <= MAX_PROMPT_BYTES:
+        audit["payload_bytes"] = payload_bytes
+    return audit
 
 
 def file_audit(report, approval):
     """The audit record for one launch from a :func:`supplied_prompt` report."""
     return closed_file_audit({"approval": approval if approval in APPROVALS else "delegate",
                               "sent": list(report.get("sent", ())),
-                              "skipped": list(report.get("skipped", ()))})
+                              "skipped": list(report.get("skipped", ())),
+                              "payload_bytes": report.get("payload_bytes")})

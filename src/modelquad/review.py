@@ -354,13 +354,16 @@ def _package_id(task_type: str, prompt_digest: str, sent: list[dict]) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
 
 
-def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict]) -> dict:
+def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict],
+             payload_bytes: int | None = None) -> dict:
     """The compact record of one package: what is sent, what is left out, and its id.
 
     Metadata only: relative paths, sizes and digest prefixes of the text as
     sent (after credential redaction), never contents. The id covers the
     task kind, the task text and every sent file, so the same id means the
-    same package. It is a digest, not a signature.
+    same package. It is a digest, not a signature. ``payload_bytes`` is the
+    whole payload as Codex gets it (the task text, ModelQuad's instructions
+    and the files with their labels and line numbers); None when unknown.
     """
     from .execution import noshell
 
@@ -376,6 +379,7 @@ def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict])
         "skipped": [dict(item) for item in skipped],
         "file_count": len(sent),
         "total_bytes": total,
+        "payload_bytes": payload_bytes if type(payload_bytes) is int else None,
         "limits": {"max_files": noshell.MAX_FILES, "max_file_bytes": noshell.MAX_FILE_BYTES,
                    "max_total_bytes": noshell.MAX_TOTAL_BYTES,
                    "max_prompt_bytes": noshell.MAX_PROMPT_BYTES},
@@ -406,7 +410,8 @@ def package(request: ReviewRequest, caps: dict | None = None) -> dict:
         return refusal(refused.reason, skipped_files=skipped)
     result = manifest(request.task_type, request.prompt, report.get("sent", []),
                       [item for item in report.get("skipped", [])
-                       if item.get("reason") in noshell.AUDIT_REASONS])
+                       if item.get("reason") in noshell.AUDIT_REASONS],
+                      report.get("payload_bytes"))
     lowered = {key: value for key, value in caps.items()
                if key in ("max_files", "max_total_bytes") and type(value) is int
                and value < result["limits"][key]}
@@ -417,7 +422,19 @@ def package(request: ReviewRequest, caps: dict | None = None) -> dict:
                          request.files)
     if hint:
         result["may_also_need"] = hint
+    result["input_tokens_estimate"] = _estimate(result["prompt"]["bytes"] + result["total_bytes"])
     return result
+
+
+def _estimate(sent_bytes: int) -> dict:
+    """The labelled range of input tokens from this computer's record, or unknown and why."""
+    from . import review_ledger
+
+    try:
+        return review_ledger.input_token_estimate(sent_bytes)
+    except Exception:  # noqa: BLE001 -- a record that cannot be read leaves the estimate unknown
+        return {"known": False, "reason": "ledger_unreadable", "runs": 0,
+                "min_runs": review_ledger.MIN_ESTIMATE_RUNS}
 
 
 #: Why a named file was left out of the retry package (``left_out`` in a refusal).
@@ -620,6 +637,29 @@ def may_also_need_line(paths) -> str:
     return "Codex may also need (not added): " + ", ".join(paths) + "."
 
 
+_ESTIMATE_UNKNOWN = {
+    "too_few_runs": "fewer than {min_runs} successful reviews on this computer recorded what they "
+                    "sent; there are {runs} so far",
+    "outside_recorded_sizes": "this package is smaller or larger than every recorded review",
+    "no_steady_relation": "the recorded reviews show no steady relation between bytes and tokens",
+    "ledger_unreadable": "the review ledger could not be read",
+    "no_package": "there is no package to measure",
+}
+
+
+def estimate_line(estimate) -> str:
+    """The input-token range for a person, labelled as an estimate, or why there is none."""
+    if isinstance(estimate, dict) and estimate.get("known"):
+        return (f"Input tokens, estimated from the last {estimate['runs']} successful reviews on "
+                f"this computer: about {estimate['low']:,} to {estimate['high']:,}. This includes "
+                "Codex's own instructions; it is not a count, and how much of it Codex serves "
+                "from its cache is not known before a run. No price is estimated.")
+    estimate = estimate if isinstance(estimate, dict) else {}
+    why = _ESTIMATE_UNKNOWN.get(estimate.get("reason"), _ESTIMATE_UNKNOWN["ledger_unreadable"])
+    return ("Input tokens: unknown before a run (" + why.format(
+        min_runs=estimate.get("min_runs"), runs=estimate.get("runs")) + "). No price is estimated.")
+
+
 def package_lines(result: dict) -> list[str]:
     """The package, for a person: what Codex would get, its size, and what is left out."""
     if result.get("refused"):
@@ -640,9 +680,11 @@ def package_lines(result: dict) -> list[str]:
     limits = result["limits"]
     lines.append(f"Limits: {limits['max_files']} files, {limits['max_total_bytes']} bytes in all"
                  + (" (lowered by this repository's .modelquad.toml)." if "lowered_by" in limits else "."))
-    lines.append("Sizes are bytes as sent, after credentials are redacted. Token counts are "
-                 "Codex's own and are known only after a run; ModelQuad does not estimate them "
-                 "or a price.")
+    if type(result.get("payload_bytes")) is int:
+        lines.append(f"The whole payload is {result['payload_bytes']} bytes: the task text, the "
+                     "files with their labels and line numbers, and ModelQuad's own instructions.")
+    lines.append("Sizes are bytes as sent, after credentials are redacted.")
+    lines.append(estimate_line(result.get("input_tokens_estimate")))
     return lines
 
 
@@ -756,9 +798,15 @@ def _cap_output(payload: dict) -> None:
 def _usage(metadata: dict, seconds: float | None) -> dict:
     """What the run used, each in its own unit; an absent count is unknown, not zero."""
     tokens = metadata.get("worker_tokens") if isinstance(metadata.get("worker_tokens"), dict) else {}
+    audit = metadata.get("file_audit") if isinstance(metadata.get("file_audit"), dict) else {}
+    total, cached = tokens.get("input_tokens"), tokens.get("cached_input_tokens")
+    # The part not served from Codex's cache, only when Codex reported both counts.
+    uncached = total - cached if type(total) is int and type(cached) is int and cached <= total else None
     return {"model_calls": 1 if metadata.get("worker_started") else 0,
-            "input_tokens": tokens.get("input_tokens"),
-            "cached_input_tokens": tokens.get("cached_input_tokens"),
+            "payload_bytes": audit.get("payload_bytes"),
+            "input_tokens": total,
+            "cached_input_tokens": cached,
+            "uncached_input_tokens": uncached,
             "output_tokens": tokens.get("output_tokens"),
             "reasoning_output_tokens": tokens.get("reasoning_output_tokens"),
             "seconds": seconds,
@@ -793,6 +841,8 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         return refusal(PACKAGE_CHANGED)
     # A hint for the reply, not part of what was sent: it stays out of the record.
     hint = shown.pop("may_also_need", None)
+    # Shown before the run; after it, Codex's own counts replace it.
+    shown.pop("input_tokens_estimate", None)
     digests = {item["path"]: item["sha256"] for item in shown["files"]}
     metadata: dict[str, Any] = {"supplied_files": list(request.files), "approval": "delegate",
                                 "approved_digests": digests}
@@ -869,7 +919,8 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     audit = payload["metadata"].get("file_audit")
     if isinstance(audit, dict):
         # The manifest of what the launch actually sent, which the executor packed again.
-        payload["package"] = manifest(request.task_type, request.prompt, audit["sent"], audit["skipped"])
+        payload["package"] = manifest(request.task_type, request.prompt, audit["sent"],
+                                      audit["skipped"], audit.get("payload_bytes"))
         payload["sent_files"] = audit["sent"]
         payload["skipped_files"] = audit["skipped"]
     payload["package_round"] = round_number

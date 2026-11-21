@@ -112,8 +112,10 @@ def _review_lines(payload: dict) -> list[str]:
         lines.append(payload["message"])
     package = payload.get("package")
     if isinstance(package, dict):
+        whole = (f"; the whole payload was {package['payload_bytes']} bytes"
+                 if type(package.get("payload_bytes")) is int else "")
         lines.append(f"Sent: the task text and {package['file_count']} file(s), "
-                     f"{package['total_bytes']} bytes (package {package['package_id']}).")
+                     f"{package['total_bytes']} bytes{whole} (package {package['package_id']}).")
         if package["skipped"]:
             lines.append("Left out: " + ", ".join(
                 f"{item['path']} ({item['reason']})" for item in package["skipped"]))
@@ -123,6 +125,9 @@ def _review_lines(payload: dict) -> list[str]:
     if usage.get("tokens_source"):
         lines.append(f"Codex reported {usage.get('input_tokens')} input and "
                      f"{usage.get('output_tokens')} output tokens, in {usage.get('seconds')} s.")
+        if type(usage.get("uncached_input_tokens")) is int:
+            lines.append(f"Of the input tokens, {usage['cached_input_tokens']} came from Codex's "
+                         f"cache and {usage['uncached_input_tokens']} did not.")
     request = payload.get("completion_request")
     if request:
         lines.append("Codex said it needed files that were not sent: " + ", ".join(request["files"])

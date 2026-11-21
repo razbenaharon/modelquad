@@ -466,7 +466,7 @@ def test_task_text_traceback_and_diff_names_are_never_attached(project):
     report = {}
     rendered = noshell.supplied_prompt(prompt, project, report=report)
     assert SECRET not in rendered and "print('app')" not in rendered
-    assert report == {"sent": [], "skipped": []}
+    assert report == {"sent": [], "skipped": [], "payload_bytes": len(rendered.encode("utf-8"))}
 
 
 def test_more_than_32_files_refuse(project):
@@ -495,6 +495,16 @@ def test_closed_file_audit_drops_anything_outside_its_shape():
                               {"path": "<path>", "bytes": 1, "sha256": "0123456789abcdef"}],
                      "skipped": [{"path": ".env", "reason": "denied_by_claude_settings"}]}
     assert noshell.closed_file_audit({"approval": "self-approved", "sent": [], "skipped": []}) is None
+
+
+def test_closed_file_audit_keeps_the_payload_size_only_as_a_bounded_integer():
+    def audit(value):
+        return noshell.closed_file_audit({"approval": "delegate", "sent": [], "skipped": [],
+                                          "payload_bytes": value})
+
+    assert audit(2048)["payload_bytes"] == 2048
+    for value in (-1, noshell.MAX_PROMPT_BYTES + 1, "2048", 2048.0, True, None):
+        assert "payload_bytes" not in audit(value)
 
 
 # --- MCP surface -------------------------------------------------------------

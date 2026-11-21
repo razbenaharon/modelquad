@@ -259,8 +259,10 @@ sends to Anthropic, or to the cloud provider you set Claude Code up to use:
   package id), the token counts and time Codex reported, each finding's
   reference, severity, file, line, category and Codex's confidence, and the
   names of files Codex said it needed.
-- The package from `review_package`: the same manifest, the limits
-  and the package id.
+- The package from `review_package`: the same manifest, the limits,
+  the package id and the input-token range (or why there is none). The
+  range is computed on your computer from the review ledger's counts, read
+  only; nothing is sent to compute it.
 - From `status`: whether ModelQuad is on, whether Codex calls are
   automatic or approved one by one, what the folder's own settings and
   `.modelquad.toml` allow, and one line of history from the review ledger.
@@ -450,7 +452,7 @@ file contents and no full answer.
 | `findings` | One finding Codex listed in the agreed one-line form: its reference, the repository-relative file and line or line range (an absolute path is dropped), severity, category, Codex's stated confidence and its short reason, the claim and the reasoning. Free text is redacted for credentials and paths and capped |
 | `verdicts` | What Claude or you decided about a finding: the verdict, its evidence, the action, whether a fix was verified, an optional short note (redacted and capped) and who recorded it |
 | `gate_events` | What a review gate did: time, the folder digest, a session pseudonym, the event and a file count |
-| `packages` | What one call sent: the package id, the completion round and the reply it follows, the counts (files, bytes, files left out, files Codex said it needed), the model calls and Codex's cached input and reasoning token counts, and the manifest: relative paths, sizes, digest prefixes and the reasons files were left out. A manifest longer than 32,000 characters is not kept; its counts and id are |
+| `packages` | What one call sent: the package id, the completion round and the reply it follows, the counts (files, bytes, files left out, files Codex said it needed), the model calls and Codex's cached input and reasoning token counts, and the manifest: relative paths, sizes, digest prefixes, the size of the whole payload and the reasons files were left out. A manifest longer than 32,000 characters is not kept; its counts and id are |
 
 The folder digest is the first 16 hex characters of an unsalted SHA-256 of
 the folder path. The session pseudonym is a 16-character HMAC of the Claude

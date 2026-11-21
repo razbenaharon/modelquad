@@ -473,6 +473,79 @@ def package_round(decision_id: str, working_directory, *, path: Path | None = No
     return None if row is None else int(row["round"])
 
 
+#: A range is shown only from at least this many recorded successful reviews.
+MIN_ESTIMATE_RUNS = 20
+#: The most recent successful reviews the range is taken from: a newer Codex
+#: release changes its own fixed part, and older runs would hide that.
+MAX_ESTIMATE_RUNS = 50
+
+
+def _sent_bytes(manifest_text) -> int | None:
+    """Task text plus files, in bytes, from a recorded manifest; None when it does not say."""
+    try:
+        manifest = json.loads(manifest_text)
+        prompt, files = manifest["prompt"]["bytes"], manifest["total_bytes"]
+    except (TypeError, ValueError, KeyError):
+        return None
+    if type(prompt) is not int or type(files) is not int or prompt < 0 or files < 0:
+        return None
+    return prompt + files
+
+
+def input_token_estimate(sent_bytes: int, *, path: Path | None = None) -> dict:
+    """A labelled range of Codex input tokens for a package, from this computer's own record.
+
+    Codex's input tokens include its own instructions and tool listing, which
+    ModelQuad cannot see, and no tokenizer is installed. So the range is not a
+    count: it is a straight line fitted to the most recent successful reviews
+    (input tokens Codex reported against the task text and file bytes sent),
+    widened by the largest relative miss among those same reviews. With fewer
+    than ``MIN_ESTIMATE_RUNS`` such reviews, or a package outside the sizes
+    they cover, the answer is unknown and says why. Reads the ledger
+    read-only and never creates it; sends nothing.
+    """
+    def unknown(reason: str, runs: int = 0) -> dict:
+        return {"known": False, "reason": reason, "runs": runs, "min_runs": MIN_ESTIMATE_RUNS}
+
+    target = Path(path) if path is not None else ledger_path()
+    if type(sent_bytes) is not int or sent_bytes < 0:
+        return unknown("no_package")
+    if not target.is_file():
+        return unknown("too_few_runs")
+    try:
+        conn = sqlite3.connect(target.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0)
+        try:
+            rows = conn.execute(
+                "SELECT r.input_tokens, p.manifest FROM runs r JOIN packages p "
+                "ON p.decision_id = r.decision_id WHERE r.outcome = 'answered' "
+                "AND r.input_tokens IS NOT NULL AND p.manifest IS NOT NULL "
+                "ORDER BY r.created_at DESC LIMIT ?", (MAX_ESTIMATE_RUNS,)).fetchall()
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return unknown("ledger_unreadable")
+    points = [(sent, tokens) for tokens, text in rows
+              if type(tokens) is int and tokens > 0 and (sent := _sent_bytes(text)) is not None]
+    if len(points) < MIN_ESTIMATE_RUNS:
+        return unknown("too_few_runs", len(points))
+    xs = [x for x, _ in points]
+    if not min(xs) <= sent_bytes <= max(xs):
+        return unknown("outside_recorded_sizes", len(points))
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(y for _, y in points) / len(points)
+    spread = sum((x - mean_x) ** 2 for x in xs)
+    slope = (sum((x - mean_x) * (y - mean_y) for x, y in points) / spread) if spread else 0.0
+    base = mean_y - slope * mean_x
+    if slope <= 0 or base <= 0:
+        return unknown("no_steady_relation", len(points))
+    miss = max(abs(y - (base + slope * x)) / (base + slope * x) for x, y in points)
+    middle = base + slope * sent_bytes
+    low = int(middle * (1 - miss)) // 1000 * 1000
+    high = -(-int(middle * (1 + miss) + 1) // 1000) * 1000
+    return {"known": True, "low": max(low, 0), "high": high, "runs": len(points),
+            "largest_miss_percent": round(miss * 100, 1)}
+
+
 def record_start(decision_id: str, *, working_directory, task_type, trigger,
                  path: Path | None = None) -> None:
     """Record that Codex was started for this call, before anything comes back.

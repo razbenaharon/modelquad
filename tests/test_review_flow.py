@@ -277,11 +277,156 @@ def test_the_server_passes_the_offer_to_claude_and_shows_it(project):
     assert any(line.startswith("Without it, the package is ") for line in lines)
 
 
-def test_the_package_lines_separate_bytes_from_tokens_and_promise_no_price(project):
-    text = "\n".join(review.package_lines(review.package(request_for(project))))
+def test_the_package_gives_the_exact_size_of_the_whole_payload(project):
+    shown = review.package(request_for(project, files=("app.py", "util.py")))
 
+    rendered = noshell.supplied_prompt("Review the change to run().", str(project),
+                                       files=["app.py", "util.py"], completion_protocol=True)
+    assert shown["payload_bytes"] == len(rendered.encode("utf-8"))
+    # Labels, line numbers and ModelQuad's own instructions come on top of the file bytes.
+    assert shown["payload_bytes"] > shown["prompt"]["bytes"] + shown["total_bytes"]
+    assert (f"The whole payload is {shown['payload_bytes']} bytes"
+            in "\n".join(review.package_lines(shown)))
+
+
+def test_with_no_recorded_review_the_input_tokens_are_unknown_and_no_price_is_given(project):
+    shown = review.package(request_for(project))
+
+    assert shown["input_tokens_estimate"] == {"known": False, "reason": "too_few_runs", "runs": 0,
+                                              "min_runs": review_ledger.MIN_ESTIMATE_RUNS}
+    text = "\n".join(review.package_lines(shown))
     assert "app.py" in text and "bytes" in text
-    assert "does not estimate" in text
+    assert ("Input tokens: unknown before a run (fewer than 20 successful reviews on this "
+            "computer recorded what they sent; there are 0 so far). No price is estimated.") in text
+    # Showing a package never creates the review ledger.
+    assert not review_ledger.ledger_path().exists()
+
+
+# --------------------------------------------------------- the token estimate
+
+
+def _seed_runs(points, *, outcome="answered", start=1_000.0):
+    """Recorded reviews: (task text + file bytes, input tokens Codex reported), oldest first."""
+    conn = review_ledger.connect()
+    try:
+        for index, (sent, tokens) in enumerate(points):
+            decision = f"seed{start:.0f}-{index}"
+            conn.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         (decision, start + index, "ws", "review", "claude", None, outcome, 1.0,
+                          tokens, 10, 0))
+            prompt = min(sent, 100)
+            manifest = {"prompt": {"bytes": prompt, "sha256": "0" * 16}, "total_bytes": sent - prompt}
+            conn.execute("INSERT INTO packages VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (decision, "p" * 32, "ws", 0, None, 1, sent - prompt, 0, 0, 1, None, None,
+                          json.dumps(manifest)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _steady(count, *, base=18_000, miss=0.02):
+    """Runs on a straight line of 3 bytes a token, alternately 2% over and under it."""
+    sizes = [1_000 + index * 5_000 for index in range(count)]
+    return [(size, round((base + size / 3) * (1 + (miss if index % 2 else -miss))))
+            for index, size in enumerate(sizes)]
+
+
+def test_one_review_short_of_the_minimum_leaves_the_estimate_unknown():
+    _seed_runs(_steady(review_ledger.MIN_ESTIMATE_RUNS - 1))
+
+    estimate = review_ledger.input_token_estimate(20_000)
+
+    assert estimate["known"] is False
+    assert (estimate["reason"], estimate["runs"]) == ("too_few_runs", 19)
+    assert "there are 19 so far" in review.estimate_line(estimate)
+
+
+def test_enough_recorded_reviews_give_a_labelled_range_around_the_line():
+    _seed_runs(_steady(review_ledger.MIN_ESTIMATE_RUNS))
+
+    estimate = review_ledger.input_token_estimate(30_000)
+
+    assert estimate["known"] is True and estimate["runs"] == 20
+    assert estimate["low"] < 18_000 + 30_000 / 3 < estimate["high"]
+    assert estimate["low"] % 1000 == 0 and estimate["high"] % 1000 == 0
+    # The width comes from the largest miss among the same reviews: about 2% here.
+    assert 1.5 <= estimate["largest_miss_percent"] <= 2.5
+    line = review.estimate_line(estimate)
+    assert line.startswith("Input tokens, estimated from the last 20 successful reviews on this "
+                           f"computer: about {estimate['low']:,} to {estimate['high']:,}.")
+    assert "it is not a count" in line and "No price is estimated." in line
+
+
+def test_the_range_widens_with_the_largest_miss_it_has_seen():
+    _seed_runs(_steady(20, miss=0.10))
+
+    estimate = review_ledger.input_token_estimate(30_000)
+
+    assert estimate["largest_miss_percent"] >= 9.5
+    assert estimate["high"] - estimate["low"] >= 0.19 * (18_000 + 30_000 / 3)
+
+
+def test_a_package_outside_the_recorded_sizes_has_no_estimate():
+    points = _steady(20)
+    _seed_runs(points)
+
+    largest = max(size for size, _ in points)
+    for size in (0, largest + 1):
+        estimate = review_ledger.input_token_estimate(size)
+        assert (estimate["known"], estimate["reason"]) == (False, "outside_recorded_sizes")
+    assert "smaller or larger than every recorded review" in review.estimate_line(
+        review_ledger.input_token_estimate(largest + 1))
+
+
+def test_only_successful_reviews_with_token_counts_and_a_package_count():
+    _seed_runs(_steady(19))
+    _seed_runs(_steady(5), outcome="failed", start=5_000.0)
+    _seed_runs([(10_000, None)], start=6_000.0)
+
+    assert review_ledger.input_token_estimate(20_000)["runs"] == 19
+
+
+def test_the_estimate_follows_the_most_recent_reviews():
+    # Old runs from a Codex release with a much larger fixed part, then 50 recent ones.
+    _seed_runs(_steady(20, base=40_000), start=1_000.0)
+    _seed_runs(_steady(review_ledger.MAX_ESTIMATE_RUNS), start=10_000.0)
+
+    estimate = review_ledger.input_token_estimate(30_000)
+
+    assert estimate["runs"] == review_ledger.MAX_ESTIMATE_RUNS
+    assert estimate["largest_miss_percent"] <= 2.5
+
+
+def test_an_unreadable_ledger_leaves_the_estimate_unknown():
+    path = review_ledger.ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a database")
+
+    estimate = review_ledger.input_token_estimate(10_000)
+
+    assert (estimate["known"], estimate["reason"]) == (False, "ledger_unreadable")
+    assert path.read_bytes() == b"not a database"
+
+
+def test_the_preview_shows_the_range_and_the_run_keeps_it_out_of_the_record(project):
+    sent = review.package(request_for(project))
+    size = sent["prompt"]["bytes"] + sent["total_bytes"]
+    _seed_runs([(size + offset, 18_000 + offset) for offset in range(0, 40_000, 2_000)])
+
+    shown = review.package(request_for(project))
+    assert shown["input_tokens_estimate"]["known"] is True
+    assert any(line.startswith("Input tokens, estimated from the last 20")
+               for line in review.package_lines(shown))
+    assert shown["package_id"] == sent["package_id"]
+
+    reply = review.run(request_for(project, package_id=shown["package_id"]), FakeExecutor())
+
+    assert "input_tokens_estimate" not in reply
+    conn = review_ledger.connect()
+    row = conn.execute("SELECT manifest FROM packages WHERE decision_id = ?",
+                       (reply["decision_id"],)).fetchone()
+    conn.close()
+    assert "input_tokens_estimate" not in json.loads(row["manifest"])
 
 
 def test_a_repository_file_can_only_lower_the_package_limits(project):
@@ -430,9 +575,12 @@ def test_a_review_sends_the_package_and_records_it(project):
 
     assert review.headline(reply) == "Codex answered."
     assert reply["package"]["package_id"] == shown["package_id"]
-    assert reply["usage"] == {"model_calls": 1, "input_tokens": 1200, "cached_input_tokens": 200,
+    assert reply["usage"] == {"model_calls": 1, "payload_bytes": shown["payload_bytes"],
+                              "input_tokens": 1200, "cached_input_tokens": 200,
+                              "uncached_input_tokens": 1000,
                               "output_tokens": 80, "reasoning_output_tokens": None,
                               "seconds": reply["usage"]["seconds"], "tokens_source": "codex"}
+    assert reply["package"]["payload_bytes"] == shown["payload_bytes"]
     assert reply["findings"][0]["status"] == "claimed_by_codex"
     # Closed metadata: what the executor put beside the closed keys does not leave.
     assert "command" not in reply["metadata"]
@@ -443,7 +591,24 @@ def test_a_review_sends_the_package_and_records_it(project):
     assert (row["package_id"], row["round"], row["file_count"], row["model_calls"]) == (
         shown["package_id"], 0, 1, 1)
     assert json.loads(row["manifest"])["files"][0]["path"] == "app.py"
+    assert json.loads(row["manifest"])["payload_bytes"] == shown["payload_bytes"]
     assert (run["outcome"], run["input_tokens"], run["findings_count"]) == ("answered", 1200, 1)
+
+
+def test_the_reply_puts_bytes_sent_beside_cached_and_uncached_tokens(project):
+    reply = review.run(request_for(project), FakeExecutor())
+
+    lines = review_server._review_lines(reply)
+    assert any(f"the whole payload was {reply['package']['payload_bytes']} bytes" in line
+               for line in lines)
+    assert "Of the input tokens, 200 came from Codex's cache and 1000 did not." in lines
+
+
+def test_an_uncached_count_is_unknown_unless_codex_reported_both_counts():
+    usage = review._usage({"worker_started": True, "worker_tokens": {"input_tokens": 900}}, 1.0)
+    assert usage["uncached_input_tokens"] is None and usage["payload_bytes"] is None
+    usage = review._usage({"worker_tokens": {"input_tokens": 100, "cached_input_tokens": 200}}, 1.0)
+    assert usage["uncached_input_tokens"] is None
 
 
 def _ledger_rows():
