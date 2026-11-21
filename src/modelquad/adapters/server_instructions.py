@@ -71,7 +71,9 @@ _VERIFY = (
 _FILES = (
     "Pass the files you want Codex to read in `files` (paths relative to the working "
     "directory, at most 32); a file named only in the prompt is not sent. Naming one Git "
-    "or the user excludes stops the call; never paste its contents. To show the user what "
+    "or the user excludes stops the call; never paste its contents. Include the tests "
+    "covering the change, a caller of each changed public function and the config it "
+    "reads: Codex can ask only for files the sent code names. To show the user what "
     "would be sent, or when they want to add or remove files, call "
     "`review_package` (it starts nothing) and pass its `package_id` to "
     "`delegate`. If a reply has a `completion_request`, nothing was added: show "

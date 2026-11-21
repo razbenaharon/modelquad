@@ -16,6 +16,22 @@
   comes from the packing pass that refused: no file is opened again to
   explain it, so a file Git, a Read deny rule or `.modelquadignore`
   excludes is never read for it.
+- **The package names tests Codex may also need.** For each source file
+  in a package, the preview lists up to three existing test files that the
+  package does not include, found by name alone (for `src/pkg/foo.py`,
+  `tests/test_foo.py` and then `tests/test_foo_*.py`; for a script file,
+  `foo.test.*`, `foo.spec.*` and `__tests__/foo.*`). ModelQuad lists the
+  folders and opens none of these files; each passes the same file rules
+  as a named file, and a name that looks like a secret is never offered.
+  Nothing is added by itself and the package id does not change: the
+  reply's `may_also_need` and the line "Codex may also need (not added)"
+  are a hint for Claude, which adds a file only by naming it. The hint is
+  not written to the review ledger.
+- **Claude is told what a sufficient package holds.** The server's
+  instructions now ask Claude to include the tests covering a change, a
+  caller of each changed public function and the config it reads: Codex
+  can ask only for files the sent code names, so it cannot ask for callers
+  or tests.
 
 ## 0.5.2 (2026-11-21)
 
