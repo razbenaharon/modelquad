@@ -45,6 +45,15 @@ def old_tool_ids(tool: str) -> tuple[str, str]:
     return f"{OLD_PLUGIN_SERVER_ID}__{OLD_TOOL_NAMES[tool]}", INSTALL_TOOL_PREFIX + OLD_TOOL_NAMES[tool]
 
 
+def delegate_ids() -> frozenset[str]:
+    """Every id the review tool can have in Claude Code. After an upgrade the
+    package and Claude Code's cached copy of the plugin can be of different
+    versions, so the plugin's server name before and since 0.5.0 can meet the
+    tool's name before and since 0.5.0, in any combination."""
+    servers = (PLUGIN_TOOL_PREFIX, OLD_PLUGIN_SERVER_ID + "__", INSTALL_TOOL_PREFIX)
+    return frozenset(server + tool for server in servers for tool in ("delegate", OLD_TOOL_NAMES["delegate"]))
+
+
 # Console entry points.
 CLI_COMMAND = "modelquad"
 MCP_COMMAND = "modelquad-mcp"

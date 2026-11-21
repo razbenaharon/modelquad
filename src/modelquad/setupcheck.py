@@ -122,14 +122,21 @@ def _folder(project: str | None) -> dict:
                   "is signed in, so every call here is refused." if facts["account"] == "workspace" else None)
 
 
-#: Claude Code settings files whose permission rules can name ModelQuad's tools:
-#: (label, folder kind, path inside it). Read only; never written.
-PERMISSION_FILES = (
-    ("your Claude Code settings", "user", "settings.json"),
-    ("your local Claude Code settings", "user", "settings.local.json"),
-    ("this project's .claude/settings.json", "project", ".claude/settings.json"),
-    ("this project's .claude/settings.local.json", "project", ".claude/settings.local.json"),
-)
+#: Scopes whose deny rules apply where a rule of the given scope applies:
+#: managed and user rules apply in every project, a project's only there. An
+#: old deny is covered only by a new rule from a scope listed for it.
+_COVERING_SCOPES = {
+    "managed": ("managed",),
+    "user": ("managed", "user"),
+    "project": ("managed", "user", "project"),
+}
+#: The deny rules that keep ModelQuad out whichever build runs: both names of
+#: the plugin's server and the install's server. In a mixed state after an
+#: upgrade (new package, stale cached plugin, or the reverse) a tool can be
+#: named mcp__plugin_modelquad_modelquad__delegate or
+#: mcp__plugin_modelquad_review__modelquad_delegate, so only wildcards hold.
+RECOMMENDED_DENY = ("mcp__plugin_modelquad_review__*", "mcp__plugin_modelquad_modelquad__*",
+                    "mcp__modelquad")
 
 
 def renamed_rule(rule: str) -> str | None:
@@ -160,11 +167,23 @@ def renamed_rule(rule: str) -> str | None:
     return None
 
 
-def _covered(new_rule: str, rules: set[str]) -> bool:
-    """Whether one of ``rules`` already matches what ``new_rule`` matches."""
-    server = new_rule.split("__")[:2]
-    server_id = "__".join(server)
-    return bool({new_rule, server_id, server_id + "__*"} & rules)
+def deny_rule_for(rule: str) -> str | None:
+    """The wildcard deny rule that replaces an old deny rule; None when it is not old.
+    Never an exact id: in a mixed state the live id may carry either tool name."""
+    from .branding import OLD_PLUGIN_SERVER_ID, PLUGIN_TOOL_PREFIX
+
+    new = renamed_rule(rule)
+    if new is None:
+        return None
+    if rule.strip().startswith(OLD_PLUGIN_SERVER_ID):
+        return PLUGIN_TOOL_PREFIX + "*"
+    return "mcp__modelquad"
+
+
+def _covering(new_rule: str) -> set[str]:
+    """The rules that match every tool of ``new_rule``'s server."""
+    server = new_rule[:-1].rstrip("_") if new_rule.endswith("*") else new_rule
+    return {server, server + "__*"}
 
 
 def _read_permissions(path: Path) -> dict | None:
@@ -189,42 +208,63 @@ def _read_permissions(path: Path) -> dict | None:
     return found
 
 
-def _permission_rules(project: str | None, claude_home: Path | None = None) -> dict:
+def _permission_files(folder: Path) -> list[tuple[str, str, Path]]:
+    """(scope, label, path) of the settings files Claude Code reads for ``folder``:
+    managed, user (``CLAUDE_CONFIG_DIR`` or ``~/.claude``), then the project's
+    ``.claude/settings.json`` and ``.claude/settings.local.json``
+    (``execution.file_rules.settings_files``, the files the review flow reads).
+
+    A ``settings.local.json`` in the user folder is not read: Claude Code's
+    documentation names local settings only for a project, so this check does
+    not claim to know whether it applies.
+    """
+    from .execution import file_rules
+
+    managed = file_rules.MANAGED_SETTINGS
+    user = file_rules._user_settings_directory() / "settings.json"
+    files = []
+    for path in file_rules.settings_files(folder):
+        if path == managed:
+            files.append(("managed", "Claude Code's managed settings", path))
+        elif path == user:
+            files.append(("user", f"your Claude Code settings ({path})", path))
+        else:
+            files.append(("project", f"this project's .claude/{path.name}", path))
+    return files
+
+
+def _permission_rules(project: str | None) -> dict:
     """Whether a Claude Code permission rule still names a ModelQuad tool by its name
     before 0.5.0. A stale deny no longer protects; a stale allow only brings the
     prompt back. Reads the settings files; never writes them."""
-    if claude_home is None:
-        try:
-            from .adapters.paths import default_target_dir
-
-            claude_home = default_target_dir("claude")
-        except Exception:  # noqa: BLE001 -- unknown, not a crash
-            claude_home = None
     folder = Path(os.path.abspath(project or os.getcwd()))
-    read: dict[str, dict] = {}
+    try:
+        files = _permission_files(folder)
+    except Exception:  # noqa: BLE001 -- unknown, not a crash
+        return _check("permission_rules", None, "Which Claude Code settings files apply here "
+                      "could not be worked out.") | {"stale_rules": [], "unreadable": []}
+    read: list[tuple[str, str, dict]] = []
     unreadable = []
-    for label, kind, relative in PERMISSION_FILES:
-        base = claude_home if kind == "user" else folder
-        if base is None:
-            unreadable.append(label)
-            continue
-        found = _read_permissions(Path(base) / relative)
+    for scope, label, path in files:
+        found = _read_permissions(path)
         if found is None:
             unreadable.append(label)
         else:
-            read[label] = found
-    denied = {rule.strip() for found in read.values() for rule in found.get("deny", [])}
+            read.append((scope, label, found))
+    denied = {scope: set() for scope in _COVERING_SCOPES}
+    for scope, _label, found in read:
+        denied[scope].update(rule.strip() for rule in found.get("deny", []))
     open_denies, covered_denies, allows = [], [], []
-    for label, found in read.items():
+    for scope, label, found in read:
         for kind in ("deny", "allow"):
             for rule in found.get(kind, []):
-                new = renamed_rule(rule)
-                if new is None:
+                if renamed_rule(rule) is None:
                     continue
-                item = {"file": label, "kind": kind, "rule": rule.strip(), "use": new}
+                use = deny_rule_for(rule) if kind == "deny" else renamed_rule(rule)
+                item = {"file": label, "scope": scope, "kind": kind, "rule": rule.strip(), "use": use}
                 if kind == "allow":
                     allows.append(item)
-                elif _covered(new, denied):
+                elif any(_covering(use) & denied[other] for other in _COVERING_SCOPES[scope]):
                     covered_denies.append(item)
                 else:
                     open_denies.append(item)
@@ -239,8 +279,9 @@ def _permission_rules(project: str | None, claude_home: Path | None = None) -> d
                        "A deny rule names a ModelQuad tool by its name before 0.5.0 and no longer "
                        "keeps that tool out: " + "; ".join(line(item) for item in open_denies) + "."
                        + not_read,
-                       "Add the new name to the same deny list; keep the old one if an older "
-                       "ModelQuad may still run there. ModelQuad does not change these files.")
+                       "In the same file, deny " + ", ".join(RECOMMENDED_DENY) + ": these hold "
+                       "for this build, an older one, and a mix of both after an upgrade. "
+                       "ModelQuad does not change these files.")
     elif unreadable:
         check = _check("permission_rules", None,
                        "Whether a Claude Code deny rule still names an old ModelQuad tool name is "

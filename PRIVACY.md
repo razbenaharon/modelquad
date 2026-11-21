@@ -24,7 +24,7 @@ print a usage report and pass it on yourself
 ## Summary
 
 - ModelQuad's own processes connect only to loopback addresses
-  ([NETWORK.md](NETWORK.md)). It has no telemetry. `modelquad update`, only
+  ([NETWORK.md](NETWORK.md)). It has no telemetry. `python -m modelquad update`, only
   when you run it, starts pip and Git, which go online to fetch the new
   version.
 - For a Codex call, ModelQuad reads only the files listed in the call's
@@ -325,15 +325,17 @@ or inspects that file** (`tests/test_hook_transcript_boundary.py`).
 ### Other reads
 
 - **Environment variables**: `CLAUDE_PROJECT_DIR` (the folder a session
-  started in, to check the standing grant), `CLAUDE_CONFIG_DIR` (only to warn
-  that ModelQuad does not follow it), ModelQuad's own `MODELQUAD_*` settings,
+  started in, to check the standing grant), `CLAUDE_CONFIG_DIR` (to find the
+  permission rules in your user settings, and to warn that install does not
+  follow it), ModelQuad's own `MODELQUAD_*` settings,
   the folders it uses to find Codex and Git (`PATH`, `PATHEXT`,
   `LOCALAPPDATA`), the home, `AppData` and `TEMP` folders it removes from
   stored text, and the two variables that tell WSL apart. It passes Codex the
   filtered environment described above.
 - **Claude Code's permission rules**, for `modelquad doctor`: the
   `permissions.allow` and `permissions.deny` lists of
-  `%USERPROFILE%\.claude\settings.json`, `settings.local.json` there, and the
+  Claude Code's managed settings, your user settings (in `CLAUDE_CONFIG_DIR`
+  when it is set, otherwise `%USERPROFILE%\.claude\settings.json`) and the
   project's `.claude\settings.json` and `.claude\settings.local.json`,
   read-only, to name any rule that still uses a ModelQuad tool name from
   before 0.5.0. It shows only those rules; nothing else in the files is

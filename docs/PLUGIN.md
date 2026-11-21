@@ -78,23 +78,32 @@ record reads as unknown, never as installed.
 ## Upgrading
 
 With every Claude Code window and the Claude app closed, run
-`modelquad update`. It refuses while `claude.exe`, `Claude.exe` or
-`modelquad-mcp.exe` is running. It upgrades the package the way it was
-installed (pip from PyPI, or `git pull --ff-only` and `pip install .` in the
-clone), then, if `claude plugin list` shows `modelquad@modelquad`, runs
-`claude plugin marketplace update modelquad`,
-`claude plugin uninstall modelquad@modelquad` and
-`claude plugin install modelquad@modelquad` (Claude Code keeps a copy of the
-plugin per version number, so an update alone can keep old files), and
-then the checks of `modelquad doctor`. `--dry-run` prints the steps only.
-pip, Git and `claude plugin` go online themselves; ModelQuad does not
+`python -m modelquad update` (not `modelquad update`: pip cannot replace the
+running `modelquad.exe`; started that way it refuses and prints the exact
+command). It refuses while `claude.exe`, `Claude.exe`, `modelquad-mcp.exe`
+or another `modelquad.exe` is running. It upgrades the package the way it
+was installed (pip from PyPI, or `git pull --ff-only` on a clean `main` and
+`pip install .` in the clone), then reads `claude plugin list --json`. For
+`modelquad@modelquad` installed for the user and enabled it runs
+`claude plugin marketplace update modelquad` and
+`claude plugin update modelquad@modelquad --scope user`, falling back to
+`claude plugin uninstall --keep-data` and `claude plugin install` with the
+same scope. A disabled plugin stays disabled and is not refreshed; a plugin
+installed for a project is named with the command to run there. Either
+makes the update exit with an error. Then it runs the checks of
+`modelquad doctor`. `--dry-run` prints the steps only. pip, Git and
+`claude plugin` go online themselves; ModelQuad does not
 ([NETWORK.md](../NETWORK.md)). The steps by hand are in the README.
 
 Since 0.5.0 the server is named `review` inside the plugin and the tools
 have no `modelquad_` prefix: `mcp__plugin_modelquad_review__delegate` where
 it was `mcp__plugin_modelquad_modelquad__modelquad_delegate`. Claude Code
 permission rules with the old names stop matching; `modelquad doctor` names
-them.
+them. Until the plugin is refreshed, the new package can run under the
+cached old plugin (`mcp__plugin_modelquad_modelquad__delegate`) or the new
+plugin under an old package (`mcp__plugin_modelquad_review__modelquad_delegate`).
+The hook and the review reminder recognise all of these; a deny rule holds
+in every case only as the wildcards in the next section.
 
 ## The notice before first use
 

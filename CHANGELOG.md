@@ -9,33 +9,44 @@
   plugin their ids are `mcp__plugin_modelquad_review__<tool>`; without it
   (`modelquad install claude`, whose server keeps the name `modelquad`),
   `mcp__modelquad__<tool>`. The CLI commands keep their names. The plugin's
-  hook, and the tool kind in `hook-timing.jsonl`, match the new id of
-  `delegate` in both installs.
+  hook, the review reminder and the tool kind in `hook-timing.jsonl`
+  recognise the review tool by all six ids it can have, including the mixed
+  ones below, and the hook messages name it by its full id.
 - **`modelquad doctor` names permission rules with an old tool name.** A
-  sixth check reads `permissions.allow` and `permissions.deny` in
-  `%USERPROFILE%\.claude\settings.json`, `settings.local.json` there and the
-  project's `.claude\settings.json` and `.claude\settings.local.json`,
-  read-only, and names every rule that still uses an id from before 0.5.0,
-  with the id to use. A deny rule that no longer covers its tool is a
-  problem; an allow rule is a note; an unreadable file reads as unknown.
-  ModelQuad still writes no permission rule.
-- **The recommended deny rules cover both names**
-  (`mcp__plugin_modelquad_review__*` and `mcp__plugin_modelquad_modelquad__*`
-  next to `mcp__modelquad`), so a rule holds on a computer that still runs an
-  older build. `modelquad settings auto on` prints the allow rule for both
+  sixth check reads `permissions.allow` and `permissions.deny` in Claude
+  Code's managed settings, your user settings (`CLAUDE_CONFIG_DIR` or
+  `%USERPROFILE%\.claude\settings.json`) and the project's
+  `.claude\settings.json` and `.claude\settings.local.json`, read-only, and
+  names every rule that still uses an id from before 0.5.0. For a deny rule
+  it names the wildcard to add; a deny counts as covered only by a wildcard
+  for the new server in the same scope or a wider one (managed covers user
+  and project, user covers project). An uncovered deny is a problem; an
+  allow rule is a note; an unreadable file reads as unknown. ModelQuad still
+  writes no permission rule.
+- **The recommended deny rules are wildcards for both names**
+  (`mcp__plugin_modelquad_review__*`, `mcp__plugin_modelquad_modelquad__*`
+  and `mcp__modelquad`), so a rule holds with an older build and in a mixed
+  state. `modelquad settings auto on` prints the allow rule for both
   installs.
-- **`modelquad update`.** One user-started step: it refuses while Claude
-  Code (`claude.exe`), the Claude app (`Claude.exe`) or `modelquad-mcp.exe`
-  is running and lists them; otherwise it upgrades the package the way it
-  was installed (`python -m pip install --upgrade modelquad` with the same
-  interpreter for PyPI; `git pull --ff-only`, then `pip install .`, or
-  `pip install -e .` for an editable install, in the clone), reinstalls the
-  plugin when `claude plugin list` shows it, runs the doctor checks and
-  prints the new version. When it cannot tell how ModelQuad was installed it
-  says so and prints the commands instead. `--dry-run` runs nothing. pip,
-  Git and `claude plugin` go online themselves; ModelQuad's own process
-  still connects only to loopback, and nothing updates unless you run the
-  command.
+- **`python -m modelquad update`.** One user-started step. It refuses unless
+  started as `python -m modelquad` (pip cannot replace the running
+  `modelquad.exe`; it prints the exact command), in a ModelQuad worker, and
+  while Claude Code (`claude.exe`), the Claude app (`Claude.exe`),
+  `modelquad-mcp.exe` or another `modelquad.exe` is running. Otherwise it
+  upgrades the package the way it was installed
+  (`python -P -m pip install --upgrade modelquad` with the same interpreter
+  for PyPI; for a clone on a clean `main`, `git pull --ff-only`, then
+  `pip install .`, or `pip install -e .` for an editable install), refreshes
+  the plugin with `claude plugin update --scope user` (falling back to a
+  reinstall with `--keep-data`) when `claude plugin list --json` shows it
+  enabled for the user, runs the doctor checks and prints the new version.
+  A disabled plugin stays disabled; a skipped or failed plugin refresh, or a
+  failed doctor check, ends with an error that says the package upgrade
+  itself succeeded. When it cannot tell how ModelQuad was installed it says
+  so and prints the commands instead. `--dry-run` runs nothing. pip, Git and
+  `claude plugin` go online themselves; ModelQuad's own process still
+  connects only to loopback, and nothing updates unless you run the
+  command. `python -m modelquad` now runs the `modelquad` command.
 
 ### If you upgrade
 
@@ -43,16 +54,21 @@
   is now `mcp__plugin_modelquad_review__delegate`, and
   `mcp__modelquad__modelquad_delegate` is now `mcp__modelquad__delegate`
   (the same for `review_package`, `review_verdict` and `status`).
+- **Mixed state.** Claude Code keeps its own copy of the plugin. Until that
+  copy is refreshed, the new package runs under the old plugin and the tool
+  is `mcp__plugin_modelquad_modelquad__delegate`; a new plugin with an old
+  package gives `mcp__plugin_modelquad_review__modelquad_delegate`. In that
+  state a rule naming one exact id, old or new, can miss the live tool.
+  Refresh the plugin (the update does it) and restart Claude Code.
 - An **allow** rule for an old id stops matching: Claude Code asks again
   before the call. Put the new id in the rule to skip the prompt again.
-- A **deny** rule for an old id (or `mcp__plugin_modelquad_modelquad__*`) no
-  longer covers the tool, so it no longer keeps ModelQuad out. Add the new id
-  (or `mcp__plugin_modelquad_review__*`). `mcp__modelquad` and
-  `mcp__modelquad__*` still match the install without the plugin.
+- A **deny** rule for an old id (or only `mcp__plugin_modelquad_modelquad__*`)
+  no longer covers the tool once the plugin is refreshed, so it no longer
+  keeps ModelQuad out. Deny the wildcards `mcp__plugin_modelquad_review__*`,
+  `mcp__plugin_modelquad_modelquad__*` and `mcp__modelquad` instead of exact
+  ids: they hold before, after and in between.
 - `modelquad doctor` names every such rule in your Claude Code settings and
-  the project's, with the id to use. It does not change the files.
-- Refresh the plugin after upgrading (`modelquad update` does it), so Claude
-  Code picks up the renamed server and the new hook matcher.
+  the project's, with what to use. It does not change the files.
 
 ## 0.4.2 (2026-11-21)
 

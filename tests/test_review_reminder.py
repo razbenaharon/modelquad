@@ -58,7 +58,8 @@ def test_it_reminds_when_a_command_runs_after_three_different_files(tmp_path):
     assert _run(tmp_path, _event(tool="MultiEdit", path="C:/proj/c.py")) == ""  # no reminder mid-edit
     text = _context(_run_tests(tmp_path))
     assert "changed 3 files" in text and "Before your final message" in text
-    assert "`delegate`" in text and "trigger review_gate" in text
+    assert "`mcp__plugin_modelquad_review__delegate`" in text and "trigger review_gate" in text
+    assert "`mcp__modelquad__delegate`" in text
     assert "declines, carry on without Codex" in text
     assert _run_tests(tmp_path) == ""  # no new edit since
 
@@ -196,8 +197,8 @@ def _edits(tmp_path, *names):
         _run(tmp_path, _event(path=f"C:/proj/{name}"))
 
 
-def _delegate(tmp_path, response):
-    return _run(tmp_path, _event(tool="mcp__plugin_modelquad_review__delegate",
+def _delegate(tmp_path, response, tool="mcp__plugin_modelquad_review__delegate"):
+    return _run(tmp_path, _event(tool=tool,
                                  tool_input={"task_type": "review", "trigger": "review_gate"},
                                  tool_response=response))
 
@@ -281,6 +282,18 @@ def test_a_review_clears_the_gate(tmp_path):
     # A new change set gets its own gate.
     _edits(tmp_path, "d.py", "e.py", "f.py")
     assert json.loads(_stop(tmp_path))["decision"] == "block"
+
+
+@pytest.mark.parametrize("tool", sorted(
+    f"mcp__{server}__{name}"
+    for server in ("plugin_modelquad_review", "plugin_modelquad_modelquad", "modelquad")
+    for name in ("delegate", "modelquad_delegate")))
+def test_a_review_by_any_live_id_clears_the_gate(tmp_path, tool):
+    # After an upgrade the package and the cached plugin can differ in version.
+    _edits(tmp_path, "a.py", "b.py", "c.py")
+    _stop(tmp_path)
+    _delegate(tmp_path, {"content": [{"type": "text", "text": "FINDINGS: none"}]}, tool=tool)
+    assert _stop(tmp_path) == ""
 
 
 def test_a_failed_review_is_reported_not_blocked_again(tmp_path):

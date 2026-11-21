@@ -38,10 +38,14 @@ claude`. The ModelQuad plugin names its tools
 `mcp__plugin_modelquad_review__...` (since 0.5.0), so the second rule covers
 those; the third covers the plugin's names before 0.5.0
 (`mcp__plugin_modelquad_modelquad__...`), so the rule also holds on a
-computer that still runs an older build. Keep all three, and the rule holds
-however ModelQuad was installed. A deny rule written for an older build that
-names only the old plugin names no longer covers the plugin's tools:
-`modelquad doctor` names such a rule and the name to use instead. Commit the file so the rule
+computer that still runs an older build, and while Claude Code runs the new
+package under its cached copy of the old plugin (or the reverse), when a
+tool can be named `mcp__plugin_modelquad_modelquad__delegate` or
+`mcp__plugin_modelquad_review__modelquad_delegate`. Keep all three, and as
+wildcards: a rule naming one exact tool id does not cover such a mix. A
+deny rule written for an older build that names only the old plugin names
+no longer covers the plugin's tools: `modelquad doctor` names such a rule
+and the wildcard to add. Commit the file so the rule
 applies to everyone who opens the repository, or put the same rule in
 `.claude/settings.local.json` to apply it only on your computer. Other
 projects keep ModelQuad.

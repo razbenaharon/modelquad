@@ -72,9 +72,19 @@ FOLDER_NAME = "review-reminder"
 EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 #: Running a command after the edits is usually the end of a change: the tests.
 RUN_TOOLS = frozenset({"Bash", "PowerShell"})
-#: The review tool as Claude Code names it: from the plugin, and from
-#: `modelquad install claude` (branding.tool_ids).
-DELEGATE_TOOLS = frozenset({"mcp__plugin_modelquad_review__delegate", "mcp__modelquad__delegate"})
+#: The review tool as Claude Code names it (branding.delegate_ids): from the
+#: plugin, whose server is "review" since 0.5.0 and was "modelquad" before, and
+#: from `modelquad install claude`, each with the tool's name since 0.5.0
+#: (delegate) and before (modelquad_delegate). After an upgrade the package
+#: and Claude Code's cached copy of the plugin can be of different versions,
+#: so any combination can be live.
+DELEGATE_TOOLS = frozenset({
+    f"mcp__{server}__{tool}"
+    for server in ("plugin_modelquad_review", "plugin_modelquad_modelquad", "modelquad")
+    for tool in ("delegate", "modelquad_delegate")})
+#: How the hook messages name the review tool to Claude.
+DELEGATE_NAMED = ("`mcp__plugin_modelquad_review__delegate` (`mcp__modelquad__delegate` "
+                  "without the plugin)")
 
 #: Paths whose change calls for a consultation first and a review at the end,
 #: even when it is one file. Matched against the path relative to the session
@@ -86,7 +96,7 @@ SENSITIVE = re.compile(
 
 DECIDE = (
     "ModelQuad: you have changed {count} files in this session and Codex has not reviewed "
-    "them. Before your final message on this change, call `delegate` for a "
+    "them. Before your final message on this change, call " + DELEGATE_NAMED + " for a "
     "review (trigger review_gate), with the changed files in `files`. If the user or "
     "Claude Code declines, carry on without Codex. A change across this many files is not "
     "a small one, so this applies to it.")
@@ -97,18 +107,18 @@ OFFER = (
     "applies to it.")
 CONSULT = (
     "ModelQuad: you are about to change a sensitive file ({kind}). If this change is large, "
-    "architectural or security-relevant, consult Codex first: call `delegate` "
+    "architectural or security-relevant, consult Codex first: call " + DELEGATE_NAMED + " "
     "with task_type architecture, trigger pre_change and the files involved, verify its "
     "advice, then continue. Skip it for a trivial edit.")
 CONSULT_GATE = (
     "ModelQuad consultation gate: {why}, and Codex has not been consulted on this change. "
-    "Before this edit, call `delegate` with task_type architecture, trigger "
+    "Before this edit, call " + DELEGATE_NAMED + " with task_type architecture, trigger "
     "pre_change, your plan in the prompt and the files involved in `files`. Check its advice "
     "against the code and the requirements, then make this edit again. If the call is "
     "refused or Codex is unavailable, say so and go on: this gate stops a change only once.")
 GATE = (
     "ModelQuad review gate: this session changed {count} file(s){sensitive} and Codex has "
-    "not reviewed them. Before you finish, call `delegate` with task_type review, "
+    "not reviewed them. Before you finish, call " + DELEGATE_NAMED + " with task_type review, "
     "trigger review_gate and the changed files in `files`. Verify each finding against the "
     "code or a test before changing anything, record your decisions with "
     "`review_verdict`, and say in your final message what the review found. If "

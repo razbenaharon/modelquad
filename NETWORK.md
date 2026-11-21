@@ -10,7 +10,7 @@ programs it starts make, and how to check.
   module to any other address (see [The loopback rule](#the-loopback-rule)
   for what it does not cover). There is no ModelQuad server, no update check
   and no telemetry.
-- `modelquad update`, only when you run it, starts pip (and, for a clone,
+- `python -m modelquad update`, only when you run it, starts pip (and, for a clone,
   Git) and Claude Code's `claude plugin` commands. Those programs go online
   themselves; ModelQuad's own process still connects to nothing.
 - ModelQuad talks to Claude Code over standard input and output. It opens no
@@ -66,17 +66,18 @@ their traffic.
   for the build shown by `modelquad --version`. These read the local
   repository only; ModelQuad never asks Git to fetch or push.
 
-- **`modelquad update`**, only when you run it in a terminal. For an install
-  from PyPI it runs `python -m pip install --upgrade modelquad`, which
+- **`python -m modelquad update`**, only when you run it in a terminal. For
+  an install from PyPI it runs `python -P -m pip install --upgrade modelquad`, which
   downloads from PyPI. For an install from a clone it runs `git pull
   --ff-only` in that clone, which fetches from the clone's Git remote, then
-  `python -m pip install .` there, which can download the build tools and
-  dependencies pip needs. Then, if the ModelQuad plugin is installed, it runs
-  `claude plugin marketplace update modelquad` and reinstalls the plugin;
+  `python -P -m pip install .` there, which can download the build tools and
+  dependencies pip needs. Then, if the ModelQuad plugin is installed and
+  enabled, it runs `claude plugin marketplace update modelquad` and
+  `claude plugin update modelquad@modelquad` (or a reinstall);
   Claude Code decides what those fetch. ModelQuad itself checks for no
   update and downloads nothing, and the update never starts on its own.
 
-Apart from `claude plugin` in `modelquad update`, ModelQuad does not start
+Apart from `claude plugin` in the update, ModelQuad does not start
 Claude. Claude Code starts ModelQuad.
 
 Earlier builds also asked `codex app-server` for your Codex quota and ran an

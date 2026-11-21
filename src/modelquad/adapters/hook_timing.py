@@ -31,9 +31,15 @@ LAUNCHER_LIMIT_MS = 10 * 60 * 1000
 TOOL_KINDS = {
     "Edit": "edit", "Write": "edit", "MultiEdit": "edit", "NotebookEdit": "edit",
     "Bash": "run", "PowerShell": "run",
-    # The review tool, from the plugin and from `modelquad install claude`
-    # (review_reminder.DELEGATE_TOOLS).
-    "mcp__plugin_modelquad_review__delegate": "modelquad", "mcp__modelquad__delegate": "modelquad",
+    # The review tool by every id it can have (review_reminder.DELEGATE_TOOLS):
+    # the plugin's server since 0.5.0 and before, and the install without the
+    # plugin, each with the tool's name since 0.5.0 and before.
+    "mcp__plugin_modelquad_review__delegate": "modelquad",
+    "mcp__plugin_modelquad_review__modelquad_delegate": "modelquad",
+    "mcp__plugin_modelquad_modelquad__delegate": "modelquad",
+    "mcp__plugin_modelquad_modelquad__modelquad_delegate": "modelquad",
+    "mcp__modelquad__delegate": "modelquad",
+    "mcp__modelquad__modelquad_delegate": "modelquad",
 }
 
 

@@ -1190,7 +1190,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='The project folder (default: the current folder).')
     update_cmd = subcommands.add_parser(
         "update", help="Upgrade ModelQuad and refresh its Claude Code plugin, with Claude Code "
-                       "closed. pip and git go online for it; ModelQuad does not.")
+                       "closed. Run it as: python -m modelquad update. pip and git go online "
+                       "for it; ModelQuad does not.")
     update_cmd.add_argument("--dry-run", action="store_true",
                             help="Print the steps and run nothing.")
     subcommands.add_parser("mcp", help="Run the MCP server Claude Code talks to (stdio).")

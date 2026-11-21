@@ -34,12 +34,18 @@ the instrument for developing it.
   `mcp__modelquad__modelquad_<tool>`; `modelquad doctor` names a Claude
   Code permission rule that still uses one (it reads those settings files
   and never writes them).
-- `modelquad update` (`updater.py`), user-started: refuses while Claude
-  Code, the Claude app or `modelquad-mcp.exe` runs; otherwise pip (PyPI) or
-  `git pull --ff-only` and `pip install .` (clone) as child processes, then
-  reinstalls the plugin, runs the doctor checks and prints the version. Its
-  children go online; ModelQuad's own process does not. Nothing updates by
-  itself.
+- `python -m modelquad update` (`updater.py`, `__main__.py`), user-started:
+  refuses unless started as `python -m modelquad` (pip cannot replace a
+  running `modelquad.exe`), in a worker, and while Claude Code, the Claude
+  app, `modelquad-mcp.exe` or another `modelquad.exe` runs; otherwise pip
+  (PyPI) or `git pull --ff-only` on a clean `main` and `pip install .`
+  (clone) as child processes, then `claude plugin update` for an enabled
+  user-scope plugin, the doctor checks and the version. Its children go
+  online; ModelQuad's own process does not. Nothing updates by itself.
+- After an upgrade the package and Claude Code's cached plugin can differ in
+  version, so the review tool's id can be any of six
+  (`branding.delegate_ids`); the hook matcher, the reminder and the hook
+  timing record accept all of them.
 - The context package (`review.py`): only the files Claude names. The manifest
   lists each file as sent (path, size, digest prefix), what was left out and
   why, and a package id. A run given a package id sends that package or

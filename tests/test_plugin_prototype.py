@@ -63,13 +63,20 @@ def test_plugin_hook_matches_the_review_tool_in_both_installs():
 
     from modelquad.adapters.hook_timing import TOOL_KINDS
 
-    assert DELEGATE_TOOLS == frozenset(tool_ids("delegate"))
+    from modelquad.branding import delegate_ids, old_tool_ids
+
+    # Mixed states after an upgrade: a new package with a stale cached plugin,
+    # or a new plugin with an old package, give the other two plugin ids.
+    mixed = {"mcp__plugin_modelquad_modelquad__delegate", "mcp__plugin_modelquad_review__modelquad_delegate"}
+    every = set(tool_ids("delegate")) | set(old_tool_ids("delegate")) | mixed
+    assert len(every) == 6 and delegate_ids() == every == DELEGATE_TOOLS
     assert {tool for tool, kind in TOOL_KINDS.items() if kind == "modelquad"} == DELEGATE_TOOLS
     hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
     matcher = hooks["PostToolUse"][0]["matcher"]
-    for tool in tool_ids("delegate"):
+    for tool in every:
         assert re.fullmatch(matcher, tool), tool
-    for other in ("mcp__plugin_modelquad_review__status", "mcp__other__delegate", "mcp__x__subdelegate"):
+    for other in ("mcp__plugin_modelquad_review__status", "mcp__other__delegate", "mcp__x__subdelegate",
+                  "mcp__plugin_modelquad_review__review_package", "mcp__modelquad__modelquad_status"):
         assert not re.fullmatch(matcher, other), other
 
 
