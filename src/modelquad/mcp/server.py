@@ -98,7 +98,7 @@ _VISIBLE = ("task_type", "provider", "task_status", "task_completed", "output", 
             "delegated", "executed", "reason", "message", "decision_id", "package", "package_round",
             "skipped_files", "completion_request", "findings", "findings_note", "ledger_note", "usage",
             "limitations", "worker_note", "output_truncated", "output_chars", "status", "notice",
-            "next", "note", "codex_started")
+            "next", "note", "codex_started", "left_out", "retry_package")
 
 
 def _review_lines(payload: dict) -> list[str]:
@@ -107,7 +107,7 @@ def _review_lines(payload: dict) -> list[str]:
         return lines + list(payload["notice"]) + [
             "To go ahead, ask again. Claude Code shows its approval prompt before the call."]
     if payload.get("refused"):
-        return lines + [review.refusal_line(payload)]
+        return lines + [review.refusal_line(payload)] + review.retry_lines(payload)
     if payload.get("message") and payload["message"] != lines[0]:
         lines.append(payload["message"])
     package = payload.get("package")
