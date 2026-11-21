@@ -88,7 +88,7 @@ def test_server_instructions_leave_the_delegation_decision_to_the_host():
         # The files Codex reads are passed explicitly, never inferred from the prompt.
         assert "in `files` (paths relative to the working directory, at most 32)" in flat
         assert "a file named only in the prompt is not sent." in flat
-        assert len(server_instructions(proactive)) < 4096
+        assert len(server_instructions(proactive)) <= 2048
 
 
 def test_claude_decides_by_default_and_off_makes_it_offer(tmp_path):

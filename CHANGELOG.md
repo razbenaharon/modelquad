@@ -28,10 +28,18 @@
   are a hint for Claude, which adds a file only by naming it. The hint is
   not written to the review ledger.
 - **Claude is told what a sufficient package holds.** The server's
-  instructions now ask Claude to include the tests covering a change, a
+  instructions now ask Claude to include the tests covering a change, one
   caller of each changed public function and the config it reads: Codex
   can ask only for files the sent code names, so it cannot ask for callers
   or tests.
+- **Shorter server instructions, with the retry rule first.** Claude Code
+  before version 2.1.296 keeps only the first 2,048 characters of a
+  server's instructions. Every variant ModelQuad sends (proactive on,
+  proactive off, standing grant) now fits within that, with repeated
+  sentences merged. The first paragraph is now the `retry_package` rule:
+  show the user what was left out, why, and what that package sends, and
+  use its package id only after the user explicitly agrees, even with a
+  standing grant.
 
 ## 0.5.2 (2026-11-21)
 
