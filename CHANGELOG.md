@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0 (2026-11-21)
 
 - **Shorter tool names.** Claude Code showed the review tool as
   `modelquad:modelquad - modelquad_delegate`. The plugin's MCP server is now
