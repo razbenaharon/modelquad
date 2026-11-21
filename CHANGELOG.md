@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.3 (2026-11-22)
 
 - **The package preview gives its exact size and, when the record allows,
   an input-token range.** `review_package` and `modelquad review package`
