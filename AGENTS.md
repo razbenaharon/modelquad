@@ -9,7 +9,7 @@ the instrument for developing it.
 
 ## Current state
 
-- Version `0.5.0`, review ledger schema `3`.
+- Version `0.5.1`, review ledger schema `3`.
   `python scripts/check.py docs` checks these against the code.
 - One product, one flow: Claude Code asks the user's own Codex CLI for a
   read-only review of a named context package, and ModelQuad records what was
@@ -17,7 +17,11 @@ the instrument for developing it.
 - Native Windows only, not WSL. Install and the Codex launch refuse to run
   elsewhere.
 - ModelQuad installs as a Claude Code plugin (`plugin/`): the plugin supplies
-  the MCP server entry, the commands and the hooks.
+  the MCP server entry, the commands and the hooks. Users add the
+  marketplace as `razbenaharon/modelquad#stable` and the package from PyPI.
+  After a release is on PyPI and its GitHub release is out, move `stable` to
+  the release commit (`git push origin vX.Y.Z^{commit}:refs/heads/stable`);
+  it only ever moves forward.
   `modelquad install claude` is the install without the plugin (server and
   commands only, no hooks); `modelquad install claude --plugin` takes back
   those copies ([docs/PLUGIN.md](docs/PLUGIN.md)).

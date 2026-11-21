@@ -51,12 +51,16 @@ the templates; `tests/test_plugin_prototype.py` fails while a copy differs.
 
 ## Installing with the plugin
 
-    git clone https://github.com/razbenaharon/modelquad
-    cd modelquad
-    pip install .
-    claude plugin marketplace add ./
+    pip install modelquad
+    claude plugin marketplace add razbenaharon/modelquad#stable
     claude plugin install modelquad@modelquad
     modelquad doctor
+
+`stable` is a branch of this repository that moves to each release once it
+is on PyPI, so the plugin Claude Code fetches matches the package pip
+installs. To work from a clone instead, run `pip install .` and
+`claude plugin marketplace add ./` in it; a clone's `main` can be ahead of
+the last release.
 
 `modelquad install claude --plugin` is needed only if an earlier
 `modelquad install claude` wrote ModelQuad into Claude Code's user

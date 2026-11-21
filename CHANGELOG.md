@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.1 (unreleased)
+
+- **The plugin installs from GitHub.** The install is now
+  `pip install modelquad`, `claude plugin marketplace add
+  razbenaharon/modelquad#stable` and `claude plugin install
+  modelquad@modelquad`: no clone. `stable` is a branch that moves to each
+  release once it is on PyPI, so the plugin and the package stay the same
+  version, and `python -m modelquad update` refreshes both. The clone
+  install still works for reading or changing the code.
+
+### If you upgrade
+
+An install that took the plugin from a clone keeps working. To move it to
+PyPI and `stable`, see the README's upgrade section.
+
 ## 0.5.0 (2026-11-21)
 
 - **Shorter tool names.** Claude Code showed the review tool as
