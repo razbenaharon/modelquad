@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.2 (2026-11-21)
+
+- **The review hook records how long it took.** Claude Code still showed "A
+  hook didn't answer in time" once with the 10-second limit, and the cause
+  could not be reproduced. Each hook call now adds two lines to
+  `hook-timing.jsonl` in the state folder: how long its process took to
+  start, and how long its work took, with the event and a tool kind. A call
+  Claude Code stopped leaves a start line with no end line; a notice with no
+  start line means ModelQuad's code never ran. Numbers and fixed words only;
+  nothing is kept while ModelQuad is off. PRIVACY.md lists the file.
+
 ## 0.4.1 (2026-11-20)
 
 - **The install line for the plugin works.** `claude plugin marketplace add .`

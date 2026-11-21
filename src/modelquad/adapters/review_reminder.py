@@ -397,8 +397,12 @@ def _stop(event, payload, cwd, session, standing) -> tuple[str | None, str | Non
 
 
 def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=None,
-             mode=None, standing=None, now=time.time):
-    """Fail silent: any failure prints nothing and exits 0."""
+             mode=None, standing=None, now=time.time, facts=None):
+    """Fail silent: any failure prints nothing and exits 0.
+
+    ``facts``, when given, receives the event and tool names for the timing
+    record (``hook_timing.py``), which keeps only a fixed kind of each.
+    """
     environ = os.environ if environ is None else environ
     if environ.get("MODELQUAD_WORKER") == "1" or host != "claude":
         return 0
@@ -414,6 +418,8 @@ def run_hook(host, stdin, stdout, *, environ=None, clock=time.monotonic, state=N
             return 0
         name = event["hook_event_name"]
         tool = event.get("tool_name")
+        if facts is not None:
+            facts.update(event=name, tool=tool)
         session = event.get("session_id")
         cwd = event.get("cwd")
         if not isinstance(session, str) or not session:

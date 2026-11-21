@@ -20,6 +20,7 @@ from .branding import CLI_COMMAND, PRODUCT_NAME
 PRIVACY_RETENTION: tuple[tuple[str, str], ...] = (
     ("review ledger (review-ledger.db)", "no automatic expiry"),
     ("review reminders (review-reminder)", "deleted after 2 days"),
+    ("hook timing (hook-timing.jsonl)", "cut back to its newest half when it passes 64 KiB"),
     ("running-worker records (active-workers)", "removed when the call ends; a leftover after 1 hour"),
 )
 
