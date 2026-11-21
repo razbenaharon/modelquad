@@ -126,9 +126,10 @@ def test_the_review_hook_hands_stdin_and_stdout_to_the_handler(monkeypatch):
     stdin = io.TextIOWrapper(io.BytesIO(b"{}"))
     monkeypatch.setattr(sys, "stdin", stdin)
     monkeypatch.setattr(review_reminder, "run_hook",
-                        lambda host, source, out: seen.append((host, source, out)) or 0)
+                        lambda host, source, out, **kw: seen.append((host, source, out)) or 0)
     assert cli_entry.dispatch_review(["hook-review", "claude"]) == 0
     # Bytes in, so the handler decodes UTF-8 itself; the real stdout out.
+    # (``facts`` is passed by keyword for the timing record, hook_timing.py.)
     assert seen == [("claude", stdin.buffer, sys.stdout)]
 
 

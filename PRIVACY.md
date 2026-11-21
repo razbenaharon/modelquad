@@ -313,6 +313,12 @@ or inspects that file** (`tests/test_hook_transcript_boundary.py`).
   SHA-256 digests of the changed paths under the working directory (never the
   paths), whether one looked sensitive, and the gate's state. It records gate
   events in the review ledger with digests of the folder and the session.
+  Each call also adds two lines to `hook-timing.jsonl`: when it started, a
+  random call id, how many milliseconds its process took to start, and, at
+  the end, the event, a tool kind from a fixed set (edit, run, modelquad,
+  other) and how many milliseconds the work took. No path, session id, file
+  name or text. It is there to explain Claude Code's notice "A hook didn't
+  answer in time".
 
 ### Other reads
 
@@ -396,6 +402,7 @@ the old folder; delete it once you no longer need its history.
 | `preferences.json` | Your settings: ModelQuad on or off (`modelquad on`/`off`), proactive use on or off, whether the plugin install is in use, your per-repository choices from `modelquad settings repo` (one word each, keyed by a hash of the repository made with your installation id; no path or folder name), and the standing grant from `modelquad settings auto` (on for every folder, or the same repository hashes, each with when it was turned on and the notice version) | Kept until you change or unset them | No |
 | `review-ledger.db` | The review ledger (below) | No automatic expiry | In a limited way: a finding's claim describes your code. Claims, reasoning, confidence reasons and notes are redacted for credentials and paths and capped (300, 400, 200 and 200 characters) |
 | `review-reminder\` | One file per Claude Code session: SHA-256 digests of the paths Claude changed, a sensitive-file flag and the review gate's state | Deleted after 2 days | No: digests only |
+| `hook-timing.jsonl` | Per review hook call: a UTC time, a random call id, milliseconds to start and to finish, the event and a tool kind (edit, run, modelquad, other) | Cut back to its newest half when it passes 64 KiB | No: numbers and fixed words only |
 | `active-workers\` | One small file per running Codex call: the process id and start time of the Codex process, so a process Codex starts cannot ask ModelQuad for Codex again | Removed when the call ends; a leftover after 1 hour | No |
 | `identity.json` | The installation id (below) | Until reset or deleted | A resettable pseudonym |
 | `data-flow-notice.json` | That the notice of what ModelQuad sends where was shown, where (install or the first Codex call) and when | Kept, so the notice is shown once | No |

@@ -45,8 +45,13 @@ def dispatch_review(argv: Sequence[str]) -> int | None:
     if len(argv) != 2 or argv[1] != "claude":
         return 0
     try:
+        from .adapters import hook_timing
         from .adapters.review_reminder import run_hook
-        return run_hook(argv[1], getattr(sys.stdin, "buffer", sys.stdin), sys.stdout)
+        mark = hook_timing.started()
+        facts: dict = {}
+        code = run_hook(argv[1], getattr(sys.stdin, "buffer", sys.stdin), sys.stdout, facts=facts)
+        hook_timing.finished(mark, facts)
+        return code
     except Exception:
         return 0
 
