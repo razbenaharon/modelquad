@@ -76,6 +76,9 @@ NOT_RECORDED_NOTE = (
     "ModelQuad could not write this call to its review ledger (the file was locked or could "
     "not be written), so the review report misses it or shows it with no end recorded, and "
     "its findings cannot take a verdict. Tell the user.")
+REFUSAL_NOT_RECORDED_NOTE = (
+    "ModelQuad could not write this refusal to its review ledger, so the review report "
+    "does not count it. Tell the user.")
 PACKAGE_NOT_RECORDED_NOTE = (
     "ModelQuad could not write what this call sent to its review ledger (the file was locked "
     "or could not be written), so the review report misses its package and a completion "
@@ -824,27 +827,42 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     """One review, start to finish. Returns the reply's data; never raises for a refusal."""
     import time
 
-    from . import procutil, review_ledger
+    from . import localpath, procutil, review_ledger
     from .execution import noshell
     from .execution.base import POLICY_REFUSAL_REASONS, workspace_stability_note
     from .execution.closed import closed_result
     from .models import TaskType
 
+    def record_refusal(payload: dict) -> dict:
+        reason = payload.get("reason")
+        if reason in (WORKER, localpath.UNUSABLE) or not payload.get("refused"):
+            return payload
+        try:
+            # The file-list check can refuse before the gate checks the folder.
+            if reason == "files_not_valid" and localpath.reason(request.working_directory) is not None:
+                return payload
+            review_ledger.record_refusal(
+                reason, working_directory=request.working_directory,
+                task_type=request.task_type, trigger=request.trigger)
+        except Exception:  # noqa: BLE001 -- the refusal stands without its record
+            payload["ledger_note"] = REFUSAL_NOT_RECORDED_NOTE
+        return payload
+
     clock = clock or time.monotonic
     policies: list = []
     refused = gate(request, session, policy_out=policies)
     if refused is not None:
-        return refused
+        return record_refusal(refused)
     round_number, refused = _round(request)
     if refused is not None:
-        return refused
+        return record_refusal(refused)
     # What will be sent, by content, read now: the executor compares it with
     # what it packs at launch, so a file that changes in between is not sent.
     shown = package(request, policies[0].caps if policies else None)
     if shown.get("refused"):
-        return shown
+        return record_refusal(shown)
     if request.package_id is not None and shown["package_id"] != request.package_id:
-        return refusal(PACKAGE_CHANGED)
+        return record_refusal(refusal(PACKAGE_CHANGED))
     # A hint for the reply, not part of what was sent: it stays out of the record.
     hint = shown.pop("may_also_need", None)
     digests = {item["path"]: item["sha256"] for item in shown["files"]}
@@ -879,17 +897,15 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
             model=request.model, reasoning_effort=request.reasoning_effort, metadata=metadata,
             on_spawn=spawned, on_packed=on_packed, stop_requested=stop_requested)
     except ValueError:
-        return refusal("invalid_request")
+        return record_refusal(refusal("invalid_request"))
     key = shown["package_id"]
     with _running_lock:
-        if key in _running:
-            # At most one active attempt per request (invariant 2).
-            return refusal(DUPLICATE)
-        release = _hold_package(key)
-        if release is None:
-            # Another Claude Code session's server is running this package.
-            return refusal(DUPLICATE)
-        _running.add(key)
+        # At most one active attempt per package, in this process or another.
+        release = None if key in _running else _hold_package(key)
+        if release is not None:
+            _running.add(key)
+    if release is None:
+        return record_refusal(refusal(DUPLICATE))
     try:
         started_at = clock()
         # The worker's whole tree is tied to this process: it ends if this server does.

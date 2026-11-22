@@ -7,9 +7,8 @@ ModelQuad's own Python process connects only to loopback addresses.
 promise: it adds an audit hook (``sys.addaudithook``) that refuses
 ``socket.connect`` and ``socket.sendto`` to any address that is not loopback,
 raising :class:`OutboundConnectionRefused` before the call is made. The
-entry points install it: the ``modelquad`` command (``cli_entry.main``,
-which the background service's entry also runs), the MCP server
-(``mcp/server.main``) and the detached job runner (``jobs/runner.main``).
+entry points install it: the ``modelquad`` command and ``python -m modelquad``
+(``cli_entry.main``), and the MCP server (``mcp.server.main``).
 
 Only calls that raise those audit events are seen, which means calls made
 through Python's ``socket`` module. A connect by Windows asyncio's Proactor
@@ -20,12 +19,6 @@ code makes neither; NETWORK.md says so to users.
 The guard covers ModelQuad's own process only. The Codex CLI that ModelQuad
 starts is a separate program; it connects to OpenAI itself, under the user's
 own login, and this hook does not see or restrict it.
-
-Provider APIs called from this process: a provider plugin that declares
-``api_execution`` would call its vendor's API from ModelQuad's own process.
-No such plugin ships, and the loopback guard would refuse its call, so
-:func:`providers_refused_by_policy` makes any such provider ineligible
-before routing can pick it.
 """
 
 from __future__ import annotations

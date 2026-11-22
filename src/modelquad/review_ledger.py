@@ -5,13 +5,14 @@
 A small SQLite file of its own (``review-ledger.db`` in the state folder),
 separate from the history database: that one has no migrations, so a new
 table there would make every existing history unreadable. This file has its
-own schema version and only ever gains tables with ``CREATE TABLE IF NOT
-EXISTS``.
+own schema version and migrations.
 
 What it keeps, per Codex call: the time, a digest of the project folder (not
 its path), the task kind, why the call was made (``trigger``), the version of
 the code Codex saw (git HEAD plus a digest of the sent files' digests), the
-outcome, the duration and the token counts Codex reported. Per finding: its
+outcome, the reason code, the duration and the token counts Codex reported.
+A refusal before launch keeps only the call's time, project digest, task
+kind, trigger, outcome and reason code. Per finding: its
 reference, the repository-relative file and line, severity, category and the
 claim, redacted and capped. Per verdict: what Claude or the user decided, on
 what evidence, and what was done. Per review-gate event: what the gate did.
@@ -33,10 +34,11 @@ import os
 import re
 import sqlite3
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 FILE_NAME = "review-ledger.db"
 MAX_CLAIM_CHARS = 300
 MAX_REASON_CHARS = 400
@@ -71,7 +73,8 @@ CREATE TABLE IF NOT EXISTS runs (
     duration_seconds REAL,
     input_tokens INTEGER,
     output_tokens INTEGER,
-    findings_count INTEGER
+    findings_count INTEGER,
+    reason TEXT
 );
 CREATE TABLE IF NOT EXISTS findings (
     decision_id TEXT NOT NULL,
@@ -137,28 +140,37 @@ def ledger_path(state_root: Path | None = None) -> Path:
     return Path(state_root) / FILE_NAME
 
 
-def connect(path: Path | None = None) -> sqlite3.Connection:
+def connect(path: Path | None = None, *, timeout: float = 5.0) -> sqlite3.Connection:
     target = Path(path) if path is not None else ledger_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(target), timeout=5.0)
+    conn = sqlite3.connect(str(target), timeout=timeout)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")
-    version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version > SCHEMA_VERSION:
-        conn.close()
-        raise LedgerVersionError(f"review ledger schema {version} is newer than this build")
-    if version < SCHEMA_VERSION:
-        conn.executescript(_SCHEMA)
-        if version == 1:
-            # Version 2 added the reasoned-finding columns; rows from version 1 keep NULL there.
-            for column in ("line_end INTEGER", "confidence TEXT", "confidence_note TEXT",
-                           "reasoning TEXT"):
+    try:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version > SCHEMA_VERSION:
+            raise LedgerVersionError(f"review ledger schema {version} is newer than this build")
+        if version < SCHEMA_VERSION:
+            conn.executescript(_SCHEMA)
+            if version == 1:
+                # Version 2 added the reasoned-finding columns; rows from version 1 keep NULL there.
+                for column in ("line_end INTEGER", "confidence TEXT", "confidence_note TEXT",
+                               "reasoning TEXT"):
+                    try:
+                        conn.execute(f"ALTER TABLE findings ADD COLUMN {column}")
+                    except sqlite3.OperationalError as error:
+                        if not str(error).startswith("duplicate column name:"):
+                            raise
+            if version < 4 and "reason" not in {row[1] for row in conn.execute("PRAGMA table_info(runs)")}:
                 try:
-                    conn.execute(f"ALTER TABLE findings ADD COLUMN {column}")
-                except sqlite3.OperationalError:
-                    pass  # A concurrent opener added it first.
-        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-        conn.commit()
+                    conn.execute("ALTER TABLE runs ADD COLUMN reason TEXT")
+                except sqlite3.OperationalError as error:
+                    if not str(error).startswith("duplicate column name:"):
+                        raise  # A lock or write error must leave the migration retryable.
+            conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            conn.commit()
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
@@ -422,6 +434,10 @@ def _outcome(payload: dict) -> str:
         reason=reason if isinstance(reason, str) else None)
 
 
+def _reason_code(reason) -> str | None:
+    return reason if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_]{1,64}", reason) else None
+
+
 MAX_MANIFEST_CHARS = 32_000
 
 
@@ -563,9 +579,29 @@ def record_start(decision_id: str, *, working_directory, task_type, trigger,
     conn = connect(path)
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO runs (decision_id, created_at, workspace, task_type, trigger, "
+            "outcome) VALUES (?,?,?,?,?,?)",
             (decision_id, time.time(), workspace_id(working_directory), str(task_type)[:40],
-             trigger if trigger in TRIGGERS else "claude", None, UNFINISHED, None, None, None, None))
+             trigger if trigger in TRIGGERS else "claude", UNFINISHED))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_refusal(reason, *, working_directory, task_type, trigger, path: Path | None = None) -> None:
+    """Record a refusal before launch, without waiting for a locked ledger."""
+    from .repo_policy import TASK_KINDS
+
+    reason = _reason_code(reason)
+    outcome = classify_call(refused=True, started=False, delivered=False, reason=reason)
+    conn = connect(path, timeout=0)
+    try:
+        conn.execute(
+            "INSERT INTO runs (decision_id, created_at, workspace, task_type, trigger, outcome, "
+            "reason) VALUES (?,?,?,?,?,?,?)",
+            (uuid.uuid4().hex, time.time(), workspace_id(working_directory),
+             task_type if task_type in TASK_KINDS else None,
+             trigger if trigger in TRIGGERS else "claude", outcome, reason))
         conn.commit()
     finally:
         conn.close()
@@ -588,14 +624,17 @@ def record_run(payload: dict, *, working_directory, task_type, trigger, path: Pa
     conn = connect(path)
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO runs (decision_id, created_at, workspace, task_type, trigger, "
+            "code_version, outcome, duration_seconds, input_tokens, output_tokens, findings_count, "
+            "reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (decision_id, time.time(), workspace_id(working_directory), str(task_type)[:40],
              trigger if trigger in TRIGGERS else "claude",
              code_version(working_directory, audit.get("sent")), _outcome(payload),
              duration if isinstance(duration, (int, float)) else None,
              metrics.get("input_tokens") if isinstance(metrics.get("input_tokens"), int) else None,
              metrics.get("output_tokens") if isinstance(metrics.get("output_tokens"), int) else None,
-             None if findings is None else len(findings)))
+             None if findings is None else len(findings),
+             _reason_code(payload.get("task_status_reason") or payload.get("reason"))))
         for item in findings or ():
             conn.execute(
                 "INSERT OR REPLACE INTO findings (decision_id, ref, file, line, severity, category, "
@@ -778,9 +817,13 @@ def report(*, days: float = 30.0, workspace: str | None = None, path: Path | Non
 
     by_outcome: dict[str, int] = {}
     by_trigger: dict[str, int] = {}
+    by_reason: dict[str, int] = {}
     for run in runs:
         by_outcome[run["outcome"]] = by_outcome.get(run["outcome"], 0) + 1
         by_trigger[run["trigger"] or "claude"] = by_trigger.get(run["trigger"] or "claude", 0) + 1
+        if run["outcome"] not in STARTED_OUTCOMES:
+            reason = run["reason"] or "not recorded"
+            by_reason[reason] = by_reason.get(reason, 0) + 1
     counts = {"findings": len(findings), "unjudged": 0, "confirmed_independent": 0,
               "confirmed_claude_only": 0, "refuted": 0, "undecidable": 0, "fixed": 0,
               "fixed_and_verified": 0, "to_fix": 0, "refuted_but_acted_on": 0, "by_user": 0}
@@ -826,6 +869,7 @@ def report(*, days: float = 30.0, workspace: str | None = None, path: Path | Non
         "answered": by_outcome.get(ANSWERED, 0),
         "not_started": sum(count for name, count in by_outcome.items()
                            if name not in STARTED_OUTCOMES),
+        "not_started_by_reason": by_reason,
         # Answers that did not use the findings format: their findings are unknown.
         "runs_with_unknown_findings": sum(1 for run in runs if run["outcome"] == ANSWERED
                                           and run["findings_count"] is None),
