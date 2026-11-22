@@ -65,6 +65,22 @@ def test_a_refused_call_is_recorded_as_refused(tmp_path):
     assert rl.report(path=db)["runs_by_outcome"] == {"refused": 1}
 
 
+@pytest.mark.parametrize("reason", ["free text with a reason", "C:/private/file", "x" * 65])
+def test_an_open_reason_is_discarded_by_both_writers(tmp_path, reason):
+    db = tmp_path / "ledger.db"
+    fields = dict(working_directory=tmp_path, task_type="review", trigger="claude", path=db)
+    rl.record_refusal(reason, **fields)
+    rl.record_run({"decision_id": "d-2", "refused": True, "started": False, "reason": reason},
+                  **fields)
+    data = rl.report(path=db)
+    assert data["not_started_by_reason"] == {"not recorded": 2}
+    conn = rl.connect(db)
+    try:
+        assert [row["reason"] for row in conn.execute("SELECT reason FROM runs")] == [None, None]
+    finally:
+        conn.close()
+
+
 def test_verdicts_need_a_known_finding_and_known_words(tmp_path):
     db = tmp_path / "ledger.db"
     rl.record_run(_payload(), working_directory=tmp_path, task_type="review", trigger="claude", path=db)
@@ -274,7 +290,6 @@ def test_a_version_2_ledger_gains_the_packages_table(tmp_path):
             severity TEXT, category TEXT, claim TEXT, PRIMARY KEY (decision_id, ref));
         PRAGMA user_version=2;""")
     conn.close()
-    assert rl.SCHEMA_VERSION == 3
     conn = rl.connect(db)
     try:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -282,6 +297,32 @@ def test_a_version_2_ledger_gains_the_packages_table(tmp_path):
         assert conn.execute("PRAGMA user_version").fetchone()[0] == rl.SCHEMA_VERSION
     finally:
         conn.close()
+
+
+def test_a_version_3_ledger_keeps_its_rows_when_reason_is_added(tmp_path):
+    db = tmp_path / "ledger.db"
+    conn = sqlite3.connect(db)
+    conn.executescript("""
+        CREATE TABLE runs (
+            decision_id TEXT PRIMARY KEY, created_at REAL NOT NULL, workspace TEXT NOT NULL,
+            task_type TEXT, trigger TEXT, code_version TEXT, outcome TEXT NOT NULL,
+            duration_seconds REAL, input_tokens INTEGER, output_tokens INTEGER, findings_count INTEGER);
+        INSERT INTO runs VALUES ('old', strftime('%s', 'now'), 'ws', 'review', 'claude',
+            NULL, 'refused', NULL, NULL, NULL, NULL);
+        PRAGMA user_version=3;""")
+    conn.close()
+    rl.record_refusal("invalid_request", working_directory=tmp_path, task_type="review",
+                      trigger="claude", path=db)
+    conn = rl.connect(db)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        row = conn.execute("SELECT * FROM runs WHERE decision_id = 'old'").fetchone()
+        assert (row["workspace"], row["outcome"], row["reason"]) == ("ws", rl.REFUSED, None)
+    finally:
+        conn.close()
+    data = rl.report(path=db)
+    assert data["runs_by_outcome"] == {rl.REFUSED: 1, rl.NOT_STARTED: 1}
+    assert data["not_started_by_reason"] == {"not recorded": 1, "invalid_request": 1}
 
 
 def test_a_package_record_keeps_metadata_and_its_round_per_folder(tmp_path):
@@ -354,6 +395,8 @@ def test_only_started_calls_are_codex_calls_in_the_report(tmp_path):
     assert data["runs_by_outcome"] == {"answered": 2, "failed": 1, "withheld": 1, "refused": 1,
                                        "not_started": 2}
     assert data["runs"] == 7 and data["codex_started"] == 4 and data["not_started"] == 3
+    assert data["not_started_by_reason"] == {
+        "invalid_request": 1, "supplied_file_missing": 1, "user_repo_codex_off": 1}
     assert data["answered"] == 2
     # Only an answer can be "not in the findings format"; a refusal has no findings to miss.
     assert data["runs_with_unknown_findings"] == 1
@@ -363,7 +406,9 @@ def test_only_started_calls_are_codex_calls_in_the_report(tmp_path):
     lines = cli.review_report_lines(data)
     assert ("  Codex calls (Codex was started): 4 (answered 2, not answered 1, "
             "withheld (tool call seen) 1)") in lines
-    assert "  Stopped before Codex started: 3 (not started for another reason 2, refused 1)" in lines
+    stopped = "  Stopped before Codex started: 3 (not started for another reason 2, refused 1)"
+    assert lines[lines.index(stopped) + 1] == (
+        "    Reasons: invalid_request 1, supplied_file_missing 1, user_repo_codex_off 1")
     assert any("Findings: 3 (and 1 answer(s) not in the findings format)" in line for line in lines)
 
 

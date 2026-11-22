@@ -9,7 +9,7 @@ the instrument for developing it.
 
 ## Current state
 
-- Version `0.5.3`, review ledger schema `3`.
+- Version `0.5.3`, review ledger schema `4`.
   `python scripts/check.py docs` checks these against the code.
 - One product, one flow: Claude Code asks the user's own Codex CLI for a
   read-only review of a named context package, and ModelQuad records what was
@@ -84,7 +84,9 @@ the instrument for developing it.
   with the package manifest and the completion round of each call. The call
   and its package are written when Codex starts (`unfinished`) and replaced
   when the call ends, so a session that closes mid-run leaves a record. A
-  reply says so when the ledger could not be written (`ledger_note`).
+  refusal before launch records its reason code, except for workers and
+  unusable project paths. A reply says so when the ledger could not be
+  written (`ledger_note`).
 - Settings: `/modelquad:settings` (skill, user-started) and
   `modelquad settings` (`settings_view.py`).
 - A checked-in `.modelquad.toml` can only narrow Codex use in its repository
@@ -161,7 +163,8 @@ releases and recorded in SECURITY.md.
    that is running is refused, not queued, in the same server process or in
    another one that shares the state folder: an operating-system lock on
    `<state root>/running/<package id>.lock`, released by Windows when the
-   run ends or its process dies (`tests/test_review_flow.py`).
+   run ends or its process dies (`tests/test_review_flow.py`). If the lock
+   file cannot be opened, only the in-process rule applies.
 3. **A boundary ModelQuad cannot check is not claimed.** A Codex whose feature
    listing does not confirm the switched-off tools is refused, and the docs
    say which tools Codex still lists to the model.

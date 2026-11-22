@@ -11,6 +11,7 @@ nothing in this file shows that Codex itself behaves.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -312,7 +313,9 @@ def _seed_runs(points, *, outcome="answered", start=1_000.0):
     try:
         for index, (sent, tokens) in enumerate(points):
             decision = f"seed{start:.0f}-{index}"
-            conn.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            conn.execute("INSERT INTO runs (decision_id, created_at, workspace, task_type, trigger, "
+                         "code_version, outcome, duration_seconds, input_tokens, output_tokens, "
+                         "findings_count) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                          (decision, start + index, "ws", "review", "claude", None, outcome, 1.0,
                           tokens, 10, 0))
             prompt = min(sent, 100)
@@ -928,22 +931,31 @@ def test_a_completion_round_must_follow_a_recorded_review_of_this_folder(project
 # -------------------------------------------------------------------- the gates
 
 
-def test_a_worker_is_refused_before_anything_else(project):
-    executor = FakeExecutor()
-
-    reply = review.run(request_for(project), executor, review.Session(worker=True))
-
-    assert reply["reason"] == review.WORKER
-    assert executor.requests == []
-    assert review.gate(request_for(project), review.Session(worker=True), starts_codex=False)["reason"] == review.WORKER
-
-
-def test_a_network_folder_is_refused_before_it_is_opened(monkeypatch):
+@pytest.mark.parametrize("worker", [True, False])
+def test_refusals_for_workers_and_network_folders_open_nothing(project, monkeypatch, worker):
     from modelquad import localpath
 
-    reply = review.gate(request_for("\\\\host\\share\\project"), review.Session())
+    folder = str(project) if worker else r"\\host\share\project"
+    reason = review.WORKER if worker else localpath.UNUSABLE
+    for module, name in ((os, "stat"), (os, "lstat"), (os.path, "realpath")):
+        original = getattr(module, name)
 
-    assert reply["reason"] == localpath.UNUSABLE
+        def guarded(path, *args, _original=original, **kwargs):
+            assert not str(path).startswith(folder)
+            return _original(path, *args, **kwargs)
+
+        monkeypatch.setattr(module, name, guarded)
+    executor = FakeExecutor()
+    request = request_for(folder)
+    session = review.Session(worker=worker)
+
+    reply = review.run(request, executor, session)
+
+    assert reply["reason"] == reason
+    assert "ledger_note" not in reply
+    assert executor.requests == []
+    assert review.gate(request, session, starts_codex=False)["reason"] == reason
+    assert not review_ledger.ledger_path().exists()
 
 
 def test_modelquad_turned_off_starts_nothing(project):
@@ -954,8 +966,58 @@ def test_modelquad_turned_off_starts_nothing(project):
 
     assert (reply["refused"], reply["reason"]) == (True, switch.OFF)
     assert executor.requests == []
+    conn = review_ledger.connect()
+    try:
+        rows = conn.execute("SELECT * FROM runs").fetchall()
+        assert len(rows) == 1
+        row = rows[0]
+        assert (row["outcome"], row["reason"]) == (review_ledger.REFUSED, switch.OFF)
+        assert row["workspace"] == review_ledger.workspace_id(project)
+        assert all(row[name] is None for name in (
+            "code_version", "duration_seconds", "input_tokens", "output_tokens", "findings_count"))
+        assert review_ledger.package_round(row["decision_id"], project) is None
+    finally:
+        conn.close()
     switch.write(True)
     assert review.headline(review.run(request_for(project), executor)) == "Codex answered."
+
+
+def test_a_locked_ledger_does_not_hold_up_a_refusal(project):
+    switch.write(False)
+    holder = review_ledger.connect()
+    holder.execute("BEGIN IMMEDIATE")  # Readers can proceed; the refusal cannot write.
+    executor = FakeExecutor()
+    try:
+        started = time.monotonic()
+        reply = review.run(request_for(project), executor)
+        elapsed = time.monotonic() - started
+    finally:
+        holder.rollback()
+        holder.close()
+
+    assert elapsed < 1.0
+    assert executor.requests == []
+    assert reply == {**review.refusal(switch.OFF, switch.refusal()["message"]),
+                     "ledger_note": review.REFUSAL_NOT_RECORDED_NOTE}
+    assert review_server._review_lines(reply)[-1] == review.REFUSAL_NOT_RECORDED_NOTE
+    assert review_ledger.report()["runs"] == 0
+
+
+def test_a_repository_policy_refusal_records_the_call_but_not_the_preview(project):
+    from modelquad import repo_policy
+
+    (project / repo_policy.FILE_NAME).write_text(
+        "schema = 1\n[codex]\nallowed = false\n", encoding="utf-8")
+    request = request_for(project)
+    executor = FakeExecutor()
+
+    assert review.gate(request, review.Session(), starts_codex=False)["reason"] == repo_policy.CODEX_OFF
+    assert not review_ledger.ledger_path().exists()
+    assert review.run(request, executor)["reason"] == repo_policy.CODEX_OFF
+    assert executor.requests == []
+    data = review_ledger.report()
+    assert data["runs_by_outcome"] == {review_ledger.REFUSED: 1}
+    assert data["not_started_by_reason"] == {repo_policy.CODEX_OFF: 1}
 
 
 def test_an_unreadable_switch_refuses(project):
@@ -1048,6 +1110,7 @@ def test_the_first_call_shows_the_notice_instead_of_starting(project, monkeypatc
     executor = FakeExecutor()
 
     first = review.run(request_for(project), executor)
+    assert not review_ledger.ledger_path().exists()
     second = review.run(request_for(project), executor)
 
     assert first["status"] == review.NOTICE_FIRST and executor.requests[1:] == []

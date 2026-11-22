@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **The review report counts refusals before Codex starts.** The ledger
+  records their reason codes, and the report lists how many stops had each
+  reason. Worker and unusable-folder refusals leave no row. A locked
+  ledger never holds up the refusal.
+
 ## 0.5.3 (2026-11-22)
 
 - **The package preview gives its exact size and, when the record allows,

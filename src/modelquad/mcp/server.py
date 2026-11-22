@@ -107,7 +107,10 @@ def _review_lines(payload: dict) -> list[str]:
         return lines + list(payload["notice"]) + [
             "To go ahead, ask again. Claude Code shows its approval prompt before the call."]
     if payload.get("refused"):
-        return lines + [review.refusal_line(payload)] + review.retry_lines(payload)
+        lines += [review.refusal_line(payload)] + review.retry_lines(payload)
+        if payload.get("ledger_note"):
+            lines.append(payload["ledger_note"])
+        return lines
     if payload.get("message") and payload["message"] != lines[0]:
         lines.append(payload["message"])
     package = payload.get("package")

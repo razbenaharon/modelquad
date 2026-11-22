@@ -39,9 +39,9 @@ review_gate) that Codex answered starts the count again; one that was refused
 or failed, or that returned only the first-use notice, marks the review
 failed. Any other answered call counts as the change's consultation. A gate counts as used only once its message was
 written: a run that ran out of time before that leaves the gate as it was.
-The hook never approves
-or denies a tool call, never opens the transcript path Claude Code hands it,
-starts no process and never starts Codex.
+The hook never approves a tool call. Only the consultation gate can deny a
+tool call, once per change set in a folder with a standing grant. The hook
+never opens the transcript path Claude Code hands it and starts no process.
 
 What it keeps: one small file per session under ``<state>/review-reminder/``,
 named by a digest of the session id, holding SHA-256 digests of the changed

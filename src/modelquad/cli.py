@@ -905,6 +905,7 @@ def review_report_lines(data: dict, *, all_projects: bool = False) -> list[str]:
     started = review_ledger.STARTED_OUTCOMES
     outcomes = named(started)
     stopped = named(set(data["runs_by_outcome"]) - started)
+    reasons = ", ".join(f"{name} {count}" for name, count in sorted(data["not_started_by_reason"].items()))
     triggers = ", ".join(f"{name} {count}" for name, count in sorted(data["runs_by_trigger"].items())) or "none"
     gate = data["gate"]
     lines = [
@@ -912,6 +913,7 @@ def review_report_lines(data: dict, *, all_projects: bool = False) -> list[str]:
         + (" (all projects)" if all_projects else " (this project)"),
         f"  Codex calls (Codex was started): {data['codex_started']} ({outcomes})",
         f"  Stopped before Codex started: {data['not_started']} ({stopped})",
+        *([f"    Reasons: {reasons}"] if reasons else []),
         f"  Why: {triggers}",
         f"  Time: median {value(data['median_seconds'], ' s')}, total {value(data['total_seconds'], ' s')}",
         f"  Codex tokens: in {value(data['input_tokens'])}, out {value(data['output_tokens'])}",
