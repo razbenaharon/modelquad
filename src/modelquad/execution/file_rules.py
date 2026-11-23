@@ -386,11 +386,15 @@ def _ask_git(git: str, root: Path, names: list[str], no_window_kwargs) -> frozen
         if not inside:
             return None
         rest = _ask_git(git, root, [name for name in names if name not in inside], no_window_kwargs)
+        # Each name inside, by its part below the submodule. The answer is matched back to
+        # the names as given: Git spells the prefix as registered, which on Windows can
+        # differ from how the file was named, and a rebuilt name would then match nothing.
+        below = {name: name[len(prefix):] for name in inside}
         inner = _ask_git(git, root.joinpath(*prefix.strip("/").split("/")),
-                         [name[len(prefix):] for name in inside], no_window_kwargs)
+                         list(below.values()), no_window_kwargs)
         if rest is None or inner is None:
             return None
-        return rest | {prefix + name for name in inner}
+        return rest | {name for name, part in below.items() if part in inner}
     reported = {item.decode("utf-8", "replace") for item in completed.stdout.split(b"\0") if item}
     if os.name == "nt":
         reported = {item.casefold() for item in reported}
