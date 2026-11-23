@@ -6,6 +6,11 @@
   records their reason codes, and the report lists how many stops had each
   reason. Worker and unusable-folder refusals leave no row. A locked
   ledger never holds up the refusal.
+- **A file a submodule ignores stays out when its folder is spelled
+  differently.** On Windows, naming `VENDOR/key.secret` beside
+  `vendor/lib.py` sent the file the submodule's own rules ignore, because
+  Git names the submodule as registered. The answer is now matched to the
+  names as given.
 
 ## 0.5.3 (2026-11-22)
 

@@ -422,7 +422,8 @@ def _commit_all(folder, git, env):
                     "-q", "-m", "x"], cwd=folder, check=True, env=env, **no_window_kwargs())
 
 
-def test_a_file_in_a_submodule_is_checked_against_the_submodule(project):
+def _with_submodule(project):
+    """``vendor`` as a submodule (an embedded repository) whose own rules ignore ``*.secret``."""
     git = _git()
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     inner = project / "vendor"
@@ -433,12 +434,28 @@ def test_a_file_in_a_submodule_is_checked_against_the_submodule(project):
     _commit_all(inner, git, env)
     (inner / "key.secret").write_text("x", encoding="utf-8")
     subprocess.run([git, "init", "-q"], cwd=project, check=True, env=env, **no_window_kwargs())
-    _commit_all(project, git, env)  # records vendor as a submodule (an embedded repository)
+    _commit_all(project, git, env)
+
+
+def test_a_file_in_a_submodule_is_checked_against_the_submodule(project):
+    _with_submodule(project)
 
     allowed, skipped = screen(project, "src/app.py", "vendor/lib.py", "vendor/key.secret")
 
     assert allowed == ["src/app.py", "vendor/lib.py"]
     assert skipped == {"vendor/key.secret": "git_ignored"}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the folder's other spelling is the same folder only on Windows")
+def test_a_submodule_file_named_in_another_spelling_is_still_ignored(project):
+    # Git names the submodule in its registered spelling; the file named as VENDOR/...
+    # must still match the answer, or the file the submodule ignores is sent.
+    _with_submodule(project)
+
+    allowed, skipped = screen(project, "src/app.py", "vendor/lib.py", "VENDOR/key.secret")
+
+    assert allowed == ["src/app.py", "vendor/lib.py"]
+    assert skipped == {"VENDOR/key.secret": "git_ignored"}
 
 
 def test_an_unchecked_rule_at_launch_is_not_the_approved_review():
