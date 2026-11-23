@@ -11,6 +11,11 @@
   `vendor/lib.py` sent the file the submodule's own rules ignore, because
   Git names the submodule as registered. The answer is now matched to the
   names as given.
+- **Files in a submodule are checked in two more cases.** When the project
+  folder sits below the top of its repository, or a submodule's name holds
+  a quote, every named file used to be withheld as `git_check_failed`. Git's
+  answer is now read in both cases, and each file is checked against the
+  submodule's own rules.
 
 ## 0.5.3 (2026-11-22)
 

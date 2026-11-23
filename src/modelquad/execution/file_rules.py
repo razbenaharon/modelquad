@@ -347,27 +347,45 @@ def git_ignored(root, names) -> frozenset[str] | None:
     return _ask_git(executable.path, Path(root), names, no_window_kwargs)
 
 
-_IN_SUBMODULE = re.compile(rb"pathspec '(.+?)' is in submodule '(.+?)'", re.IGNORECASE)
+# Git's message quotes both paths as they are, so a quote may sit inside either one:
+# the path in submodule runs to the end of its line.
+_IN_SUBMODULE = re.compile(rb"pathspec '(.+?)' is in submodule '(.+)'[ \t\r]*$",
+                           re.IGNORECASE | re.MULTILINE)
 _NOT_A_REPOSITORY = b"not a git repository (or any"
+
+
+def _run_git(git: str, root: Path, args: list[str], stdin: bytes | None, no_window_kwargs):
+    """One Git command in ``root``, with inherited overrides removed; None when it did not run."""
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+    # English messages, so "not a git repository" can be told from a failure.
+    env.update(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0",
+               LC_ALL="C", LANGUAGE="C")
+    command = [git, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.devnull, *args]
+    try:
+        return subprocess.run(
+            command, cwd=os.fspath(root), env=env, input=stdin if stdin is not None else b"",
+            capture_output=True, timeout=GIT_SECONDS, check=False,
+            **no_window_kwargs(detach_stdin=False))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # Git was found but did not run to an answer (timed out, blocked, ...).
+        return None
+
+
+def _folder_in_repository(git: str, root: Path, no_window_kwargs) -> str | None:
+    """Where ``root`` sits in its repository, as Git spells it ("" at the top, "src/" below)."""
+    completed = _run_git(git, root, ["rev-parse", "--show-prefix"], None, no_window_kwargs)
+    if completed is None or completed.returncode != 0:
+        return None
+    return completed.stdout.decode("utf-8", "replace").strip("\r\n")
 
 
 def _ask_git(git: str, root: Path, names: list[str], no_window_kwargs) -> frozenset[str] | None:
     """``git check-ignore`` for ``names`` in ``root``; a file in a submodule is asked there."""
     if not names:
         return frozenset()
-    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
-    # English messages, so "not a git repository" can be told from a failure.
-    env.update(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0",
-               LC_ALL="C", LANGUAGE="C")
-    command = [git, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.devnull,
-               "check-ignore", "--stdin", "-z"]
-    try:
-        completed = subprocess.run(
-            command, cwd=os.fspath(root), env=env, input=("\0".join(names) + "\0").encode("utf-8"),
-            capture_output=True, timeout=GIT_SECONDS, check=False,
-            **no_window_kwargs(detach_stdin=False))
-    except (OSError, subprocess.SubprocessError, ValueError):
-        # Git was found but did not run to an answer (timed out, blocked, ...).
+    completed = _run_git(git, root, ["check-ignore", "--stdin", "-z"],
+                         ("\0".join(names) + "\0").encode("utf-8"), no_window_kwargs)
+    if completed is None:
         return None
     # 0: some ignored, 1: none ignored; 128: a fatal error, of which only
     # "not a git repository (or any parent ...)" means there is nothing to check.
@@ -380,8 +398,14 @@ def _ask_git(git: str, root: Path, names: list[str], no_window_kwargs) -> frozen
             return None
         # Git refuses the whole list when one path is in a submodule: ask the
         # submodule (its own ignore rules) about its files, and the rest here.
-        prefix = found.group(2).decode("utf-8", "replace").strip("/") + "/"
         fold = str.casefold if os.name == "nt" else (lambda value: value)
+        # Git names the submodule from the top of the repository; the names are
+        # relative to this folder, which may sit below that top.
+        submodule = found.group(2).decode("utf-8", "replace").strip("/") + "/"
+        here = _folder_in_repository(git, root, no_window_kwargs)
+        if here is None or not fold(submodule).startswith(fold(here)):
+            return None
+        prefix = submodule[len(here):]
         inside = [name for name in names if fold(name).startswith(fold(prefix))]
         if not inside:
             return None

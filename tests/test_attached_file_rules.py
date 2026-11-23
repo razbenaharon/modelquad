@@ -422,19 +422,21 @@ def _commit_all(folder, git, env):
                     "-q", "-m", "x"], cwd=folder, check=True, env=env, **no_window_kwargs())
 
 
-def _with_submodule(project):
-    """``vendor`` as a submodule (an embedded repository) whose own rules ignore ``*.secret``."""
+def _with_submodule(project, name="vendor", repository=None):
+    """``name`` in ``project`` as a submodule (an embedded repository) whose own rules
+    ignore ``*.secret``; the outer repository is ``repository`` (default ``project``)."""
     git = _git()
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    inner = project / "vendor"
+    inner = project / name
     inner.mkdir()
     subprocess.run([git, "init", "-q"], cwd=inner, check=True, env=env, **no_window_kwargs())
     (inner / ".gitignore").write_text("*.secret\n", encoding="utf-8")
     (inner / "lib.py").write_text("x = 1\n", encoding="utf-8")
     _commit_all(inner, git, env)
     (inner / "key.secret").write_text("x", encoding="utf-8")
-    subprocess.run([git, "init", "-q"], cwd=project, check=True, env=env, **no_window_kwargs())
-    _commit_all(project, git, env)
+    outer = repository or project
+    subprocess.run([git, "init", "-q"], cwd=outer, check=True, env=env, **no_window_kwargs())
+    _commit_all(outer, git, env)
 
 
 def test_a_file_in_a_submodule_is_checked_against_the_submodule(project):
@@ -456,6 +458,26 @@ def test_a_submodule_file_named_in_another_spelling_is_still_ignored(project):
 
     assert allowed == ["src/app.py", "vendor/lib.py"]
     assert skipped == {"VENDOR/key.secret": "git_ignored"}
+
+
+def test_a_submodule_is_checked_when_the_folder_is_below_the_repository_top(project):
+    # Git names the submodule from the top of the repository (app/vendor), while the
+    # names are relative to the working folder (vendor/...).
+    _with_submodule(project, repository=project.parent)
+
+    allowed, skipped = screen(project, "src/app.py", "vendor/lib.py", "vendor/key.secret")
+
+    assert allowed == ["src/app.py", "vendor/lib.py"]
+    assert skipped == {"vendor/key.secret": "git_ignored"}
+
+
+def test_a_submodule_with_a_quote_in_its_name_is_checked(project):
+    _with_submodule(project, name="it's")
+
+    allowed, skipped = screen(project, "src/app.py", "it's/lib.py", "it's/key.secret")
+
+    assert allowed == ["src/app.py", "it's/lib.py"]
+    assert skipped == {"it's/key.secret": "git_ignored"}
 
 
 def test_an_unchecked_rule_at_launch_is_not_the_approved_review():
