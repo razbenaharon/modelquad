@@ -15,6 +15,15 @@
   and the preview shows the whole task text as sent. The preview also names
   files the task text or a sent document mentions that were not sent; none
   is added. A general review's package id is unchanged.
+- **The package id covers the names Codex is told were not sent.** Codex's
+  payload lists the named entries the package left out (a folder, for
+  example), so naming a folder beside the files changed what Codex read
+  without changing the id. When the names go beyond the files sent, the id
+  now covers them; a package whose names are all sent keeps its id.
+- **An approved file withheld at launch stops the run.** A file a read rule
+  began to exclude between the preview and the launch used to be dropped,
+  and the review ran on less than was approved. The launch now sends
+  exactly the approved files or nothing.
 - **The review report counts refusals before Codex starts.** The ledger
   records their reason codes, and the report lists how many stops had each
   reason. Worker and unusable-folder refusals leave no row. A locked

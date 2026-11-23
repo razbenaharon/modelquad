@@ -480,13 +480,19 @@ def test_a_submodule_with_a_quote_in_its_name_is_checked(project):
     assert skipped == {"it's/key.secret": "git_ignored"}
 
 
-def test_an_unchecked_rule_at_launch_is_not_the_approved_review():
-    approved = {"app.py": "abc"}
-    report = {"sent": [], "skipped": [{"path": "app.py", "reason": "git_check_failed"}]}
-    assert noshell.changed_since_approval(report, approved)
-    # A rule that was checked and now withholds the file sends less, which the approval covers.
-    report["skipped"][0]["reason"] = "git_ignored"
-    assert not noshell.changed_since_approval(report, approved)
+def test_an_approved_file_withheld_at_launch_is_not_the_approved_review():
+    approved = {"app.py": "abc", "util.py": "def"}
+    sent = [{"path": "util.py", "bytes": 3, "sha256": "def"}]
+    # Withheld because a rule could not be checked, or by a rule that was checked:
+    # either way the run would send less than was approved, so it sends nothing.
+    for reason in ("git_check_failed", "git_ignored", "modelquadignore"):
+        report = {"sent": sent, "skipped": [{"path": "app.py", "reason": reason}]}
+        assert noshell.changed_since_approval(report, approved), reason
+    whole = {"sent": [*sent, {"path": "app.py", "bytes": 3, "sha256": "abc"}], "skipped": []}
+    assert not noshell.changed_since_approval(whole, approved)
+    # A file the approval did not cover is a change as well.
+    extra = {"sent": [*whole["sent"], {"path": "new.py", "bytes": 1, "sha256": "f00"}], "skipped": []}
+    assert noshell.changed_since_approval(extra, approved)
 
 
 def test_without_git_the_git_check_is_skipped(project, monkeypatch):

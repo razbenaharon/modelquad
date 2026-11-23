@@ -384,17 +384,42 @@ def _caps(working_directory: str) -> dict:
     return repo_policy.load(working_directory).caps
 
 
-def _package_id(task_type: str, prompt_digest: str, sent: list[dict], focus: str | None = None) -> str:
+def _package_id(task_type: str, prompt_digest: str, sent: list[dict], focus: str | None = None,
+                named: list[str] | None = None) -> str:
     fields = {"schema": MANIFEST_SCHEMA, "task_type": task_type, "prompt": prompt_digest,
               "files": [[item["path"], item["bytes"], item["sha256"]] for item in sent]}
     if focus is not None:
         fields["focus"] = focus  # a general review keeps the id it had before focused reviews
+    if named:
+        # Names that were asked for and not sent reach Codex in its omission list.
+        fields["named"] = named
     body = json.dumps(fields, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
 
 
+def named_beyond(files, sent: list[dict], working_directory: str | None = None) -> list[str] | None:
+    """The named entries, normalised and sorted, when they are not exactly the files sent.
+
+    The packer tells Codex which named entries it did not send (a folder, a
+    file a cap dropped), so a package whose names go beyond what it sends
+    covers those names in its id. None when every name was sent: such a
+    package keeps the id it always had.
+    """
+    from .execution import noshell
+
+    names = []
+    for name in noshell.explicit_names(list(files or ()), working_directory):
+        try:
+            names.append(noshell.canonical_path(name))
+        except noshell.TargetError:
+            names.append(str(name))
+    named = sorted({name.casefold() for name in names})
+    return None if named == sorted({item["path"].casefold() for item in sent}) else named
+
+
 def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict],
-             payload_bytes: int | None = None, focus: str | None = None) -> dict:
+             payload_bytes: int | None = None, focus: str | None = None,
+             named: list[str] | None = None) -> dict:
     """The compact record of one package: what is sent, what is left out, and its id.
 
     Metadata only: relative paths, sizes and digest prefixes of the text as
@@ -411,7 +436,7 @@ def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict],
     total = sum(item["bytes"] for item in sent)
     result = {
         "schema": MANIFEST_SCHEMA,
-        "package_id": _package_id(task_type, prompt_digest, sent, focus),
+        "package_id": _package_id(task_type, prompt_digest, sent, focus, named),
         "task_type": task_type,
         "prompt": {"bytes": len(data), "sha256": prompt_digest},
         "files": [dict(item) for item in sent],
@@ -459,7 +484,8 @@ def package(request: ReviewRequest, caps: dict | None = None, *, estimate: bool 
     result = manifest(request.task_type, text, report.get("sent", []),
                       [item for item in report.get("skipped", [])
                        if item.get("reason") in noshell.AUDIT_REASONS],
-                      report.get("payload_bytes"), request.focus)
+                      report.get("payload_bytes"), request.focus,
+                      named_beyond(request.files, report.get("sent", []), request.working_directory))
     lowered = {key: value for key, value in caps.items()
                if key in ("max_files", "max_total_bytes") and type(value) is int
                and value < result["limits"][key]}
@@ -999,7 +1025,8 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     if isinstance(audit, dict):
         # The manifest of what the launch actually sent, which the executor packed again.
         payload["package"] = manifest(request.task_type, sent_text(request), audit["sent"],
-                                      audit["skipped"], audit.get("payload_bytes"), request.focus)
+                                      audit["skipped"], audit.get("payload_bytes"), request.focus,
+                                      named_beyond(request.files, audit["sent"], request.working_directory))
         payload["sent_files"] = audit["sent"]
         payload["skipped_files"] = audit["skipped"]
     payload["package_round"] = round_number

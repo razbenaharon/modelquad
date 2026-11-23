@@ -725,6 +725,34 @@ def test_a_package_the_user_was_not_shown_is_not_sent(project):
     assert executor.requests == []
 
 
+def test_a_named_folder_is_covered_by_the_package_id(project):
+    """Codex is told which named entries were not sent, so those names are part of the package."""
+    (project / "docs").mkdir()
+    (project / "docs" / "notes.md").write_text("x\n", encoding="utf-8")
+    executor = FakeExecutor()
+    plain = review.package(request_for(project))
+    with_folder = review.package(request_for(project, files=("app.py", "docs")))
+
+    assert [item["path"] for item in with_folder["files"]] == ["app.py"]
+    assert with_folder["package_id"] != plain["package_id"]
+    reply = review.run(request_for(project, files=("app.py", "docs"),
+                                   package_id=plain["package_id"]), executor)
+    assert (reply["refused"], reply["reason"]) == (True, review.PACKAGE_CHANGED)
+    assert executor.requests == []
+
+    reply = review.run(request_for(project, files=("app.py", "docs"),
+                                   package_id=with_folder["package_id"]), executor)
+    assert reply["package"]["package_id"] == with_folder["package_id"]
+
+
+def test_a_package_whose_names_are_all_sent_keeps_its_id(project):
+    shown = review.package(request_for(project, files=("app.py", "./util.py")))
+
+    assert review.named_beyond(("app.py", "./util.py"), shown["files"], str(project)) is None
+    assert shown["package_id"] == review._package_id(
+        "review", shown["prompt"]["sha256"], shown["files"])
+
+
 def test_a_file_that_changes_after_the_package_was_shown_is_not_sent(project):
     executor = FakeExecutor()
     shown = review.package(request_for(project))
