@@ -48,7 +48,8 @@ _MCP_KEY_PATH = ("mcpServers", MCP_SERVER_NAME)
 _SKILL_DIR = PRODUCT_SLUG
 # Commands only the user starts (``disable-model-invocation: true``). Each
 # still reaches Codex only through a tool Claude Code asks about.
-_COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in ("review", "setup", "settings"))
+_COMMAND_SKILL_DIRS = tuple(f"{PRODUCT_SLUG}-{name}" for name in (
+    "review", "setup", "settings", "plan-review", "challenge-decision", "check-requirements"))
 _SKILL_DIRS = (_SKILL_DIR, *_COMMAND_SKILL_DIRS)
 # Commands earlier builds installed for features this build no longer has.
 # Install and uninstall remove a copy that carries ModelQuad's mark.

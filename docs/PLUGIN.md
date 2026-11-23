@@ -18,11 +18,13 @@ available for a setup without it (README, "Without the plugin").
   same, so Claude Code asks the user before every call that would start
   Codex, unless the session started in a folder with the standing grant
   (`modelquad settings auto on`).
-- **Four skills**, copied from the package's own templates
+- **Seven skills**, copied from the package's own templates
   (`src/modelquad/adapters/templates/claude/skills/`). A plugin namespaces its
   skills, so they appear as `/modelquad:guide`, `/modelquad:review`,
-  `/modelquad:setup` and `/modelquad:settings`. The guide is the one Claude
-  reads; the other three are commands only you start.
+  `/modelquad:plan-review`, `/modelquad:challenge-decision`,
+  `/modelquad:check-requirements`, `/modelquad:setup` and
+  `/modelquad:settings`. The guide is the one Claude reads; the other six are
+  commands only you start.
 - **The review reminder and review gates** (`plugin/hooks/hooks.json`:
   `modelquad hook-review claude`, on PostToolUse, PreToolUse and Stop). It
   counts the files Claude changes under the session folder (as digests) and
@@ -36,6 +38,42 @@ available for a setup without it (README, "Without the plugin").
 
 `python scripts/sync_plugin.py` copies the skills and the server entry from
 the templates; `tests/test_plugin_prototype.py` fails while a copy differs.
+
+## The focused reviews
+
+Three commands ask one defined question about files you choose. Each calls
+`review_package` and then `delegate` with a `focus`, so it goes through the
+same package, approval prompt and Codex run as `/modelquad:review`:
+
+| Command | `focus` | Task kind | You choose | Codex answers |
+|---|---|---|---|---|
+| `/modelquad:check-requirements` | `requirements` | `review` | the requirement, implementation, tests | per requirement: met, gap, or not shown by the tests |
+| `/modelquad:plan-review` | `plan` | `architecture` | the plan, requirements, constraints | contradictions with a requirement, assumptions to verify, what to decide before coding |
+| `/modelquad:challenge-decision` | `decision` | `architecture` | the RFC or ADR, alternatives, constraints | when the decision holds, what could reverse it, the check that would settle it |
+
+Examples:
+
+    /modelquad:check-requirements R1-R3 in docs/spec.md against src/sync.py and tests/test_sync.py
+    /modelquad:plan-review docs/sync-plan.md and docs/requirements.md
+    /modelquad:challenge-decision docs/adr/0007-event-store.md and docs/adr/0006.md
+
+The fixed instruction for each focus is in `src/modelquad/focus.py`.
+ModelQuad puts it in front of Claude's task text itself, so the package id
+covers it, and `review_package` returns the whole task text as sent for
+Claude to show you with the file list. A change to the text, a file or the
+focus after the preview sends nothing.
+
+What ModelQuad sends is the task text and the approved files. A file the plan
+or the task text mentions is not read or sent; the preview lists it (when it
+exists in the folder and the read rules allow it) so you can approve a new
+package with it, and Codex's own request for a file works the same way, for
+at most two rounds. A plan that is only in the conversation goes as an
+excerpt you choose, quoted in the task text. The read rules, the secret
+screen and the repository's `.modelquad.toml` apply as to any review; a
+repository that removes the `architecture` kind removes the plan and
+decision reviews. What Codex adds on its side (its own instructions, its tool
+declarations and your global Codex `AGENTS.md`) is in
+[SECURITY.md](../SECURITY.md).
 
 ## What it deliberately does not contain
 

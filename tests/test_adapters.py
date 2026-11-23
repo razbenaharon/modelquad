@@ -779,7 +779,8 @@ def test_no_adapter_wraps_atomic_write_in_a_dead_value_error_handler():
     assert offenders == []
 
 
-_COMMAND_SKILLS = ("modelquad-review", "modelquad-setup", "modelquad-settings")
+_COMMAND_SKILLS = ("modelquad-review", "modelquad-setup", "modelquad-settings", "modelquad-plan-review",
+                   "modelquad-challenge-decision", "modelquad-check-requirements")
 #: Command skills earlier builds installed for features this build no longer has.
 _RETIRED_SKILLS = ("modelquad-handoff", "modelquad-quota", "modelquad-split")
 

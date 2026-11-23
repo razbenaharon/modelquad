@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Three focused second opinions.** `/modelquad:check-requirements`,
+  `/modelquad:plan-review` and `/modelquad:challenge-decision` ask Codex one
+  defined question about the files you choose: which requirements the
+  evidence shows met, where there is a gap and where the tests do not tell;
+  where a plan contradicts its requirements and what to decide before
+  coding; when an architecture decision holds and what would reverse it.
+  They run through the same package, approval and Codex run as
+  `/modelquad:review`. `review_package` and `delegate` take `focus`
+  (`requirements`, `plan` or `decision`); ModelQuad puts that question's
+  fixed instruction in front of the task text, the package id covers it,
+  and the preview shows the whole task text as sent. The preview also names
+  files the task text or a sent document mentions that were not sent; none
+  is added. A general review's package id is unchanged.
 - **The review report counts refusals before Codex starts.** The ledger
   records their reason codes, and the report lists how many stops had each
   reason. Worker and unusable-folder refusals leave no row. A locked

@@ -28,7 +28,8 @@ from modelquad.adapters.server_instructions import read_claude_plugin, write_cla
 
 from test_host_registration_transaction import claude_home, state_root  # noqa: F401 -- fixtures
 
-_SKILLS = ("modelquad", "modelquad-review", "modelquad-setup", "modelquad-settings")
+_SKILLS = ("modelquad", "modelquad-review", "modelquad-setup", "modelquad-settings", "modelquad-plan-review",
+           "modelquad-challenge-decision", "modelquad-check-requirements")
 #: Command skills earlier builds installed for features this build no longer has.
 _RETIRED_SKILLS = ("modelquad-handoff", "modelquad-quota", "modelquad-split")
 
