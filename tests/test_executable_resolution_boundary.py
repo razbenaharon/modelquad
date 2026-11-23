@@ -215,8 +215,9 @@ ALLOW_LIST = (
      "resolver call: native executable admission/digest qualification, then prepare_codex_launch before worker entry"),
     ("execution/codex.py", "CodexExecutor._execute_noshell.<locals>.inventory", "launch", 1,
      "forwarding wrapper, guard inside: run_inventory prepares bounded provider-free listing argv"),
-    ("execution/file_rules.py", "_ask_git", "launch", 1,
-     "resolver call: resolve_executable admits Git with all enclosing repository exclusions"),
+    ("execution/file_rules.py", "_run_git", "launch", 1,
+     "forwarding wrapper, guard at caller: git_ignored admits Git with resolve_executable and all "
+     "enclosing repository exclusions, and _ask_git passes that path to every Git command"),
     ("execution/noshell.py", "qualify", "launch", 1,
      "already-admitted value passed in: CodexExecutor admits the native executable and forwards through run_inventory"),
     ("execution/codex_worker_mcp.py", "run_inventory", "launch", 1,
