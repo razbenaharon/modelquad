@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.4 (2026-11-24)
 
 - **Three focused second opinions.** `/modelquad:check-requirements`,
   `/modelquad:plan-review` and `/modelquad:challenge-decision` ask Codex one
