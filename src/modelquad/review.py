@@ -41,6 +41,8 @@ ROUNDS_EXHAUSTED = "completion_rounds_exhausted"
 FOLLOWS_UNKNOWN = "follows_unknown"
 FILES_WITHHELD = "named_files_withheld"
 NOTICE_FIRST = "notice_first"
+FOCUS_NOT_VALID = "focus_not_valid"
+FOCUS_KIND_MISMATCH = "focus_task_type_mismatch"
 
 FILES_WITHHELD_NEXT = (
     "Call again without them. Never paste an excluded file's contents into the task text or "
@@ -121,6 +123,10 @@ _LINES: dict[str, str] = {
                       "otherwise check that Codex is signed in and has usage left, or run: "
                       "modelquad doctor"),
     "stop_requested": "The call was cancelled, and ModelQuad stopped Codex.",
+    FOCUS_NOT_VALID: ("focus must be plan, decision or requirements, or left out for a general "
+                      "review, so nothing was started."),
+    FOCUS_KIND_MISMATCH: ("That focus takes another task kind (plan and decision take "
+                          "architecture, requirements takes review), so nothing was started."),
 }
 
 
@@ -140,6 +146,26 @@ class ReviewRequest:
     package_id: str | None = None
     #: The earlier review this one completes with files it said it needed.
     follows: str | None = None
+    #: A focused review (``focus.FOCI``): ModelQuad puts its fixed instruction first.
+    focus: str | None = None
+
+
+def sent_text(request: ReviewRequest) -> str:
+    """The task text as Codex gets it: a focus's fixed instruction, then Claude's text."""
+    from . import focus
+
+    return focus.task_text(request.focus, request.prompt)
+
+
+def shown_text(request: ReviewRequest) -> str:
+    """The task text exactly as Codex receives it: ``sent_text`` after the credential screen.
+
+    Call only for a package that was not refused: a text the screen refuses
+    never gets this far.
+    """
+    from .execution import noshell
+
+    return noshell._sanitize_supplied(sent_text(request))
 
 
 class ReviewExecutor(Protocol):
@@ -327,6 +353,14 @@ def gate(request: ReviewRequest, session: Session, *, starts_codex: bool = True,
         return unusable
     if request.task_type not in repo_policy.TASK_KINDS:
         return refusal("task_type_not_read_only")
+    if request.focus is not None:
+        from . import focus
+
+        chosen = focus.get(request.focus)
+        if chosen is None:
+            return refusal(FOCUS_NOT_VALID)
+        if chosen.task_type != request.task_type:
+            return refusal(FOCUS_KIND_MISMATCH)
     repo_refusal, policy = repo_policy.gate(request.working_directory, request.task_type,
                                             files=request.files)
     if policy_out is not None and policy is not None:
@@ -350,15 +384,42 @@ def _caps(working_directory: str) -> dict:
     return repo_policy.load(working_directory).caps
 
 
-def _package_id(task_type: str, prompt_digest: str, sent: list[dict]) -> str:
-    body = json.dumps({"schema": MANIFEST_SCHEMA, "task_type": task_type, "prompt": prompt_digest,
-                       "files": [[item["path"], item["bytes"], item["sha256"]] for item in sent]},
-                      sort_keys=True, separators=(",", ":"))
+def _package_id(task_type: str, prompt_digest: str, sent: list[dict], focus: str | None = None,
+                named: list[str] | None = None) -> str:
+    fields = {"schema": MANIFEST_SCHEMA, "task_type": task_type, "prompt": prompt_digest,
+              "files": [[item["path"], item["bytes"], item["sha256"]] for item in sent]}
+    if focus is not None:
+        fields["focus"] = focus  # a general review keeps the id it had before focused reviews
+    if named:
+        # Names that were asked for and not sent reach Codex in its omission list.
+        fields["named"] = named
+    body = json.dumps(fields, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
 
 
+def named_beyond(files, sent: list[dict], working_directory: str | None = None) -> list[str] | None:
+    """The named entries, normalised and sorted, when they are not exactly the files sent.
+
+    The packer tells Codex which named entries it did not send (a folder, a
+    file a cap dropped), so a package whose names go beyond what it sends
+    covers those names in its id. None when every name was sent: such a
+    package keeps the id it always had.
+    """
+    from .execution import noshell
+
+    names = []
+    for name in noshell.explicit_names(list(files or ()), working_directory):
+        try:
+            names.append(noshell.canonical_path(name))
+        except noshell.TargetError:
+            names.append(str(name))
+    named = sorted({name.casefold() for name in names})
+    return None if named == sorted({item["path"].casefold() for item in sent}) else named
+
+
 def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict],
-             payload_bytes: int | None = None) -> dict:
+             payload_bytes: int | None = None, focus: str | None = None,
+             named: list[str] | None = None) -> dict:
     """The compact record of one package: what is sent, what is left out, and its id.
 
     Metadata only: relative paths, sizes and digest prefixes of the text as
@@ -373,9 +434,9 @@ def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict],
     data = prompt.encode("utf-8")
     prompt_digest = hashlib.sha256(data).hexdigest()[:16]
     total = sum(item["bytes"] for item in sent)
-    return {
+    result = {
         "schema": MANIFEST_SCHEMA,
-        "package_id": _package_id(task_type, prompt_digest, sent),
+        "package_id": _package_id(task_type, prompt_digest, sent, focus, named),
         "task_type": task_type,
         "prompt": {"bytes": len(data), "sha256": prompt_digest},
         "files": [dict(item) for item in sent],
@@ -387,6 +448,9 @@ def manifest(task_type: str, prompt: str, sent: list[dict], skipped: list[dict],
                    "max_total_bytes": noshell.MAX_TOTAL_BYTES,
                    "max_prompt_bytes": noshell.MAX_PROMPT_BYTES},
     }
+    if focus is not None:
+        result["focus"] = focus
+    return result
 
 
 def package(request: ReviewRequest, caps: dict | None = None, *, estimate: bool = False) -> dict:
@@ -402,9 +466,12 @@ def package(request: ReviewRequest, caps: dict | None = None, *, estimate: bool 
 
     caps = caps if caps is not None else _caps(request.working_directory)
     report: dict = {}
+    packed: list = []
+    text = sent_text(request)
     try:
-        noshell.supplied_prompt(request.prompt, request.working_directory, files=list(request.files),
-                                completion_protocol=True, report=report, caps=caps)
+        noshell.supplied_prompt(text, request.working_directory, files=list(request.files),
+                                completion_protocol=True, report=report, caps=caps,
+                                texts=packed if request.focus is not None else None)
     except noshell.SuppliedContextRefused as refused:
         diagnostics = getattr(refused, "host_diagnostics", ()) or ()
         skipped = [{"path": item["path"], "reason": item["reason"]}
@@ -414,10 +481,11 @@ def package(request: ReviewRequest, caps: dict | None = None, *, estimate: bool 
             return _secret_refusal(request, caps, skipped, refused.secret_kinds,
                                    estimate=estimate)
         return refusal(refused.reason, skipped_files=skipped)
-    result = manifest(request.task_type, request.prompt, report.get("sent", []),
+    result = manifest(request.task_type, text, report.get("sent", []),
                       [item for item in report.get("skipped", [])
                        if item.get("reason") in noshell.AUDIT_REASONS],
-                      report.get("payload_bytes"))
+                      report.get("payload_bytes"), request.focus,
+                      named_beyond(request.files, report.get("sent", []), request.working_directory))
     lowered = {key: value for key, value in caps.items()
                if key in ("max_files", "max_total_bytes") and type(value) is int
                and value < result["limits"][key]}
@@ -428,6 +496,13 @@ def package(request: ReviewRequest, caps: dict | None = None, *, estimate: bool 
                          request.files)
     if hint:
         result["may_also_need"] = hint
+    if request.focus is not None:
+        from . import focus
+
+        named = focus.mentioned_files(request.working_directory, noshell._sanitize_supplied(text),
+                                      packed)
+        if named:
+            result["mentioned_files"] = named
     if estimate:
         result["input_tokens_estimate"] = _estimate(result["prompt"]["bytes"] + result["total_bytes"])
     return result
@@ -685,6 +760,10 @@ def package_lines(result: dict) -> list[str]:
             f"{item['path']} ({item['reason']})" for item in result["skipped"]))
     if result.get("may_also_need"):
         lines.append(may_also_need_line(result["may_also_need"]))
+    if result.get("mentioned_files"):
+        from . import focus
+
+        lines.append(focus.mentioned_line(result["mentioned_files"]))
     limits = result["limits"]
     lines.append(f"Limits: {limits['max_files']} files, {limits['max_total_bytes']} bytes in all"
                  + (" (lowered by this repository's .modelquad.toml)." if "lowered_by" in limits else "."))
@@ -694,6 +773,9 @@ def package_lines(result: dict) -> list[str]:
     lines.append("Sizes are bytes as sent, after credentials are redacted.")
     if "input_tokens_estimate" in result:
         lines.append(estimate_line(result["input_tokens_estimate"]))
+    if isinstance(result.get("task_text"), str):
+        lines += ["Task text as sent (ModelQuad's fixed instruction for this focus, then yours):",
+                  result["task_text"]]
     return lines
 
 
@@ -863,8 +945,9 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
         return record_refusal(shown)
     if request.package_id is not None and shown["package_id"] != request.package_id:
         return record_refusal(refusal(PACKAGE_CHANGED))
-    # A hint for the reply, not part of what was sent: it stays out of the record.
+    # Hints for the reply, not part of what was sent: they stay out of the record.
     hint = shown.pop("may_also_need", None)
+    mentioned = shown.pop("mentioned_files", None)
     digests = {item["path"]: item["sha256"] for item in shown["files"]}
     metadata: dict[str, Any] = {"supplied_files": list(request.files), "approval": "delegate",
                                 "approved_digests": digests}
@@ -892,7 +975,7 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
 
     try:
         execution = ExecutionRequest(
-            provider="codex", task_type=TaskType(request.task_type), prompt=request.prompt,
+            provider="codex", task_type=TaskType(request.task_type), prompt=sent_text(request),
             working_directory=Path(request.working_directory), timeout=request.timeout,
             model=request.model, reasoning_effort=request.reasoning_effort, metadata=metadata,
             on_spawn=spawned, on_packed=on_packed, stop_requested=stop_requested)
@@ -922,6 +1005,8 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     payload = closed_result(result).to_dict()
     payload.pop("session_id", None)
     payload.update(decision_id=decision_id, task_type=request.task_type)
+    if request.focus is not None:
+        payload["focus"] = request.focus
     reason = payload.get("reason")
     started = payload["metadata"].get("worker_started") is True
     if reason in POLICY_REFUSAL_REASONS or reason in noshell.REFUSAL_LABELS:
@@ -939,13 +1024,16 @@ def run(request: ReviewRequest, executor: ReviewExecutor, session: Session = Ses
     audit = payload["metadata"].get("file_audit")
     if isinstance(audit, dict):
         # The manifest of what the launch actually sent, which the executor packed again.
-        payload["package"] = manifest(request.task_type, request.prompt, audit["sent"],
-                                      audit["skipped"], audit.get("payload_bytes"))
+        payload["package"] = manifest(request.task_type, sent_text(request), audit["sent"],
+                                      audit["skipped"], audit.get("payload_bytes"), request.focus,
+                                      named_beyond(request.files, audit["sent"], request.working_directory))
         payload["sent_files"] = audit["sent"]
         payload["skipped_files"] = audit["skipped"]
     payload["package_round"] = round_number
     if hint:
         payload["may_also_need"] = hint
+    if mentioned:
+        payload["mentioned_files"] = mentioned
     needed = noshell.needed_files(payload.get("output"), request.working_directory,
                                   {item["path"] for item in payload.get("sent_files", ())})
     if needed:

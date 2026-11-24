@@ -224,7 +224,7 @@ def test_the_setup_check_lines_say_what_to_do_in_words():
 def test_skills_have_one_line_descriptions_and_no_banned_phrase():
     skills = [*(ROOT / "plugin" / "skills").glob("*/SKILL.md"),
               *(ROOT / "src" / "modelquad" / "adapters" / "templates" / "claude" / "skills").glob("*/SKILL.md")]
-    assert len(skills) == 8
+    assert len(skills) == 14
     for path in skills:
         text = path.read_text(encoding="utf-8")
         assert banned_in(text) == [], path

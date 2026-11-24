@@ -1017,12 +1017,19 @@ def _run_package_command(args: argparse.Namespace) -> int:
     """``modelquad review package``: what a review of these files would send. Starts nothing."""
     from . import review
 
+    from . import focus
+
     folder = os.path.abspath(args.project or os.getcwd())
-    request = review.ReviewRequest(task_type=args.task_type, prompt=args.task,
-                                   working_directory=folder, files=tuple(args.files))
+    chosen = focus.get(args.focus)
+    task_type = args.task_type or (chosen.task_type if chosen else "review")
+    request = review.ReviewRequest(task_type=task_type, prompt=args.task,
+                                   working_directory=folder, files=tuple(args.files),
+                                   focus=args.focus)
     policies: list = []
     result = (review.gate(request, review.Session(), starts_codex=False, policy_out=policies)
               or review.package(request, policies[0].caps if policies else None, estimate=True))
+    if chosen is not None and not result.get("refused"):
+        result["task_text"] = review.shown_text(request)
     if args.as_json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
@@ -1212,8 +1219,12 @@ def build_parser() -> argparse.ArgumentParser:
                              help='The project folder (default: the current folder).')
     package_cmd.add_argument('--task', default="Review these files.",
                              help='The task text that would go with them.')
-    package_cmd.add_argument('--kind', dest='task_type', default='review',
-                             choices=('review', 'exploration', 'architecture'))
+    package_cmd.add_argument('--kind', dest='task_type', default=None,
+                             choices=('review', 'exploration', 'architecture'),
+                             help='The task kind (default: review, or the kind the focus takes).')
+    package_cmd.add_argument('--focus', default=None, choices=('plan', 'decision', 'requirements'),
+                             help='A focused review: plan, decision or requirements. Prints the '
+                                  'task text as sent.')
     package_cmd.add_argument('--json', action='store_true', dest='as_json', help='Print JSON.')
     review_report_cmd = review_actions.add_parser(
         "report", help="Calls, findings by verdict and evidence, fixes, time and tokens.")

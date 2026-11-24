@@ -46,7 +46,8 @@ unfamiliar code.
 1. Claude reaches a moment where a second opinion helps: before a large,
    architectural or sensitive change, when a change that touched several
    files is done, before a commit or PR, after a bug survived one fix. You can
-   also ask with `/modelquad:review`.
+   also ask with `/modelquad:review`, or with one of the focused commands
+   below.
 2. Claude names the files. ModelQuad can show the **context package** first
    (`review_package`, or `modelquad review package` in a terminal):
    each file with its size as sent, what is left out and why, the limits, and
@@ -69,6 +70,60 @@ unfamiliar code.
    Nothing is added by itself: you see the larger package and agree, for at
    most two more rounds. A request that was not met is a stated limit of the
    review.
+
+## Focused second opinions
+
+Three commands ask Codex one defined engineering question about material
+you choose, before or after the code is written. Each runs through the same
+package, approval and Codex run as `/modelquad:review`; ModelQuad puts a
+fixed instruction for that question in front of Claude's task text, and the
+preview shows you the whole task text as sent and the file list before
+anything goes. You approve the list or change it.
+
+- `/modelquad:check-requirements`: **check an implementation against its
+  requirements.** Send the requirement, the implementation files and their
+  tests. Codex answers, for each requirement, whether the evidence shows it
+  met, where there is a gap, and where the tests do not yet tell.
+
+      /modelquad:check-requirements R1-R3 in docs/spec.md against src/sync.py and tests/test_sync.py
+
+- `/modelquad:plan-review`: **review an implementation plan.** Send the
+  plan, its requirements and the constraints that matter. Codex answers
+  where the plan contradicts a requirement, which assumptions need a check,
+  and what must be decided before coding.
+
+      /modelquad:plan-review docs/sync-plan.md and docs/requirements.md
+
+- `/modelquad:challenge-decision`: **challenge an architecture decision.**
+  Send the RFC or ADR, the alternatives and the constraints. Codex answers
+  under which conditions the decision holds, what could reverse it, and which
+  measurement or test would settle it.
+
+      /modelquad:challenge-decision docs/adr/0007-event-store.md, the queue alternative in docs/adr/0006.md
+
+Every finding names the problem, the section or line that supports it, and
+the decision it affects. When the material is not enough to decide, Codex is
+asked to say what is missing and why rather than guess, and a review with no
+findings is a valid answer.
+
+What ModelQuad sends and what Codex adds are different things. ModelQuad
+sends the task text (its fixed instruction, then Claude's text) and the
+files in the approved package, nothing else: a file a plan mentions is not
+read or sent. The preview lists such files, when they exist and the read
+rules allow them, so you can add them to a new package; Codex's own request
+for a file works the same way. If the plan is only in the conversation, you
+pick the part to send and Claude quotes it in the task text, which you see
+before the call. Codex itself adds its own instructions, its tool
+declarations and your global Codex `AGENTS.md`
+([SECURITY.md](https://github.com/razbenaharon/modelquad/blob/main/SECURITY.md));
+it has no access to the repository or the conversation.
+
+The plan and decision reviews use the `architecture` task kind, the
+requirements check uses `review`, so a repository's `.modelquad.toml` that
+removes a kind removes the focused review with it. The tools take the same
+choice as `focus` (`plan`, `decision` or `requirements`), and
+`modelquad review package --focus plan FILE...` shows the package and task
+text in a terminal.
 
 ## What you get
 
@@ -174,8 +229,10 @@ ModelQuad installs as a Claude Code plugin. From PowerShell:
   repository's `stable` branch as a plugin marketplace (Claude Code fetches
   it with Git), and `claude plugin install modelquad@modelquad` installs the
   plugin from it. `stable` moves only when a release is on PyPI, so the
-  plugin and the package are the same version. The plugin carries the server, three commands
-  (`/modelquad:review`, `/modelquad:setup` and `/modelquad:settings`), the
+  plugin and the package are the same version. The plugin carries the server, six commands
+  (`/modelquad:review`, the three focused reviews `/modelquad:plan-review`,
+  `/modelquad:challenge-decision` and `/modelquad:check-requirements`,
+  `/modelquad:setup` and `/modelquad:settings`), the
   guide skill Claude reads (`/modelquad:guide`), and the review reminder with
   its two gates.
 - `modelquad doctor` checks six things and says what to do about each:

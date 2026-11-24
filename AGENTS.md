@@ -87,6 +87,15 @@ the instrument for developing it.
   refusal before launch records its reason code, except for workers and
   unusable project paths. A reply says so when the ledger could not be
   written (`ledger_note`).
+- Focused reviews (`focus.py`): `review_package` and `delegate` take
+  `focus` = `plan` (task kind `architecture`), `decision` (`architecture`) or
+  `requirements` (`review`); ModelQuad puts that focus's fixed instruction
+  in front of the task text, so the package id covers it, and the preview
+  returns the whole task text as sent (never stored). A general review's
+  package id is computed as before. The preview also names files the task
+  text or a sent document mentions that were not sent (`mentioned_files`, a
+  hint; nothing is added). Commands: `/modelquad:plan-review`,
+  `/modelquad:challenge-decision`, `/modelquad:check-requirements`.
 - Settings: `/modelquad:settings` (skill, user-started) and
   `modelquad settings` (`settings_view.py`).
 - A checked-in `.modelquad.toml` can only narrow Codex use in its repository
@@ -103,6 +112,7 @@ the instrument for developing it.
 | `src/modelquad/review.py` | The flow: the gates, the context package and its manifest, the run, the reply |
 | `src/modelquad/mcp/` | The MCP server Claude Code talks to (`server.py`) and the worker guard |
 | `src/modelquad/execution/` | The Codex executor; `noshell.py` packs the files sent to Codex and checks its event stream; `closed.py` keeps reasons and metadata to fixed sets |
+| `src/modelquad/focus.py` | The three focused reviews: their fixed instructions, task kinds and the mentioned-file hint |
 | `src/modelquad/review_ledger.py` | The local record of calls, packages, findings and verdicts |
 | `src/modelquad/usage_report.py` | `modelquad review usage-report`: counts from the ledger, printed for the user to pass on; sends nothing |
 | `src/modelquad/repo_policy.py`, `repo_settings.py`, `grant.py`, `switch.py` | The repository's rules, the user's per-repository choice, the standing grant, the global switch |

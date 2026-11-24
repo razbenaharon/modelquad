@@ -32,6 +32,9 @@ SKILLS = {
     "modelquad-review": "review",
     "modelquad-setup": "setup",
     "modelquad-settings": "settings",
+    "modelquad-plan-review": "plan-review",
+    "modelquad-challenge-decision": "challenge-decision",
+    "modelquad-check-requirements": "check-requirements",
 }
 
 

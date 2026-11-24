@@ -57,6 +57,11 @@ PROGRESS_INTERVAL_SECONDS = 15.0
 _PROGRESS_TIMEOUT_SECONDS = 0.1
 
 FilesArgument = Annotated[list[str] | None, Field(max_length=review.MAX_NAMED_FILES)]
+#: A focused review (``modelquad.focus``); left out for a general one.
+FocusArgument = Annotated[str | None, Field(
+    description="plan (task_type architecture): review an implementation plan; decision "
+                "(architecture): challenge an architecture decision; requirements (review): "
+                "check an implementation against requirements. Leave out for a general review.")]
 
 
 def _build_identity() -> str | None:
@@ -98,7 +103,8 @@ _VISIBLE = ("task_type", "provider", "task_status", "task_completed", "output", 
             "delegated", "executed", "reason", "message", "decision_id", "package", "package_round",
             "skipped_files", "completion_request", "findings", "findings_note", "ledger_note", "usage",
             "limitations", "worker_note", "output_truncated", "output_chars", "status", "notice",
-            "next", "note", "codex_started", "left_out", "retry_package", "may_also_need")
+            "next", "note", "codex_started", "left_out", "retry_package", "may_also_need",
+            "focus", "mentioned_files")
 
 
 def _review_lines(payload: dict) -> list[str]:
@@ -124,6 +130,10 @@ def _review_lines(payload: dict) -> list[str]:
                 f"{item['path']} ({item['reason']})" for item in package["skipped"]))
     if payload.get("may_also_need"):
         lines.append(review.may_also_need_line(payload["may_also_need"]))
+    if payload.get("mentioned_files"):
+        from .. import focus
+
+        lines.append(focus.mentioned_line(payload["mentioned_files"]))
     usage = payload.get("usage") or {}
     if usage.get("tokens_source"):
         lines.append(f"Codex reported {usage.get('input_tokens')} input and "
@@ -217,21 +227,29 @@ async def review_package(
     prompt: str,
     working_directory: str,
     files: FilesArgument = None,
+    focus: FocusArgument = None,
 ) -> CallToolResult:
     """Show the context package a review would send, without starting Codex: the files
     (paths relative to working_directory, at most 32), their sizes as sent, what is left
     out and why, the limits, and a package_id. Show it to the user when they want to see
     or change what Codex gets; add or remove paths in `files` and call again. Pass the
-    package_id to delegate to send exactly this package."""
+    package_id to delegate to send exactly this package. With `focus`, the reply also
+    carries the whole task text as sent (ModelQuad's fixed instruction, then yours): show
+    it to the user."""
     request = review.ReviewRequest(task_type=task_type, prompt=prompt,
-                                   working_directory=working_directory, files=tuple(files or ()))
+                                   working_directory=working_directory, files=tuple(files or ()),
+                                   focus=focus)
 
     def build() -> dict:
         policies: list = []
         refused = review.gate(request, _session(), starts_codex=False, policy_out=policies)
         if refused is not None:
             return refused
-        return review.package(request, policies[0].caps if policies else None, estimate=True)
+        result = review.package(request, policies[0].caps if policies else None, estimate=True)
+        if focus is not None and not result.get("refused"):
+            # Shown, never recorded: the ledger keeps no task text.
+            result["task_text"] = review.shown_text(request)
+        return result
 
     payload = await anyio.to_thread.run_sync(build)
     return _result(payload, review.package_lines(payload))
@@ -251,6 +269,7 @@ async def delegate(
     trigger: str = "claude",
     package_id: str | None = None,
     follows: str | None = None,
+    focus: FocusArgument = None,
 ) -> CallToolResult:
     """Ask read-only Codex for a review, exploration, or architecture opinion.
     Codex sees only the task text and the files listed in `files` (paths relative to
@@ -258,11 +277,13 @@ async def delegate(
     `trigger` says why: review_gate, pre_change, user or claude. `package_id` (from
     review_package) sends only that exact package. `follows` is the
     decision_id of an earlier reply whose completion_request this call answers, at
-    most 2 rounds. Without the user's standing grant Claude Code asks before every call."""
+    most 2 rounds. `focus` (plan, decision or requirements) asks a focused question with
+    ModelQuad's fixed instruction; pass the same focus as review_package. Without the user's
+    standing grant Claude Code asks before every call."""
     request = review.ReviewRequest(
         task_type=task_type, prompt=prompt, working_directory=working_directory,
         files=tuple(files or ()), timeout=timeout, model=model, reasoning_effort=reasoning_effort,
-        trigger=trigger, package_id=package_id, follows=follows)
+        trigger=trigger, package_id=package_id, follows=follows, focus=focus)
     payload = await _run_review(request, ctx)
     visible = {key: payload[key] for key in _VISIBLE if key in payload}
     return _result(visible, _review_lines(payload))

@@ -1132,7 +1132,7 @@ def _diagnose(sink, diagnostic):
 
 
 def render_supplied(screened, pack, instruction, *, required=(), withheld=(),
-                    completion_protocol=False, diagnostics=None, report=None):
+                    completion_protocol=False, diagnostics=None, report=None, texts=None):
     """One complete-payload budget, dropping optional files before refusing.
 
     ``required`` names the files the user approved (the explicit ``files``
@@ -1213,6 +1213,9 @@ def render_supplied(screened, pack, instruction, *, required=(), withheld=(),
                              for name, reason in (*withheld, *pack.skipped, *dropped)]
         # The whole payload as Codex gets it: task text, instruction, labelled files, envelope.
         report["payload_bytes"] = len(rendered.encode("utf-8"))
+    if texts is not None:
+        # In memory for the caller only: (name, text as sent). Never part of a report or record.
+        texts.extend(files)
     return rendered
 
 
@@ -1230,21 +1233,15 @@ def approved_digests(prompt, workspace, files, *, caps=None):
     return {item["path"]: item["sha256"] for item in report.get("sent", ())}
 
 
-#: Rules that withhold every file because they could not be checked: a run on
-#: the task text alone is not the review that was approved.
-_UNCHECKED = frozenset({file_rules.SETTINGS_UNREADABLE, file_rules.IGNORE_FILE_UNREADABLE,
-                        file_rules.GIT_UNANSWERED})
-
-
 def changed_since_approval(report, approved):
-    """True when the run would send a file it did not send at approval, or a
-    different text of one, or withholds an approved file because a rule could
-    not be checked. A file now withheld by a rule that was checked sends less,
-    which the approval still covers."""
-    if any(item.get("path") in approved and item.get("reason") in _UNCHECKED
-           for item in report.get("skipped", ())):
+    """True unless the run would send exactly the approved files, with the
+    approved text of each: a file added, a different text, or an approved
+    file now withheld (by any rule, checked or not) is not the approved
+    review, so nothing is sent."""
+    sent = report.get("sent", ())
+    if {item["path"] for item in sent} != set(approved):
         return True
-    return any(approved.get(item["path"]) != item["sha256"] for item in report.get("sent", ()))
+    return any(approved.get(item["path"]) != item["sha256"] for item in sent)
 
 
 def sent_entry(name, text):
@@ -1306,7 +1303,7 @@ INSTRUCTION = ("\nYou have no command or file tools. Work only from the supplied
 
 
 def supplied_prompt(prompt, workspace, *, files=(), completion_protocol=False, diagnostics=None,
-                    report=None, caps=None):
+                    report=None, caps=None, texts=None):
     """Bound the entire rendered payload, including JSON escaping and labels.
 
     Only ``files`` -- the paths the user approved in the tool call -- are
@@ -1350,7 +1347,8 @@ def supplied_prompt(prompt, workspace, *, files=(), completion_protocol=False, d
     pack = (pack_files(workspace, attach, max_files=max_files, max_total_bytes=max_total_bytes)
             if attach else pack_files(workspace, attach))
     return render_supplied(screened, pack, INSTRUCTION, required=attach, withheld=withheld,
-                           completion_protocol=completion_protocol, diagnostics=sink, report=report)
+                           completion_protocol=completion_protocol, diagnostics=sink, report=report,
+                           texts=texts)
 
 
 #: Every reason a supplied-file report can carry; anything else is not kept.
