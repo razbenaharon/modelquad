@@ -1,6 +1,6 @@
 {
   "name": "modelquad",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "A read-only second-opinion review of only the selected project files, with a local record of every review. On Windows. The ModelQuad MCP server, its commands and its review reminder. Needs the modelquad package from PyPI (pip install modelquad). Works with Claude Code and your own OpenAI Codex CLI. Not affiliated with Anthropic or OpenAI.",
   "author": {
     "name": "Raz Ben Aharon"
